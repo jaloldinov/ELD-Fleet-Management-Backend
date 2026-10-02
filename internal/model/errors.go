@@ -27,6 +27,8 @@ var (
 	ErrLicenseTaken    = errors.New("this license number is already registered in that state")
 	ErrVINTaken        = errors.New("a truck with this VIN is already registered")
 	ErrUnitNumberTaken = errors.New("this unit number is already used in your fleet")
+	ErrSerialTaken     = errors.New("an ELD device with this serial number is already registered")
+	ErrTruckHasELD     = errors.New("this truck already has an ELD device installed")
 
 	// ErrInvalidCredentials is deliberately the same for "no such user" and
 	// "wrong password", so attackers cannot learn which accounts exist.

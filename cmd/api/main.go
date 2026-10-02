@@ -89,16 +89,20 @@ func run() error {
 	txManager := repository.NewTxManager(pool)
 	driverSvc := service.NewDriverService(txManager, userSvc, repository.NewDriverRepository(pool))
 
+	// Shared: TruckService manages trucks; ELDDeviceService looks them up.
+	truckRepo := repository.NewTruckRepository(pool)
+
 	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Security{
 		Tokens:      tokens,
 		Permissions: userSvc,
 	}, server.Handlers{
-		Health:  handler.NewHealthHandler(pool, log),
-		Auth:    handler.NewAuthHandler(authSvc),
-		User:    handler.NewUserHandler(userSvc),
-		Company: handler.NewCompanyHandler(companySvc),
-		Driver:  handler.NewDriverHandler(driverSvc),
-		Truck:   handler.NewTruckHandler(service.NewTruckService(repository.NewTruckRepository(pool), companyRepo)),
+		Health:    handler.NewHealthHandler(pool, log),
+		Auth:      handler.NewAuthHandler(authSvc),
+		User:      handler.NewUserHandler(userSvc),
+		Company:   handler.NewCompanyHandler(companySvc),
+		Driver:    handler.NewDriverHandler(driverSvc),
+		Truck:     handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo)),
+		ELDDevice: handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo)),
 	})
 
 	srv := &http.Server{

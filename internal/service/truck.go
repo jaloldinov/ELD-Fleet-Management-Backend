@@ -80,7 +80,7 @@ func NewTruckService(repo TruckRepository, companies CompanyLookup) *TruckServic
 }
 
 func (s *TruckService) Create(ctx context.Context, p auth.Principal, in CreateTruckInput) (*model.Truck, error) {
-	companyID, err := s.targetCompany(ctx, p, in.CompanyID)
+	companyID, err := targetCompany(ctx, s.companies, p, in.CompanyID)
 	if err != nil {
 		return nil, err
 	}
@@ -176,10 +176,10 @@ func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUI
 	return s.repo.SoftDelete(ctx, id)
 }
 
-// targetCompany decides which company a new truck belongs to: the caller's
-// own company for company users (from the token), a required and existing
-// company for platform users.
-func (s *TruckService) targetCompany(ctx context.Context, p auth.Principal, requested *uuid.UUID) (uuid.UUID, error) {
+// targetCompany decides which company a new fleet record (truck, ELD
+// device...) belongs to: the caller's own company for company users (from
+// the token), a required and existing company for platform users.
+func targetCompany(ctx context.Context, companies CompanyLookup, p auth.Principal, requested *uuid.UUID) (uuid.UUID, error) {
 	if !p.IsPlatformUser() {
 		if requested != nil && *requested != *p.CompanyID {
 			return uuid.Nil, model.ErrNotFound
@@ -189,7 +189,7 @@ func (s *TruckService) targetCompany(ctx context.Context, p auth.Principal, requ
 	if requested == nil {
 		return uuid.Nil, &model.ValidationError{Fields: map[string]string{"company_id": "is required"}}
 	}
-	if _, err := s.companies.GetByID(ctx, *requested); errors.Is(err, model.ErrNotFound) {
+	if _, err := companies.GetByID(ctx, *requested); errors.Is(err, model.ErrNotFound) {
 		return uuid.Nil, &model.ValidationError{Fields: map[string]string{"company_id": "company does not exist"}}
 	} else if err != nil {
 		return uuid.Nil, err

@@ -26,12 +26,13 @@ type Options struct {
 // Handlers groups every HTTP handler the router needs.
 // New handlers (company, user, truck, ...) are added here as we build them.
 type Handlers struct {
-	Health  *handler.HealthHandler
-	Auth    *handler.AuthHandler
-	User    *handler.UserHandler
-	Company *handler.CompanyHandler
-	Driver  *handler.DriverHandler
-	Truck   *handler.TruckHandler
+	Health    *handler.HealthHandler
+	Auth      *handler.AuthHandler
+	User      *handler.UserHandler
+	Company   *handler.CompanyHandler
+	Driver    *handler.DriverHandler
+	Truck     *handler.TruckHandler
+	ELDDevice *handler.ELDDeviceHandler
 }
 
 // Security holds what the router needs to protect routes.
@@ -123,6 +124,16 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 	trucks.GET("/:id", perm.Require(model.PermTruckRead), h.Truck.Get)
 	trucks.PATCH("/:id", perm.Require(model.PermTruckUpdate), h.Truck.Update)
 	trucks.DELETE("/:id", perm.Require(model.PermTruckDelete), h.Truck.Delete)
+
+	// Installing/removing a device is an edit of the device: eld:update.
+	elds := protected.Group("/eld-devices")
+	elds.POST("", perm.Require(model.PermELDCreate), h.ELDDevice.Create)
+	elds.GET("", perm.Require(model.PermELDRead), h.ELDDevice.List)
+	elds.GET("/:id", perm.Require(model.PermELDRead), h.ELDDevice.Get)
+	elds.PATCH("/:id", perm.Require(model.PermELDUpdate), h.ELDDevice.Update)
+	elds.DELETE("/:id", perm.Require(model.PermELDDelete), h.ELDDevice.Delete)
+	elds.PUT("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.AssignTruck)
+	elds.DELETE("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.UnassignTruck)
 
 	return r
 }

@@ -1,0 +1,160 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/jaloldinov/ELD-learning/internal/model"
+)
+
+const eldDeviceColumns = `id, company_id, serial_number, model, firmware_version,
+	truck_id, is_active, created_at, updated_at, deleted_at`
+
+type ELDDeviceRepository struct {
+	db DBTX
+}
+
+func NewELDDeviceRepository(db DBTX) *ELDDeviceRepository {
+	return &ELDDeviceRepository{db: db}
+}
+
+// q returns the connection to use: the caller's transaction if ctx carries
+// one, otherwise the pool.
+func (r *ELDDeviceRepository) q(ctx context.Context) DBTX {
+	return conn(ctx, r.db)
+}
+
+// Create inserts an unassigned device. Use SetTruck to install it.
+func (r *ELDDeviceRepository) Create(ctx context.Context, d model.ELDDevice) (*model.ELDDevice, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		INSERT INTO eld_devices (company_id, serial_number, model, firmware_version)
+		VALUES ($1, $2, $3, $4)
+		RETURNING `+eldDeviceColumns,
+		d.CompanyID, d.SerialNumber, d.Model, d.FirmwareVersion,
+	)
+	created, err := scanELDDevice(row)
+	if err != nil {
+		return nil, mapELDDeviceError("create eld device", err)
+	}
+	return created, nil
+}
+
+func (r *ELDDeviceRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		SELECT `+eldDeviceColumns+` FROM eld_devices
+		WHERE id = $1 AND deleted_at IS NULL`, id)
+	d, err := scanELDDevice(row)
+	if err != nil {
+		return nil, mapELDDeviceError("get eld device", err)
+	}
+	return d, nil
+}
+
+func (r *ELDDeviceRepository) List(ctx context.Context, f model.ELDDeviceFilter, limit, offset int) ([]model.ELDDevice, int, error) {
+	const where = `
+		WHERE deleted_at IS NULL
+		  AND ($1::uuid IS NULL OR company_id = $1)
+		  AND ($2::boolean IS NULL OR is_active = $2)
+		  AND ($3::uuid IS NULL OR truck_id = $3)`
+
+	var total int
+	if err := r.q(ctx).QueryRow(ctx, `SELECT count(*) FROM eld_devices`+where,
+		f.CompanyID, f.IsActive, f.TruckID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count eld devices: %w", err)
+	}
+
+	rows, err := r.q(ctx).Query(ctx, `SELECT `+eldDeviceColumns+` FROM eld_devices`+where+`
+		ORDER BY id
+		LIMIT $4 OFFSET $5`,
+		f.CompanyID, f.IsActive, f.TruckID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list eld devices: %w", err)
+	}
+	devices, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.ELDDevice, error) {
+		d, err := scanELDDevice(row)
+		if err != nil {
+			return model.ELDDevice{}, err
+		}
+		return *d, nil
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("scan eld devices: %w", err)
+	}
+	return devices, total, nil
+}
+
+// Update saves the editable fields. The serial number (identity) and the
+// truck (see SetTruck) are not changed here.
+func (r *ELDDeviceRepository) Update(ctx context.Context, d model.ELDDevice) (*model.ELDDevice, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		UPDATE eld_devices
+		SET model = $2, firmware_version = $3, is_active = $4
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING `+eldDeviceColumns,
+		d.ID, d.Model, d.FirmwareVersion, d.IsActive,
+	)
+	updated, err := scanELDDevice(row)
+	if err != nil {
+		return nil, mapELDDeviceError("update eld device", err)
+	}
+	return updated, nil
+}
+
+// SetTruck installs the device in a truck, moves it to another truck, or
+// (truckID nil) removes it from its truck.
+func (r *ELDDeviceRepository) SetTruck(ctx context.Context, id uuid.UUID, truckID *uuid.UUID) (*model.ELDDevice, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		UPDATE eld_devices SET truck_id = $2
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING `+eldDeviceColumns, id, truckID)
+	d, err := scanELDDevice(row)
+	if err != nil {
+		return nil, mapELDDeviceError("set eld device truck", err)
+	}
+	return d, nil
+}
+
+// SoftDelete also removes the device from its truck, so the truck is free
+// for another device.
+func (r *ELDDeviceRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.q(ctx).Exec(ctx, `
+		UPDATE eld_devices SET deleted_at = now(), truck_id = NULL
+		WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return fmt.Errorf("delete eld device: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return model.ErrNotFound
+	}
+	return nil
+}
+
+func scanELDDevice(row pgx.Row) (*model.ELDDevice, error) {
+	var d model.ELDDevice
+	err := row.Scan(&d.ID, &d.CompanyID, &d.SerialNumber, &d.Model, &d.FirmwareVersion,
+		&d.TruckID, &d.IsActive, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+func mapELDDeviceError(op string, err error) error {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return model.ErrNotFound
+	case isUniqueViolation(err, "eld_devices_serial_alive_uniq"):
+		return model.ErrSerialTaken
+	case isUniqueViolation(err, "eld_devices_truck_uniq"):
+		return model.ErrTruckHasELD
+	default:
+		// eld_devices_truck_company_fkey lands here: the service checks the
+		// truck's company first, so reaching the FK means a bug, not bad input.
+		return fmt.Errorf("%s: %w", op, err)
+	}
+}

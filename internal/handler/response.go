@@ -61,7 +61,9 @@ func handleError(c *gin.Context, err error) {
 		errors.Is(err, model.ErrUsernameTaken),
 		errors.Is(err, model.ErrLicenseTaken),
 		errors.Is(err, model.ErrVINTaken),
-		errors.Is(err, model.ErrUnitNumberTaken):
+		errors.Is(err, model.ErrUnitNumberTaken),
+		errors.Is(err, model.ErrSerialTaken),
+		errors.Is(err, model.ErrTruckHasELD):
 		RespondError(c, http.StatusConflict, CodeConflict, err.Error(), nil)
 	case errors.Is(err, model.ErrInvalidCredentials):
 		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
@@ -122,4 +124,18 @@ func queryInt(c *gin.Context, key string) (n int, ok bool) {
 	}
 	n, err := strconv.Atoi(s)
 	return n, err == nil
+}
+
+// queryUUID reads an optional UUID query parameter. A missing parameter
+// returns nil; ok is false only for invalid UUIDs.
+func queryUUID(c *gin.Context, key string) (id *uuid.UUID, ok bool) {
+	s := c.Query(key)
+	if s == "" {
+		return nil, true
+	}
+	parsed, err := uuid.Parse(s)
+	if err != nil {
+		return nil, false
+	}
+	return &parsed, true
 }

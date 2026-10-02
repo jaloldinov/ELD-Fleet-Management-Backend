@@ -1,5 +1,11 @@
 basePath: /
 definitions:
+  handler.AssignTruckRequest:
+    properties:
+      truck_id:
+        format: uuid
+        type: string
+    type: object
   handler.CompanyResponse:
     properties:
       created_at:
@@ -71,6 +77,25 @@ definitions:
         type: string
       username:
         example: driver.bob
+        type: string
+    type: object
+  handler.CreateELDDeviceRequest:
+    properties:
+      company_id:
+        description: 'Platform users: required. Company users: omit (their own company
+          is used).'
+        format: uuid
+        type: string
+      firmware_version:
+        example: 1.2.3
+        type: string
+      model:
+        example: PT30
+        type: string
+      serial_number:
+        description: Hardware serial, 4-32 letters/digits/hyphens. Cannot be changed
+          later.
+        example: PT30-0001
         type: string
     type: object
   handler.CreateTruckRequest:
@@ -179,6 +204,37 @@ definitions:
         example: driver.bob
         type: string
     type: object
+  handler.ELDDeviceResponse:
+    properties:
+      company_id:
+        format: uuid
+        type: string
+      created_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      firmware_version:
+        example: 1.2.3
+        type: string
+      id:
+        format: uuid
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      model:
+        example: PT30
+        type: string
+      serial_number:
+        example: PT30-0001
+        type: string
+      truck_id:
+        description: null = not installed
+        format: uuid
+        type: string
+      updated_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+    type: object
   handler.ErrorBody:
     properties:
       code:
@@ -233,6 +289,22 @@ definitions:
         type: integer
       total:
         example: 8
+        type: integer
+    type: object
+  handler.ListELDDevicesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.ELDDeviceResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 14
         type: integer
     type: object
   handler.ListTrucksResponse:
@@ -424,6 +496,18 @@ definitions:
         type: string
       license_state:
         example: OK
+        type: string
+    type: object
+  handler.UpdateELDDeviceRequest:
+    properties:
+      firmware_version:
+        example: 2.0.0
+        type: string
+      is_active:
+        example: false
+        type: boolean
+      model:
+        example: PT30
         type: string
     type: object
   handler.UpdateTruckRequest:
@@ -1148,6 +1232,347 @@ paths:
       summary: My driver profile
       tags:
       - drivers
+  /api/v1/eld-devices:
+    get:
+      description: |-
+        Requires permission: eld:read
+        Company users always get their own company's devices (company_id is ignored).
+      parameters:
+      - description: Filter by company (platform users only)
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - description: Only active (true) or inactive (false) devices
+        in: query
+        name: is_active
+        type: boolean
+      - description: The device installed in this truck
+        format: uuid
+        in: query
+        name: truck_id
+        type: string
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListELDDevicesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission eld:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List ELD devices
+      tags:
+      - eld-devices
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: eld:create
+        New devices are not installed in any truck; use PUT /eld-devices/{id}/truck.
+      parameters:
+      - description: Device to register
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateELDDeviceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.ELDDeviceResponse'
+        "400":
+          description: invalid JSON or validation failed
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission eld:create
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "409":
+          description: serial number already registered
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Register an ELD device
+      tags:
+      - eld-devices
+  /api/v1/eld-devices/{id}:
+    delete:
+      description: |-
+        Requires permission: eld:delete
+        Soft delete; also removes the device from its truck. The serial can be registered again afterwards.
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission eld:delete
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete an ELD device
+      tags:
+      - eld-devices
+    get:
+      description: 'Requires permission: eld:read'
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ELDDeviceResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission eld:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get an ELD device
+      tags:
+      - eld-devices
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: eld:update
+        Partial update. The serial number cannot be changed. An installed device cannot be deactivated.
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateELDDeviceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ELDDeviceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission eld:update
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update an ELD device
+      tags:
+      - eld-devices
+  /api/v1/eld-devices/{id}/truck:
+    delete:
+      description: |-
+        Requires permission: eld:update
+        Succeeds also when the device is not installed.
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ELDDeviceResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission eld:update
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Remove a device from its truck
+      tags:
+      - eld-devices
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: eld:update
+        Installs the device in a truck of the same company, or moves it there from its current truck.
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Truck to install the device in
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.AssignTruckRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ELDDeviceResponse'
+        "400":
+          description: truck not found, out of service, or device inactive
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission eld:update
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: device not found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "409":
+          description: the truck already has a device
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Install a device in a truck
+      tags:
+      - eld-devices
   /api/v1/trucks:
     get:
       description: |-

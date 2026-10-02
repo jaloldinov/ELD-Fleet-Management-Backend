@@ -74,12 +74,13 @@ func newTestRouterWith(buf *bytes.Buffer, opts Options, perms []model.Permission
 	log := logger.New(buf, true, "debug")
 	sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(perms)}
 	return NewRouter(log, opts, sec, Handlers{
-		Health:  handler.NewHealthHandler(okPinger{}, log),
-		Auth:    handler.NewAuthHandler(nil),
-		User:    handler.NewUserHandler(nil),
-		Driver:  handler.NewDriverHandler(nil),
-		Truck:   handler.NewTruckHandler(nil),
-		Company: handler.NewCompanyHandler(failingCompanyService{}),
+		Health:    handler.NewHealthHandler(okPinger{}, log),
+		Auth:      handler.NewAuthHandler(nil),
+		User:      handler.NewUserHandler(nil),
+		Driver:    handler.NewDriverHandler(nil),
+		Truck:     handler.NewTruckHandler(nil),
+		ELDDevice: handler.NewELDDeviceHandler(nil),
+		Company:   handler.NewCompanyHandler(failingCompanyService{}),
 	})
 }
 

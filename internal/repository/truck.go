@@ -104,8 +104,13 @@ func (r *TruckRepository) Update(ctx context.Context, t model.Truck) (*model.Tru
 	return updated, nil
 }
 
+// SoftDelete also removes the truck's ELD device (if any) from it, in the
+// same statement: a truck that left the fleet has nothing installed.
 func (r *TruckRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	tag, err := r.q(ctx).Exec(ctx, `
+		WITH uninstall AS (
+			UPDATE eld_devices SET truck_id = NULL WHERE truck_id = $1
+		)
 		UPDATE trucks SET deleted_at = now()
 		WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
