@@ -24,6 +24,7 @@ var (
 	ErrEmailTaken     = errors.New("email is already used by another user")
 	ErrUsernameTaken  = errors.New("username is already used by another user")
 	ErrRoleNotFound   = errors.New("role not found")
+	ErrLicenseTaken   = errors.New("this license number is already registered in that state")
 
 	// ErrInvalidCredentials is deliberately the same for "no such user" and
 	// "wrong password", so attackers cannot learn which accounts exist.

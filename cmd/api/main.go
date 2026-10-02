@@ -85,6 +85,10 @@ func run() error {
 
 	userSvc := service.NewUserService(userRepo, companyRepo, sessionRepo, hasher)
 
+	// Transactions spanning several repositories (e.g. user + driver profile).
+	txManager := repository.NewTxManager(pool)
+	driverSvc := service.NewDriverService(txManager, userSvc, repository.NewDriverRepository(pool))
+
 	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Security{
 		Tokens:      tokens,
 		Permissions: userSvc,
@@ -93,6 +97,7 @@ func run() error {
 		Auth:    handler.NewAuthHandler(authSvc),
 		User:    handler.NewUserHandler(userSvc),
 		Company: handler.NewCompanyHandler(companySvc),
+		Driver:  handler.NewDriverHandler(driverSvc),
 	})
 
 	srv := &http.Server{

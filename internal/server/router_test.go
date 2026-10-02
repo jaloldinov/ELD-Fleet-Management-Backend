@@ -77,6 +77,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts Options, perms []model.Permission
 		Health:  handler.NewHealthHandler(okPinger{}, log),
 		Auth:    handler.NewAuthHandler(nil),
 		User:    handler.NewUserHandler(nil),
+		Driver:  handler.NewDriverHandler(nil),
 		Company: handler.NewCompanyHandler(failingCompanyService{}),
 	})
 }
@@ -158,7 +159,8 @@ func TestRouter_EveryNonPublicRouteRequiresAuthentication(t *testing.T) {
 
 // authenticatedOnlyRoutes need a login but no specific permission.
 var authenticatedOnlyRoutes = map[string]bool{
-	"GET /api/v1/auth/me": true,
+	"GET /api/v1/auth/me":    true,
+	"GET /api/v1/drivers/me": true,
 }
 
 // A logged-in user with NO permissions must be denied (403) everywhere except

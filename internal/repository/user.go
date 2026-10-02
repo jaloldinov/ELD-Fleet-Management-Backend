@@ -22,6 +22,12 @@ func NewUserRepository(db DBTX) *UserRepository {
 	return &UserRepository{db: db}
 }
 
+// q returns the connection to use: the caller's transaction if ctx carries
+// one, otherwise the pool.
+func (r *UserRepository) q(ctx context.Context) DBTX {
+	return conn(ctx, r.db)
+}
+
 // Create inserts a user and assigns the given system roles in ONE transaction:
 // either the user and all roles are saved, or nothing is.
 // roleNames must not contain duplicates.
@@ -30,7 +36,7 @@ func (r *UserRepository) Create(ctx context.Context, u model.User, roleNames []s
 
 	// BeginFunc: BEGIN → fn(tx) → COMMIT if fn returns nil, ROLLBACK otherwise
 	// (also on panic). No way to forget the rollback.
-	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, r.q(ctx), func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
 			INSERT INTO users (company_id, email, username, password_hash, first_name, last_name)
 			VALUES ($1, $2, $3, $4, $5, $6)
@@ -68,7 +74,7 @@ func (r *UserRepository) Create(ctx context.Context, u model.User, roleNames []s
 
 // GetByID returns an alive user or model.ErrNotFound.
 func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
-	row := r.db.QueryRow(ctx, `
+	row := r.q(ctx).QueryRow(ctx, `
 		SELECT `+userColumns+`
 		FROM users
 		WHERE id = $1 AND deleted_at IS NULL`,
@@ -87,7 +93,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 func (r *UserRepository) GetByLogin(ctx context.Context, login string) (*model.User, error) {
 	// lower(...) on both sides matches the lower(...) unique indexes, so
 	// Postgres can use them for this lookup.
-	row := r.db.QueryRow(ctx, `
+	row := r.q(ctx).QueryRow(ctx, `
 		SELECT `+userColumns+`
 		FROM users
 		WHERE deleted_at IS NULL
@@ -107,7 +113,7 @@ func (r *UserRepository) GetByLogin(ctx context.Context, login string) (*model.U
 // still be valid for a few minutes (JWTs cannot be revoked), but every
 // permission check fails immediately.
 func (r *UserRepository) GetPermissions(ctx context.Context, userID uuid.UUID) ([]model.Permission, error) {
-	rows, err := r.db.Query(ctx, `
+	rows, err := r.q(ctx).Query(ctx, `
 		SELECT DISTINCT rp.permission_code
 		FROM users u
 		JOIN user_roles ur       ON ur.user_id = u.id
@@ -160,7 +166,7 @@ func (r *UserRepository) List(ctx context.Context, f model.UserFilter, limit, of
 	// Same scope pattern as companies: the filter is applied in SQL, so other
 	// tenants' rows never leave the database.
 	var total int
-	if err := r.db.QueryRow(ctx, `
+	if err := r.q(ctx).QueryRow(ctx, `
 		SELECT count(*) FROM users
 		WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR company_id = $1)`,
 		f.CompanyID,
@@ -168,7 +174,7 @@ func (r *UserRepository) List(ctx context.Context, f model.UserFilter, limit, of
 		return nil, 0, fmt.Errorf("count users: %w", err)
 	}
 
-	rows, err := r.db.Query(ctx, `
+	rows, err := r.q(ctx).Query(ctx, `
 		SELECT `+userColumns+`
 		FROM users
 		WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR company_id = $1)
@@ -198,7 +204,7 @@ func (r *UserRepository) List(ctx context.Context, f model.UserFilter, limit, of
 // of 20 users + 20 queries for their roles. = ANY($1) takes the whole slice
 // of ids as a Postgres array.
 func (r *UserRepository) GetRoles(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID][]string, error) {
-	rows, err := r.db.Query(ctx, `
+	rows, err := r.q(ctx).Query(ctx, `
 		SELECT ur.user_id, r.name
 		FROM user_roles ur
 		JOIN roles r ON r.id = ur.role_id
@@ -231,7 +237,7 @@ func (r *UserRepository) GetRoles(ctx context.Context, userIDs []uuid.UUID) (map
 func (r *UserRepository) Update(ctx context.Context, u model.User, roleNames []string) (*model.User, error) {
 	var updated *model.User
 
-	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, r.q(ctx), func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
 			UPDATE users
 			SET first_name = $2, last_name = $3, is_active = $4
@@ -272,7 +278,7 @@ func (r *UserRepository) Update(ctx context.Context, u model.User, roleNames []s
 
 // SoftDelete marks a user as deleted.
 func (r *UserRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	tag, err := r.db.Exec(ctx, `
+	tag, err := r.q(ctx).Exec(ctx, `
 		UPDATE users SET deleted_at = now()
 		WHERE id = $1 AND deleted_at IS NULL`,
 		id,

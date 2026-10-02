@@ -30,6 +30,7 @@ type Handlers struct {
 	Auth    *handler.AuthHandler
 	User    *handler.UserHandler
 	Company *handler.CompanyHandler
+	Driver  *handler.DriverHandler
 }
 
 // Security holds what the router needs to protect routes.
@@ -104,6 +105,16 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 	users.GET("/:id", perm.Require(model.PermUserRead), h.User.Get)
 	users.PATCH("/:id", perm.Require(model.PermUserUpdate), h.User.Update)
 	users.DELETE("/:id", perm.Require(model.PermUserDelete), h.User.Delete)
+
+	drivers := protected.Group("/drivers")
+	// Login only: a driver reads their OWN profile (identity, not a permission).
+	// Registered before /:id; Gin matches the static segment "me" first.
+	drivers.GET("/me", h.Driver.Me)
+	drivers.POST("", perm.Require(model.PermDriverCreate), h.Driver.Create)
+	drivers.GET("", perm.Require(model.PermDriverRead), h.Driver.List)
+	drivers.GET("/:id", perm.Require(model.PermDriverRead), h.Driver.Get)
+	drivers.PATCH("/:id", perm.Require(model.PermDriverUpdate), h.Driver.Update)
+	drivers.DELETE("/:id", perm.Require(model.PermDriverDelete), h.Driver.Delete)
 
 	return r
 }

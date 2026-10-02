@@ -20,10 +20,16 @@ func NewSessionRepository(db DBTX) *SessionRepository {
 	return &SessionRepository{db: db}
 }
 
+// q returns the connection to use: the caller's transaction if ctx carries
+// one, otherwise the pool.
+func (r *SessionRepository) q(ctx context.Context) DBTX {
+	return conn(ctx, r.db)
+}
+
 // CreateForLogin stores the first refresh token of a new session and records
 // the login time, in one transaction.
 func (r *SessionRepository) CreateForLogin(ctx context.Context, t model.RefreshToken) error {
-	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, r.q(ctx), func(tx pgx.Tx) error {
 		if err := insertRefreshToken(ctx, tx, t); err != nil {
 			return err
 		}
@@ -49,7 +55,7 @@ func (r *SessionRepository) Rotate(ctx context.Context, presentedHash []byte, ne
 		outcome error // decided inside the transaction, returned after COMMIT
 	)
 
-	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, r.q(ctx), func(tx pgx.Tx) error {
 		var (
 			oldID                     uuid.UUID
 			rotated, revoked, expired bool
@@ -118,7 +124,7 @@ func (r *SessionRepository) Rotate(ctx context.Context, presentedHash []byte, ne
 // Revoke ends one session (logout). Unknown or already revoked tokens are
 // ignored, so logout is idempotent and reveals nothing.
 func (r *SessionRepository) Revoke(ctx context.Context, tokenHash []byte) error {
-	_, err := r.db.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		UPDATE refresh_tokens SET revoked_at = now()
 		WHERE token_hash = $1 AND revoked_at IS NULL`,
 		tokenHash,
@@ -131,7 +137,7 @@ func (r *SessionRepository) Revoke(ctx context.Context, tokenHash []byte) error 
 
 // RevokeAllForUser ends every session of a user (theft, deactivation, ...).
 func (r *SessionRepository) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
-	if _, err := r.db.Exec(ctx, revokeAllForUserSQL, userID); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, revokeAllForUserSQL, userID); err != nil {
 		return fmt.Errorf("revoke user sessions: %w", err)
 	}
 	return nil
