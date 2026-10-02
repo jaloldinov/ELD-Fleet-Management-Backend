@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -154,4 +155,36 @@ func insertRefreshToken(ctx context.Context, db DBTX, t model.RefreshToken) erro
 		t.UserID, t.TokenHash, t.ExpiresAt, t.UserAgent, t.IP,
 	)
 	return err
+}
+
+// DeleteExpired permanently deletes tokens that expired before `before`, in
+// batches of batchSize, and returns how many it deleted.
+//
+// Batches keep each statement short: one huge DELETE would hold locks for a
+// long time and block logins. Oldest first matters: a rotated token always
+// expires before its successor, so a token is deleted no later than the
+// token it points to with replaced_by_id, and the foreign key holds at every
+// batch boundary.
+func (r *SessionRepository) DeleteExpired(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	var total int64
+	for {
+		tag, err := r.q(ctx).Exec(ctx, `
+			DELETE FROM refresh_tokens
+			WHERE id IN (
+				SELECT id FROM refresh_tokens
+				WHERE expires_at < $1
+				ORDER BY expires_at, id
+				LIMIT $2
+			)`, before, batchSize)
+		if err != nil {
+			return total, fmt.Errorf("delete expired refresh tokens: %w", err)
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < int64(batchSize) {
+			return total, nil // last (partial) batch
+		}
+		if err := ctx.Err(); err != nil {
+			return total, err // shutting down: stop between batches
+		}
+	}
 }

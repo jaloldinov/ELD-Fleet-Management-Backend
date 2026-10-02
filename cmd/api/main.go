@@ -20,6 +20,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/config"
 	"github.com/jaloldinov/ELD-learning/internal/database"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
+	"github.com/jaloldinov/ELD-learning/internal/jobs"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
 	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
@@ -105,6 +106,17 @@ func run() error {
 	loginLimiter := ratelimit.New(5, 15*time.Minute)
 	go authIPLimiter.RunCleanup(jobsCtx)
 	go loginLimiter.RunCleanup(jobsCtx)
+
+	// Hourly: delete refresh tokens that expired over 7 days ago. Safe to
+	// run on every instance at once: deleting already-deleted rows is a no-op.
+	sessionCleaner := service.NewSessionCleaner(sessionRepo, 7*24*time.Hour)
+	go jobs.Every(jobsCtx, log, "refresh-token-cleanup", time.Hour, func(ctx context.Context) error {
+		n, err := sessionCleaner.Run(ctx)
+		if n > 0 {
+			log.Info("deleted expired refresh tokens", "count", n)
+		}
+		return err
+	})
 
 	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Security{
 		Tokens:      tokens,

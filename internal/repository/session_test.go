@@ -231,3 +231,53 @@ func TestSessionRepository_RevokeAllForUser(t *testing.T) {
 
 	assert.Equal(t, 0, f.activeTokens(t))
 }
+
+// insertChain stores a rotation chain of n expired tokens: each token points
+// (replaced_by_id) to the next one, which expires an hour later, the way
+// Rotate produces them. Returns the number of rows inserted.
+func (f *sessionFixture) insertExpiredChain(t *testing.T, n int) {
+	t.Helper()
+	ctx := context.Background()
+	var next *uuid.UUID
+	// Insert newest first, so each older token can point to its successor.
+	for i := n; i >= 1; i-- {
+		_, tok := f.newToken(t, 0)
+		expires := time.Now().Add(-48 * time.Hour).Add(time.Duration(i) * time.Hour)
+		var id uuid.UUID
+		require.NoError(t, f.db.QueryRow(ctx, `
+			INSERT INTO refresh_tokens (user_id, token_hash, expires_at, revoked_at, replaced_by_id)
+			VALUES ($1, $2, $3, CASE WHEN $4::uuid IS NULL THEN NULL ELSE now() END, $4)
+			RETURNING id`, f.userID, tok.TokenHash, expires, next).Scan(&id))
+		next = &id
+	}
+}
+
+func TestSessionRepository_DeleteExpired(t *testing.T) {
+	f := newSessionFixture(t)
+	ctx := context.Background()
+	f.insertExpiredChain(t, 5)
+	f.login(t) // valid for an hour
+	f.login(t)
+
+	// Batch size 2 forces 3 batches through the middle of the chain: the
+	// foreign key would fail if a successor were deleted before its
+	// predecessor.
+	deleted, err := f.repo.DeleteExpired(ctx, time.Now(), 2)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 5, deleted)
+	var left int
+	require.NoError(t, f.db.QueryRow(ctx, `SELECT count(*) FROM refresh_tokens`).Scan(&left))
+	assert.Equal(t, 2, left, "unexpired sessions are kept")
+}
+
+func TestSessionRepository_DeleteExpired_RespectsCutoff(t *testing.T) {
+	f := newSessionFixture(t)
+	f.insertExpiredChain(t, 3) // expired 47h, 46h and 45h ago
+
+	// Keep anything that expired within the last 46.5 hours.
+	deleted, err := f.repo.DeleteExpired(context.Background(), time.Now().Add(-46*time.Hour-30*time.Minute), 100)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, deleted, "only the token that expired before the cutoff")
+}
