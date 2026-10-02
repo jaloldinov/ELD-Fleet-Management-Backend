@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
@@ -14,11 +15,11 @@ import (
 // CompanyService is what CompanyHandler needs from the service layer.
 // *service.CompanyService satisfies it; tests use a fake.
 type CompanyService interface {
-	Create(ctx context.Context, in service.CreateCompanyInput) (*model.Company, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*model.Company, error)
-	List(ctx context.Context, p service.ListParams) (*service.CompanyPage, error)
-	Update(ctx context.Context, id uuid.UUID, in service.UpdateCompanyInput) (*model.Company, error)
-	Delete(ctx context.Context, id uuid.UUID) error
+	Create(ctx context.Context, p auth.Principal, in service.CreateCompanyInput) (*model.Company, error)
+	GetByID(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.Company, error)
+	List(ctx context.Context, p auth.Principal, params service.ListParams) (*service.CompanyPage, error)
+	Update(ctx context.Context, p auth.Principal, id uuid.UUID, in service.UpdateCompanyInput) (*model.Company, error)
+	Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error
 }
 
 type CompanyHandler struct {
@@ -48,6 +49,10 @@ func NewCompanyHandler(svc CompanyService) *CompanyHandler {
 //	@Failure		500		{object}	ErrorResponse
 //	@Router			/api/v1/companies [post]
 func (h *CompanyHandler) Create(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
 	var req CreateCompanyRequest
 	if !bindJSON(c, &req) {
 		return
@@ -55,7 +60,8 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 
 	// c.Request.Context() carries the request ID and is cancelled if the
 	// client disconnects, so the service/database can stop early.
-	company, err := h.svc.Create(c.Request.Context(), req.toInput())
+	// The principal is passed EXPLICITLY: the service decides the tenant scope.
+	company, err := h.svc.Create(c.Request.Context(), p, req.toInput())
 	if err != nil {
 		handleError(c, err)
 		return
@@ -82,12 +88,16 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Router			/api/v1/companies/{id} [get]
 func (h *CompanyHandler) Get(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
 	id, ok := parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
 
-	company, err := h.svc.GetByID(c.Request.Context(), id)
+	company, err := h.svc.GetByID(c.Request.Context(), p, id)
 	if err != nil {
 		handleError(c, err)
 		return
@@ -100,6 +110,7 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 //
 //	@Summary		List companies
 //	@Description	Returns companies ordered by creation time. page_size is capped at 100.
+//	@Description	Platform users see all companies; company users see only their own.
 //	@Tags			companies
 //	@Security		BearerAuth
 //	@Description	Requires permission: company:read
@@ -113,6 +124,10 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 //	@Failure		500			{object}	ErrorResponse
 //	@Router			/api/v1/companies [get]
 func (h *CompanyHandler) List(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
 	var v model.Validator
 	page, ok := queryInt(c, "page")
 	v.Check(ok, "page", "must be an integer")
@@ -123,7 +138,7 @@ func (h *CompanyHandler) List(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.List(c.Request.Context(), service.ListParams{Page: page, PageSize: size})
+	result, err := h.svc.List(c.Request.Context(), p, service.ListParams{Page: page, PageSize: size})
 	if err != nil {
 		handleError(c, err)
 		return
@@ -152,6 +167,10 @@ func (h *CompanyHandler) List(c *gin.Context) {
 //	@Failure		500		{object}	ErrorResponse
 //	@Router			/api/v1/companies/{id} [patch]
 func (h *CompanyHandler) Update(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
 	id, ok := parseUUIDParam(c, "id")
 	if !ok {
 		return
@@ -161,7 +180,7 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 		return
 	}
 
-	company, err := h.svc.Update(c.Request.Context(), id, req.toInput())
+	company, err := h.svc.Update(c.Request.Context(), p, id, req.toInput())
 	if err != nil {
 		handleError(c, err)
 		return
@@ -186,12 +205,16 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Router			/api/v1/companies/{id} [delete]
 func (h *CompanyHandler) Delete(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
 	id, ok := parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
 
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.Delete(c.Request.Context(), p, id); err != nil {
 		handleError(c, err)
 		return
 	}

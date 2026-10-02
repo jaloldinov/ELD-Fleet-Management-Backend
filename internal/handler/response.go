@@ -69,6 +69,8 @@ func handleError(c *gin.Context, err error) {
 		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, model.ErrRefreshTokenInvalid.Error(), nil)
 	case errors.Is(err, model.ErrRefreshTokenInvalid):
 		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
+	case errors.Is(err, model.ErrForbidden):
+		RespondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
 	case errors.Is(err, model.ErrUserInactive):
 		RespondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
 	default:

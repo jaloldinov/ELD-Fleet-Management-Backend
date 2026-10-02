@@ -88,7 +88,7 @@ func TestCompanyRepository_List(t *testing.T) {
 	require.NoError(t, repo.SoftDelete(ctx, deleted.ID))
 
 	t.Run("first page", func(t *testing.T) {
-		page, total, err := repo.List(ctx, 2, 0)
+		page, total, err := repo.List(ctx, model.CompanyFilter{}, 2, 0)
 
 		require.NoError(t, err)
 		assert.Equal(t, 3, total, "deleted companies are not counted")
@@ -98,7 +98,7 @@ func TestCompanyRepository_List(t *testing.T) {
 	})
 
 	t.Run("second page", func(t *testing.T) {
-		page, total, err := repo.List(ctx, 2, 2)
+		page, total, err := repo.List(ctx, model.CompanyFilter{}, 2, 2)
 
 		require.NoError(t, err)
 		assert.Equal(t, 3, total)
@@ -107,7 +107,7 @@ func TestCompanyRepository_List(t *testing.T) {
 	})
 
 	t.Run("past the end", func(t *testing.T) {
-		page, total, err := repo.List(ctx, 2, 10)
+		page, total, err := repo.List(ctx, model.CompanyFilter{}, 2, 10)
 
 		require.NoError(t, err)
 		assert.Equal(t, 3, total)
@@ -175,4 +175,19 @@ func TestCompanyRepository_SoftDelete(t *testing.T) {
 
 		assert.NotEqual(t, acme.ID, reborn.ID)
 	})
+}
+
+func TestCompanyRepository_List_OnlyID(t *testing.T) {
+	repo := NewCompanyRepository(newTestDB(t))
+	ctx := context.Background()
+	createCompany(t, repo, "A", "1")
+	b := createCompany(t, repo, "B", "2")
+	createCompany(t, repo, "C", "3")
+
+	page, total, err := repo.List(ctx, model.CompanyFilter{OnlyID: &b.ID}, 20, 0)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "count is scoped too")
+	require.Len(t, page, 1)
+	assert.Equal(t, b.ID, page[0].ID)
 }

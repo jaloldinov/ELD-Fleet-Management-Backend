@@ -141,6 +141,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
                     },
+                    "403": {
+                        "description": "account is disabled",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -215,7 +221,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns companies ordered by creation time. page_size is capped at 100.\nRequires permission: company:read",
+                "description": "Returns companies ordered by creation time. page_size is capped at 100.\nPlatform users see all companies; company users see only their own.\nRequires permission: company:read",
                 "produces": [
                     "application/json"
                 ],

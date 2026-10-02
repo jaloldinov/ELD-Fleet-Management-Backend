@@ -17,3 +17,10 @@ type Company struct {
 	UpdatedAt time.Time
 	DeletedAt *time.Time // nil = not deleted (pointer because the column is nullable)
 }
+
+// CompanyFilter narrows a company list. The zero value means "no filter".
+type CompanyFilter struct {
+	// OnlyID restricts the result to one company. The service uses it to
+	// scope company users to their own company.
+	OnlyID *uuid.UUID
+}

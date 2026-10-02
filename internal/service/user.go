@@ -114,6 +114,11 @@ func (s *UserService) GetProfile(ctx context.Context, id uuid.UUID) (*UserProfil
 	if err != nil {
 		return nil, err
 	}
+	// The access token may still be valid for a few minutes after
+	// deactivation; the account itself is not usable any more.
+	if !u.IsActive {
+		return nil, model.ErrUserInactive
+	}
 	perms, err := s.repo.GetPermissions(ctx, id)
 	if err != nil {
 		return nil, err

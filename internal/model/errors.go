@@ -15,7 +15,11 @@ import (
 // (or its own), and the handler maps them to HTTP status codes.
 // Callers compare with errors.Is(err, model.ErrNotFound).
 var (
-	ErrNotFound       = errors.New("not found")
+	ErrNotFound = errors.New("not found")
+	// ErrForbidden: the caller may not perform this action, decided by a
+	// business rule in the service (permissions are checked earlier, by
+	// middleware). Becomes HTTP 403.
+	ErrForbidden      = errors.New("you are not allowed to perform this action")
 	ErrDOTNumberTaken = errors.New("dot number is already used by another company")
 	ErrEmailTaken     = errors.New("email is already used by another user")
 	ErrUsernameTaken  = errors.New("username is already used by another user")

@@ -35,6 +35,7 @@ func NewUserHandler(svc UserService) *UserHandler {
 //	@Security		BearerAuth
 //	@Success		200	{object}	MeResponse
 //	@Failure		401	{object}	ErrorResponse	"missing/invalid token, or the user no longer exists"
+//	@Failure		403	{object}	ErrorResponse	"account is disabled"
 //	@Failure		500	{object}	ErrorResponse
 //	@Router			/api/v1/auth/me [get]
 func (h *UserHandler) Me(c *gin.Context) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
@@ -35,7 +36,7 @@ var dotNumberRe = regexp.MustCompile(`^[0-9]{1,8}$`)
 type CompanyRepository interface {
 	Create(ctx context.Context, c model.Company) (*model.Company, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Company, error)
-	List(ctx context.Context, limit, offset int) ([]model.Company, int, error)
+	List(ctx context.Context, f model.CompanyFilter, limit, offset int) ([]model.Company, int, error)
 	Update(ctx context.Context, c model.Company) (*model.Company, error)
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 }
@@ -77,7 +78,20 @@ func NewCompanyService(repo CompanyRepository) *CompanyService {
 	return &CompanyService{repo: repo}
 }
 
-func (s *CompanyService) Create(ctx context.Context, in CreateCompanyInput) (*model.Company, error) {
+// Every method takes the acting Principal explicitly: the compiler forces each
+// caller to say WHO is acting, so tenant scoping cannot be forgotten.
+// Permissions (what) are already checked by middleware; these methods add the
+// tenant scope (where) and business rules.
+
+// Create is for platform users only.
+func (s *CompanyService) Create(ctx context.Context, p auth.Principal, in CreateCompanyInput) (*model.Company, error) {
+	// Defense in depth: company:create is only seeded for platform_admin, but
+	// even if a company role were granted it by mistake, a carrier must not
+	// create other carriers.
+	if !p.IsPlatformUser() {
+		return nil, model.ErrForbidden
+	}
+
 	c := model.Company{
 		Name:      strings.TrimSpace(in.Name),
 		DOTNumber: strings.TrimSpace(in.DOTNumber),
@@ -92,14 +106,24 @@ func (s *CompanyService) Create(ctx context.Context, in CreateCompanyInput) (*mo
 	return s.repo.Create(ctx, c)
 }
 
-func (s *CompanyService) GetByID(ctx context.Context, id uuid.UUID) (*model.Company, error) {
+func (s *CompanyService) GetByID(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.Company, error) {
+	if err := checkCompanyScope(p, id); err != nil {
+		return nil, err
+	}
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *CompanyService) List(ctx context.Context, p ListParams) (*CompanyPage, error) {
-	page, size := normalizePage(p)
+// List returns all companies for platform users, and only their own company
+// for company users.
+func (s *CompanyService) List(ctx context.Context, p auth.Principal, params ListParams) (*CompanyPage, error) {
+	page, size := normalizePage(params)
 
-	items, total, err := s.repo.List(ctx, size, (page-1)*size)
+	var f model.CompanyFilter
+	if !p.IsPlatformUser() {
+		f.OnlyID = p.CompanyID // the scope is applied in SQL, not filtered in Go
+	}
+
+	items, total, err := s.repo.List(ctx, f, size, (page-1)*size)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +133,16 @@ func (s *CompanyService) List(ctx context.Context, p ListParams) (*CompanyPage, 
 
 // Update applies a partial update: read the current company, change only the
 // fields that were sent, validate the result, then save.
-func (s *CompanyService) Update(ctx context.Context, id uuid.UUID, in UpdateCompanyInput) (*model.Company, error) {
+func (s *CompanyService) Update(ctx context.Context, p auth.Principal, id uuid.UUID, in UpdateCompanyInput) (*model.Company, error) {
+	if err := checkCompanyScope(p, id); err != nil {
+		return nil, err
+	}
+	// Field-level rule: suspending/reactivating a carrier is a platform
+	// (billing) decision. A company admin may edit their company, not this.
+	if in.IsActive != nil && !p.IsPlatformUser() {
+		return nil, model.ErrForbidden
+	}
+
 	if in.Name == nil && in.DOTNumber == nil && in.Timezone == nil && in.IsActive == nil {
 		return nil, &model.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
 	}
@@ -140,8 +173,22 @@ func (s *CompanyService) Update(ctx context.Context, id uuid.UUID, in UpdateComp
 	return s.repo.Update(ctx, *c)
 }
 
-func (s *CompanyService) Delete(ctx context.Context, id uuid.UUID) error {
+// Delete is for platform users only (same reasoning as Create).
+func (s *CompanyService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error {
+	if !p.IsPlatformUser() {
+		return model.ErrForbidden
+	}
 	return s.repo.SoftDelete(ctx, id)
+}
+
+// checkCompanyScope enforces "a company user only sees their own company".
+// Another company returns ErrNotFound, NOT ErrForbidden: a 403 would confirm
+// that the id exists. Outside your tenant, nothing exists.
+func checkCompanyScope(p auth.Principal, companyID uuid.UUID) error {
+	if p.IsPlatformUser() || *p.CompanyID == companyID {
+		return nil
+	}
+	return model.ErrNotFound
 }
 
 func validateCompany(c model.Company) error {

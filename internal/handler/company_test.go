@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
@@ -22,54 +23,67 @@ import (
 // fakeCompanyService is a hand-written stub (same idea as the fake repository
 // in the service tests): unset functions fail the test if called.
 type fakeCompanyService struct {
-	t        *testing.T
-	createFn func(in service.CreateCompanyInput) (*model.Company, error)
-	getFn    func(id uuid.UUID) (*model.Company, error)
-	listFn   func(p service.ListParams) (*service.CompanyPage, error)
-	updateFn func(id uuid.UUID, in service.UpdateCompanyInput) (*model.Company, error)
-	deleteFn func(id uuid.UUID) error
+	t            *testing.T
+	gotPrincipal auth.Principal
+	createFn     func(in service.CreateCompanyInput) (*model.Company, error)
+	getFn        func(id uuid.UUID) (*model.Company, error)
+	listFn       func(p service.ListParams) (*service.CompanyPage, error)
+	updateFn     func(id uuid.UUID, in service.UpdateCompanyInput) (*model.Company, error)
+	deleteFn     func(id uuid.UUID) error
 }
 
-func (f *fakeCompanyService) Create(_ context.Context, in service.CreateCompanyInput) (*model.Company, error) {
+func (f *fakeCompanyService) Create(_ context.Context, principal auth.Principal, in service.CreateCompanyInput) (*model.Company, error) {
+	f.gotPrincipal = principal
 	if f.createFn == nil {
 		f.t.Fatal("unexpected call to Create")
 	}
 	return f.createFn(in)
 }
 
-func (f *fakeCompanyService) GetByID(_ context.Context, id uuid.UUID) (*model.Company, error) {
+func (f *fakeCompanyService) GetByID(_ context.Context, principal auth.Principal, id uuid.UUID) (*model.Company, error) {
+	f.gotPrincipal = principal
 	if f.getFn == nil {
 		f.t.Fatal("unexpected call to GetByID")
 	}
 	return f.getFn(id)
 }
 
-func (f *fakeCompanyService) List(_ context.Context, p service.ListParams) (*service.CompanyPage, error) {
+func (f *fakeCompanyService) List(_ context.Context, principal auth.Principal, p service.ListParams) (*service.CompanyPage, error) {
+	f.gotPrincipal = principal
 	if f.listFn == nil {
 		f.t.Fatal("unexpected call to List")
 	}
 	return f.listFn(p)
 }
 
-func (f *fakeCompanyService) Update(_ context.Context, id uuid.UUID, in service.UpdateCompanyInput) (*model.Company, error) {
+func (f *fakeCompanyService) Update(_ context.Context, principal auth.Principal, id uuid.UUID, in service.UpdateCompanyInput) (*model.Company, error) {
+	f.gotPrincipal = principal
 	if f.updateFn == nil {
 		f.t.Fatal("unexpected call to Update")
 	}
 	return f.updateFn(id, in)
 }
 
-func (f *fakeCompanyService) Delete(_ context.Context, id uuid.UUID) error {
+func (f *fakeCompanyService) Delete(_ context.Context, principal auth.Principal, id uuid.UUID) error {
+	f.gotPrincipal = principal
 	if f.deleteFn == nil {
 		f.t.Fatal("unexpected call to Delete")
 	}
 	return f.deleteFn(id)
 }
 
-// newCompanyRouter registers the handler on the same paths as the real router.
+// testCaller is the authenticated principal in handler tests.
+var testCaller = auth.Principal{UserID: uuid.MustParse("0199a1b2-0000-7000-8000-000000000001")}
+
+// newCompanyRouter registers the handler on the same paths as the real router,
+// with testCaller authenticated (what the Authenticate middleware would do).
 func newCompanyRouter(svc CompanyService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	h := NewCompanyHandler(svc)
 	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(auth.WithPrincipal(c.Request.Context(), testCaller))
+	})
 	g := r.Group("/api/v1/companies")
 	g.POST("", h.Create)
 	g.GET("", h.List)
@@ -307,4 +321,25 @@ func TestCompanyHandler_Delete(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+}
+
+// ---------- Principal and tenant errors ----------
+
+func TestCompanyHandler_PassesAuthenticatedPrincipal(t *testing.T) {
+	svc := &fakeCompanyService{t: t, getFn: func(uuid.UUID) (*model.Company, error) { return sampleCompany(), nil }}
+
+	do(newCompanyRouter(svc), http.MethodGet, "/api/v1/companies/"+uuid.NewString(), "")
+
+	assert.Equal(t, testCaller, svc.gotPrincipal, "the service must receive the caller from the token")
+}
+
+func TestCompanyHandler_ForbiddenFromService(t *testing.T) {
+	svc := &fakeCompanyService{t: t, updateFn: func(uuid.UUID, service.UpdateCompanyInput) (*model.Company, error) {
+		return nil, model.ErrForbidden
+	}}
+
+	rec := do(newCompanyRouter(svc), http.MethodPatch, "/api/v1/companies/"+uuid.NewString(), `{"is_active":false}`)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, CodeForbidden, decodeError(t, rec).Code)
 }

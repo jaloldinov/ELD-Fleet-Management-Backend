@@ -197,7 +197,7 @@ func TestUserService_GetByID(t *testing.T) {
 }
 
 func TestUserService_GetProfile(t *testing.T) {
-	user := &model.User{ID: uuid.New(), FirstName: "Jane"}
+	user := &model.User{ID: uuid.New(), FirstName: "Jane", IsActive: true}
 	perms := []model.Permission{model.PermTruckRead, model.PermDriverRead}
 
 	t.Run("user with permissions", func(t *testing.T) {
@@ -212,6 +212,15 @@ func TestUserService_GetProfile(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, user, p.User)
 		assert.Equal(t, perms, p.Permissions)
+	})
+
+	t.Run("deactivated user", func(t *testing.T) {
+		inactive := &model.User{ID: uuid.New(), IsActive: false}
+		repo := &fakeUserRepo{t: t, getByIDFn: func(uuid.UUID) (*model.User, error) { return inactive, nil }}
+
+		_, err := NewUserService(repo, fakeHasher{}).GetProfile(context.Background(), inactive.ID)
+
+		assert.ErrorIs(t, err, model.ErrUserInactive)
 	})
 
 	t.Run("deleted user is not found", func(t *testing.T) {

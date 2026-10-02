@@ -60,10 +60,15 @@ func (r *CompanyRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.C
 }
 
 // List returns one page of alive companies (oldest first) and the total count.
-func (r *CompanyRepository) List(ctx context.Context, limit, offset int) ([]model.Company, int, error) {
+func (r *CompanyRepository) List(ctx context.Context, f model.CompanyFilter, limit, offset int) ([]model.Company, int, error) {
+	// "$1::uuid IS NULL OR id = $1": one query handles both cases. When the
+	// filter is nil the condition is always true; otherwise only that id.
+	// The ::uuid cast tells Postgres the type of a NULL parameter.
 	var total int
-	if err := r.db.QueryRow(ctx,
-		`SELECT count(*) FROM companies WHERE deleted_at IS NULL`,
+	if err := r.db.QueryRow(ctx, `
+		SELECT count(*) FROM companies
+		WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR id = $1)`,
+		f.OnlyID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count companies: %w", err)
 	}
@@ -74,10 +79,10 @@ func (r *CompanyRepository) List(ctx context.Context, limit, offset int) ([]mode
 	rows, err := r.db.Query(ctx, `
 		SELECT `+companyColumns+`
 		FROM companies
-		WHERE deleted_at IS NULL
+		WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR id = $1)
 		ORDER BY id
-		LIMIT $1 OFFSET $2`,
-		limit, offset,
+		LIMIT $2 OFFSET $3`,
+		f.OnlyID, limit, offset,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list companies: %w", err)

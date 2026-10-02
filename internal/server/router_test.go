@@ -37,7 +37,7 @@ type failingCompanyService struct {
 	handler.CompanyService
 }
 
-func (failingCompanyService) List(context.Context, service.ListParams) (*service.CompanyPage, error) {
+func (failingCompanyService) List(context.Context, auth.Principal, service.ListParams) (*service.CompanyPage, error) {
 	return nil, errors.New("connection reset: secret internal detail")
 }
 
