@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch cancels the older, now-pointless run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "Not gofmt-ed:"; echo "$unformatted"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go.mod is tidy
+        run: go mod tidy -diff
+      - name: Swagger docs are up to date
+        run: make swagger-check
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # No TEST_DATABASE_URL: tests that need a database are skipped.
+      - run: go test ./... -race -cover
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: eld
+          POSTGRES_PASSWORD: eld
+          # The repository tests refuse any database whose name does not end in _test.
+          POSTGRES_DB: eld_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eld -d eld_test"
+          --health-interval 2s --health-timeout 3s --health-retries 15
+    env:
+      TEST_DATABASE_URL: postgres://eld:eld@localhost:5432/eld_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Run migrations
+        run: |
+          docker run --rm --network host -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 -path /migrations -database "$TEST_DATABASE_URL" up
+      - name: Check migrations also roll back cleanly
+        run: |
+          docker run --rm --network host -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 -path /migrations -database "$TEST_DATABASE_URL" down -all
+          docker run --rm --network host -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 -path /migrations -database "$TEST_DATABASE_URL" up
+      # -p 1: packages share one test database, so run them one at a time.
+      - run: go test ./... -race -cover -p 1
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -t eld-api:ci .

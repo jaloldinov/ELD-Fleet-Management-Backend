@@ -19,5 +19,35 @@ services:
       timeout: 3s
       retries: 15
 
+  # The services below only start with the "app" profile, so `make db-up`
+  # still starts just Postgres for local development:
+  #   docker compose --profile app up --build
+  migrate:
+    profiles: ["app"]
+    image: migrate/migrate:v4.20.1
+    volumes:
+      - ./migrations:/migrations:ro
+    command: ["-path", "/migrations", "-database", "postgres://eld:eld@postgres:5432/eld?sslmode=disable", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    profiles: ["app"]
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Inside the compose network Postgres is "postgres:5432", not localhost:5433.
+      DATABASE_URL: postgres://eld:eld@postgres:5432/eld?sslmode=disable
+      HTTP_PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        # Start the API only after migrations finished successfully.
+        condition: service_completed_successfully
+
 volumes:
   pgdata:
