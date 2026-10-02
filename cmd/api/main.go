@@ -83,7 +83,7 @@ func run() error {
 		return err
 	}
 
-	userSvc := service.NewUserService(userRepo, hasher)
+	userSvc := service.NewUserService(userRepo, companyRepo, sessionRepo, hasher)
 
 	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Security{
 		Tokens:      tokens,

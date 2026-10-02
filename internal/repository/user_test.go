@@ -200,3 +200,119 @@ func TestUserRepository_GetPermissions_NoRoles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, perms)
 }
+
+func TestUserRepository_List_ScopedByCompany(t *testing.T) {
+	db := newTestDB(t)
+	companies := NewCompanyRepository(db)
+	alpha := createCompany(t, companies, "Alpha", "1")
+	bravo := createCompany(t, companies, "Bravo", "2")
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	for i, c := range []uuid.UUID{alpha.ID, alpha.ID, bravo.ID} {
+		_, err := repo.Create(ctx, newUser(c, fmt.Sprintf("u%d@x.com", i)), []string{model.RoleDriver})
+		require.NoError(t, err)
+	}
+	_, err := repo.Create(ctx, model.User{Email: strPtr("root@x.com"), PasswordHash: "x", FirstName: "R", LastName: "A"},
+		[]string{model.RolePlatformAdmin})
+	require.NoError(t, err)
+
+	t.Run("one company", func(t *testing.T) {
+		users, total, err := repo.List(ctx, model.UserFilter{CompanyID: &alpha.ID}, 20, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		for _, u := range users {
+			assert.Equal(t, alpha.ID, *u.CompanyID, "no other tenant's users")
+		}
+	})
+
+	t.Run("no filter (platform view) includes platform users", func(t *testing.T) {
+		_, total, err := repo.List(ctx, model.UserFilter{}, 20, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 4, total)
+	})
+}
+
+func TestUserRepository_GetRoles_OneQueryForManyUsers(t *testing.T) {
+	db := newTestDB(t)
+	company := createCompany(t, NewCompanyRepository(db), "Acme", "1")
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+	a, err := repo.Create(ctx, newUser(company.ID, "a@x.com"), []string{model.RoleManager, model.RoleDispatcher})
+	require.NoError(t, err)
+	b, err := repo.Create(ctx, newUser(company.ID, "b@x.com"), []string{model.RoleDriver})
+	require.NoError(t, err)
+
+	roles, err := repo.GetRoles(ctx, []uuid.UUID{a.ID, b.ID, uuid.New()})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{model.RoleDispatcher, model.RoleManager}, roles[a.ID], "sorted by name")
+	assert.Equal(t, []string{model.RoleDriver}, roles[b.ID])
+	assert.Len(t, roles, 2, "unknown ids are simply absent")
+}
+
+func TestUserRepository_Update(t *testing.T) {
+	db := newTestDB(t)
+	company := createCompany(t, NewCompanyRepository(db), "Acme", "1")
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+	u, err := repo.Create(ctx, newUser(company.ID, "jane@x.com"), []string{model.RoleDispatcher})
+	require.NoError(t, err)
+
+	t.Run("fields only, roles unchanged (nil)", func(t *testing.T) {
+		changed := *u
+		changed.FirstName, changed.IsActive = "Janet", false
+
+		got, err := repo.Update(ctx, changed, nil)
+
+		require.NoError(t, err)
+		assert.Equal(t, "Janet", got.FirstName)
+		assert.False(t, got.IsActive)
+		roles, _ := repo.GetRoles(ctx, []uuid.UUID{u.ID})
+		assert.Equal(t, []string{model.RoleDispatcher}, roles[u.ID])
+	})
+
+	t.Run("roles replaced", func(t *testing.T) {
+		_, err := repo.Update(ctx, *u, []string{model.RoleManager, model.RoleAdmin})
+
+		require.NoError(t, err)
+		roles, _ := repo.GetRoles(ctx, []uuid.UUID{u.ID})
+		assert.Equal(t, []string{model.RoleAdmin, model.RoleManager}, roles[u.ID])
+	})
+
+	t.Run("unknown role rolls back everything", func(t *testing.T) {
+		changed := *u
+		changed.FirstName = "ShouldNotBeSaved"
+
+		_, err := repo.Update(ctx, changed, []string{model.RoleDriver, "no_such_role"})
+
+		assert.ErrorIs(t, err, model.ErrRoleNotFound)
+		got, _ := repo.GetByID(ctx, u.ID)
+		assert.NotEqual(t, "ShouldNotBeSaved", got.FirstName, "name change rolled back")
+		roles, _ := repo.GetRoles(ctx, []uuid.UUID{u.ID})
+		assert.Equal(t, []string{model.RoleAdmin, model.RoleManager}, roles[u.ID], "old roles kept: DELETE rolled back")
+	})
+
+	t.Run("unknown user", func(t *testing.T) {
+		_, err := repo.Update(ctx, model.User{ID: uuid.New(), FirstName: "X", LastName: "Y"}, nil)
+		assert.ErrorIs(t, err, model.ErrNotFound)
+	})
+}
+
+func TestUserRepository_SoftDelete(t *testing.T) {
+	db := newTestDB(t)
+	company := createCompany(t, NewCompanyRepository(db), "Acme", "1")
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+	u, err := repo.Create(ctx, newUser(company.ID, "jane@x.com"), []string{model.RoleDriver})
+	require.NoError(t, err)
+
+	require.NoError(t, repo.SoftDelete(ctx, u.ID))
+
+	_, err = repo.GetByID(ctx, u.ID)
+	assert.ErrorIs(t, err, model.ErrNotFound)
+	assert.ErrorIs(t, repo.SoftDelete(ctx, u.ID), model.ErrNotFound, "second delete")
+
+	_, err = repo.Create(ctx, newUser(company.ID, "jane@x.com"), []string{model.RoleDriver})
+	assert.NoError(t, err, "email can be reused after soft delete")
+}

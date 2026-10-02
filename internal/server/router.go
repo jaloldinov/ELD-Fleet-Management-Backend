@@ -90,14 +90,20 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 
 	// Every other protected route declares the permission it needs, right
 	// next to the route, so a reviewer sees "who may call this" at a glance.
-	// TODO(5f): tenant scope. company:read/update are also held by company
-	// roles, who must only see THEIR company.
+	// Tenant scope ("only your own company") is enforced by the services.
 	companies := protected.Group("/companies")
 	companies.POST("", perm.Require(model.PermCompanyCreate), h.Company.Create)
 	companies.GET("", perm.Require(model.PermCompanyRead), h.Company.List)
 	companies.GET("/:id", perm.Require(model.PermCompanyRead), h.Company.Get)
 	companies.PATCH("/:id", perm.Require(model.PermCompanyUpdate), h.Company.Update)
 	companies.DELETE("/:id", perm.Require(model.PermCompanyDelete), h.Company.Delete)
+
+	users := protected.Group("/users")
+	users.POST("", perm.Require(model.PermUserCreate), h.User.Create)
+	users.GET("", perm.Require(model.PermUserRead), h.User.List)
+	users.GET("/:id", perm.Require(model.PermUserRead), h.User.Get)
+	users.PATCH("/:id", perm.Require(model.PermUserUpdate), h.User.Update)
+	users.DELETE("/:id", perm.Require(model.PermUserDelete), h.User.Delete)
 
 	return r
 }

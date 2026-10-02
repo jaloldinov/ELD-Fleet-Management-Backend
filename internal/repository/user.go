@@ -154,3 +154,134 @@ func mapUserError(op string, err error) error {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 }
+
+// List returns one page of alive users (oldest first) and the total count.
+func (r *UserRepository) List(ctx context.Context, f model.UserFilter, limit, offset int) ([]model.User, int, error) {
+	// Same scope pattern as companies: the filter is applied in SQL, so other
+	// tenants' rows never leave the database.
+	var total int
+	if err := r.db.QueryRow(ctx, `
+		SELECT count(*) FROM users
+		WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR company_id = $1)`,
+		f.CompanyID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count users: %w", err)
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT `+userColumns+`
+		FROM users
+		WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR company_id = $1)
+		ORDER BY id
+		LIMIT $2 OFFSET $3`,
+		f.CompanyID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list users: %w", err)
+	}
+	users, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.User, error) {
+		u, err := scanUser(row)
+		if err != nil {
+			return model.User{}, err
+		}
+		return *u, nil
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("scan users: %w", err)
+	}
+	return users, total, nil
+}
+
+// GetRoles returns the role names of several users with ONE query.
+//
+// Loading roles per user would be the "N+1 query" problem: 1 query for a page
+// of 20 users + 20 queries for their roles. = ANY($1) takes the whole slice
+// of ids as a Postgres array.
+func (r *UserRepository) GetRoles(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID][]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT ur.user_id, r.name
+		FROM user_roles ur
+		JOIN roles r ON r.id = ur.role_id
+		WHERE ur.user_id = ANY($1)
+		ORDER BY r.name`,
+		userIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get roles: %w", err)
+	}
+	defer rows.Close()
+
+	roles := make(map[uuid.UUID][]string, len(userIDs))
+	for rows.Next() {
+		var id uuid.UUID
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("scan role: %w", err)
+		}
+		roles[id] = append(roles[id], name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read roles: %w", err)
+	}
+	return roles, nil
+}
+
+// Update saves names and is_active. If roleNames is not nil, the user's roles
+// are REPLACED by exactly these, in the same transaction.
+func (r *UserRepository) Update(ctx context.Context, u model.User, roleNames []string) (*model.User, error) {
+	var updated *model.User
+
+	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx, `
+			UPDATE users
+			SET first_name = $2, last_name = $3, is_active = $4
+			WHERE id = $1 AND deleted_at IS NULL
+			RETURNING `+userColumns,
+			u.ID, u.FirstName, u.LastName, u.IsActive,
+		)
+		var err error
+		if updated, err = scanUser(row); err != nil {
+			return err
+		}
+		if roleNames == nil {
+			return nil // roles unchanged
+		}
+
+		if _, err := tx.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1`, u.ID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role_id)
+			SELECT $1, id FROM roles
+			WHERE company_id IS NULL AND name = ANY($2)`,
+			u.ID, roleNames,
+		)
+		if err != nil {
+			return err
+		}
+		if int(tag.RowsAffected()) != len(roleNames) {
+			return model.ErrRoleNotFound // rolls back the DELETE too
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, mapUserError("update user", err)
+	}
+	return updated, nil
+}
+
+// SoftDelete marks a user as deleted.
+func (r *UserRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE users SET deleted_at = now()
+		WHERE id = $1 AND deleted_at IS NULL`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return model.ErrNotFound
+	}
+	return nil
+}

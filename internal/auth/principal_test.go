@@ -28,3 +28,10 @@ func TestPrincipal_Missing(t *testing.T) {
 func TestPrincipal_PlatformUser(t *testing.T) {
 	assert.True(t, Principal{UserID: uuid.New()}.IsPlatformUser())
 }
+
+func TestSystemPrincipal(t *testing.T) {
+	p := SystemPrincipal()
+
+	assert.True(t, p.IsPlatformUser())
+	assert.Equal(t, uuid.Nil, p.UserID, "not a real user")
+}

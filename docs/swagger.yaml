@@ -38,6 +38,39 @@ definitions:
         example: America/Chicago
         type: string
     type: object
+  handler.CreateUserRequest:
+    properties:
+      company_id:
+        description: |-
+          Platform users only: the company the new user belongs to (omit for a
+          platform user). Company users may omit it; their own company is used.
+        example: 0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c
+        format: uuid
+        type: string
+      email:
+        description: Email and/or username; at least one is required.
+        example: jane@acme.com
+        type: string
+      first_name:
+        example: Jane
+        type: string
+      last_name:
+        example: Smith
+        type: string
+      password:
+        description: 8 characters to 72 bytes.
+        example: correct horse battery staple
+        type: string
+      roles:
+        example:
+        - dispatcher
+        items:
+          type: string
+        type: array
+      username:
+        example: jane.smith
+        type: string
+    type: object
   handler.ErrorBody:
     properties:
       code:
@@ -76,6 +109,22 @@ definitions:
         type: integer
       total:
         example: 57
+        type: integer
+    type: object
+  handler.ListUsersResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.UserResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 12
         type: integer
     type: object
   handler.LoginRequest:
@@ -121,6 +170,12 @@ definitions:
         example:
         - truck:read
         - driver:read
+        items:
+          type: string
+        type: array
+      roles:
+        example:
+        - dispatcher
         items:
           type: string
         type: array
@@ -178,6 +233,64 @@ definitions:
         type: string
       timezone:
         example: America/New_York
+        type: string
+    type: object
+  handler.UpdateUserRequest:
+    properties:
+      first_name:
+        example: Jane
+        type: string
+      is_active:
+        example: false
+        type: boolean
+      last_name:
+        example: Smith
+        type: string
+      roles:
+        example:
+        - dispatcher
+        - manager
+        items:
+          type: string
+        type: array
+    type: object
+  handler.UserResponse:
+    properties:
+      company_id:
+        description: Null for platform users.
+        example: 0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c
+        format: uuid
+        type: string
+      created_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      email:
+        example: jane@acme.com
+        type: string
+      first_name:
+        example: Jane
+        type: string
+      id:
+        example: 0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b
+        format: uuid
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      last_login_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      last_name:
+        example: Smith
+        type: string
+      roles:
+        example:
+        - dispatcher
+        items:
+          type: string
+        type: array
+      username:
+        example: jane.smith
         type: string
     type: object
 info:
@@ -257,7 +370,7 @@ paths:
       - auth
   /api/v1/auth/me:
     get:
-      description: Returns the authenticated user and their effective permissions.
+      description: Returns the authenticated user, their roles and effective permissions.
       produces:
       - application/json
       responses:
@@ -555,6 +668,240 @@ paths:
       summary: Update a company
       tags:
       - companies
+  /api/v1/users:
+    get:
+      description: |-
+        Requires permission: user:read
+        Company users always get their own company's users (company_id is ignored).
+      parameters:
+      - description: Filter by company (platform users only)
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListUsersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission user:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: user:create
+        Company users create users only in their own company, with company roles.
+      parameters:
+      - description: User to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.UserResponse'
+        "400":
+          description: invalid JSON or validation failed
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission user:create
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "409":
+          description: email or username already used
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a user
+      tags:
+      - users
+  /api/v1/users/{id}:
+    delete:
+      description: |-
+        Requires permission: user:delete
+        Soft delete; all of the user's sessions end. You cannot delete yourself.
+      parameters:
+      - description: User ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission user:delete, or deleting yourself
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a user
+      tags:
+      - users
+    get:
+      description: 'Requires permission: user:read'
+      parameters:
+      - description: User ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.UserResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission user:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a user
+      tags:
+      - users
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: user:update
+        Partial update. roles replaces all roles. Deactivating a user ends all their sessions.
+        Nobody can change their own roles or active status.
+      parameters:
+      - description: User ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission user:update, or changing your own roles/status
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a user
+      tags:
+      - users
   /health:
     get:
       produces:

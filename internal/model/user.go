@@ -29,3 +29,10 @@ type User struct {
 func (u *User) IsPlatformUser() bool {
 	return u.CompanyID == nil
 }
+
+// UserFilter narrows a user list. The zero value means "no filter".
+type UserFilter struct {
+	// CompanyID restricts the list to one company's users. The service
+	// always sets it for company users (tenant scope).
+	CompanyID *uuid.UUID
+}

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,35 +11,106 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
-type fakeUserRepo struct {
-	t         *testing.T
-	createFn  func(u model.User, roles []string) (*model.User, error)
-	getByIDFn func(id uuid.UUID) (*model.User, error)
-	permsFn   func(id uuid.UUID) ([]model.Permission, error)
+// memUserRepo is an in-memory fake: a tiny map-based "database". For a service
+// whose methods make several repository calls that depend on each other
+// (get → check → update roles → revoke), this is simpler and more realistic
+// than stubbing every call separately.
+type memUserRepo struct {
+	users   map[uuid.UUID]*model.User
+	roles   map[uuid.UUID][]string
+	perms   []model.Permission
+	created []model.User // what Create received
+	listF   model.UserFilter
 }
 
-func (f *fakeUserRepo) GetPermissions(_ context.Context, id uuid.UUID) ([]model.Permission, error) {
-	if f.permsFn == nil {
-		f.t.Fatal("unexpected call to GetPermissions")
-	}
-	return f.permsFn(id)
+func newMemUserRepo() *memUserRepo {
+	return &memUserRepo{users: map[uuid.UUID]*model.User{}, roles: map[uuid.UUID][]string{}}
 }
 
-func (f *fakeUserRepo) Create(_ context.Context, u model.User, roles []string) (*model.User, error) {
-	if f.createFn == nil {
-		f.t.Fatal("unexpected call to Create")
-	}
-	return f.createFn(u, roles)
+// add stores a user directly (test setup) and returns it.
+func (m *memUserRepo) add(companyID *uuid.UUID, roles ...string) *model.User {
+	u := &model.User{ID: uuid.New(), CompanyID: companyID, FirstName: "F", LastName: "L", IsActive: true}
+	m.users[u.ID] = u
+	m.roles[u.ID] = roles
+	return u
 }
 
-func (f *fakeUserRepo) GetByID(_ context.Context, id uuid.UUID) (*model.User, error) {
-	if f.getByIDFn == nil {
-		f.t.Fatal("unexpected call to GetByID")
+func (m *memUserRepo) Create(_ context.Context, u model.User, roles []string) (*model.User, error) {
+	m.created = append(m.created, u)
+	u.ID = uuid.New()
+	m.users[u.ID] = &u
+	m.roles[u.ID] = roles
+	return &u, nil
+}
+
+func (m *memUserRepo) GetByID(_ context.Context, id uuid.UUID) (*model.User, error) {
+	u, ok := m.users[id]
+	if !ok {
+		return nil, model.ErrNotFound
 	}
-	return f.getByIDFn(id)
+	c := *u // return a copy, like a real database
+	return &c, nil
+}
+
+func (m *memUserRepo) List(_ context.Context, f model.UserFilter, _, _ int) ([]model.User, int, error) {
+	m.listF = f
+	var out []model.User
+	for _, u := range m.users {
+		if f.CompanyID == nil || (u.CompanyID != nil && *u.CompanyID == *f.CompanyID) {
+			out = append(out, *u)
+		}
+	}
+	return out, len(out), nil
+}
+
+func (m *memUserRepo) Update(_ context.Context, u model.User, roles []string) (*model.User, error) {
+	m.users[u.ID] = &u
+	if roles != nil {
+		m.roles[u.ID] = roles
+	}
+	return &u, nil
+}
+
+func (m *memUserRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+	delete(m.users, id)
+	return nil
+}
+
+func (m *memUserRepo) GetRoles(_ context.Context, ids []uuid.UUID) (map[uuid.UUID][]string, error) {
+	out := map[uuid.UUID][]string{}
+	for _, id := range ids {
+		if r, ok := m.roles[id]; ok {
+			out[id] = r
+		}
+	}
+	return out, nil
+}
+
+func (m *memUserRepo) GetPermissions(context.Context, uuid.UUID) ([]model.Permission, error) {
+	return m.perms, nil
+}
+
+// fakeCompanies: every company exists, except missingCompany.
+type fakeCompanies struct{}
+
+var missingCompany = uuid.New()
+
+func (fakeCompanies) GetByID(_ context.Context, id uuid.UUID) (*model.Company, error) {
+	if id == missingCompany {
+		return nil, model.ErrNotFound
+	}
+	return &model.Company{ID: id}, nil
+}
+
+type fakeRevoker struct{ revoked []uuid.UUID }
+
+func (f *fakeRevoker) RevokeAllForUser(_ context.Context, id uuid.UUID) error {
+	f.revoked = append(f.revoked, id)
+	return nil
 }
 
 // fakeHasher is instant and makes the "hash" easy to recognize in assertions.
@@ -51,11 +123,29 @@ func (f fakeHasher) Hash(pw string) (string, error) {
 	return "hashed:" + pw, nil
 }
 
-// validCompanyUser returns valid input; each test changes one thing.
-func validCompanyUser() CreateUserInput {
-	companyID := uuid.New()
+type userFixture struct {
+	svc     *UserService
+	repo    *memUserRepo
+	revoker *fakeRevoker
+}
+
+func newUserFixture() *userFixture {
+	f := &userFixture{repo: newMemUserRepo(), revoker: &fakeRevoker{}}
+	f.svc = NewUserService(f.repo, fakeCompanies{}, f.revoker, fakeHasher{})
+	return f
+}
+
+// companyAdminOf returns a principal for an admin of the given company,
+// stored in the fake repository.
+func (f *userFixture) companyAdminOf(companyID uuid.UUID) auth.Principal {
+	u := f.repo.add(&companyID, model.RoleAdmin)
+	return auth.Principal{UserID: u.ID, CompanyID: &companyID}
+}
+
+// validInput returns valid input for a company user; tests change one thing.
+func validInput(companyID *uuid.UUID) CreateUserInput {
 	return CreateUserInput{
-		CompanyID: &companyID,
+		CompanyID: companyID,
 		Email:     "jane@acme.com",
 		Password:  "correct horse",
 		FirstName: "Jane",
@@ -64,54 +154,43 @@ func validCompanyUser() CreateUserInput {
 	}
 }
 
-// echoCreate is a createFn that records its input and returns it as saved.
-func echoCreate(gotUser *model.User, gotRoles *[]string) func(model.User, []string) (*model.User, error) {
-	return func(u model.User, roles []string) (*model.User, error) {
-		*gotUser, *gotRoles = u, roles
-		u.ID = uuid.New()
-		return &u, nil
-	}
-}
+// =====================================================================
+// Create: validation (same rules as before)
+// =====================================================================
 
 func TestUserService_Create_NormalizesAndHashes(t *testing.T) {
-	var saved model.User
-	var roles []string
-	repo := &fakeUserRepo{t: t, createFn: echoCreate(&saved, &roles)}
-	svc := NewUserService(repo, fakeHasher{})
-
-	in := validCompanyUser()
+	f := newUserFixture()
+	in := validInput(&companyA)
 	in.Email = "  Jane@ACME.com "
 	in.Username = " Jane.S "
 	in.Password = " pass with spaces "
 	in.FirstName = " Jane "
 	in.Roles = []string{model.RoleDispatcher, model.RoleManager, model.RoleDispatcher}
 
-	_, err := svc.Create(context.Background(), in)
+	got, err := f.svc.Create(context.Background(), platformAdmin, in)
 
 	require.NoError(t, err)
+	saved := f.repo.created[0]
 	assert.Equal(t, "jane@acme.com", *saved.Email, "email lowercased and trimmed")
 	assert.Equal(t, "jane.s", *saved.Username, "username lowercased and trimmed")
 	assert.Equal(t, "Jane", saved.FirstName)
 	assert.Equal(t, "hashed: pass with spaces ", saved.PasswordHash,
 		"the hash is stored, and the password itself is not trimmed")
-	assert.Equal(t, []string{model.RoleDispatcher, model.RoleManager}, roles, "duplicate roles removed")
+	assert.Equal(t, []string{model.RoleDispatcher, model.RoleManager}, f.repo.roles[got.User.ID], "duplicate roles removed")
+	assert.Equal(t, []string{model.RoleDispatcher, model.RoleManager}, got.Roles, "saved roles are returned")
 }
 
 func TestUserService_Create_UsernameOnlyDriver(t *testing.T) {
-	var saved model.User
-	var roles []string
-	repo := &fakeUserRepo{t: t, createFn: echoCreate(&saved, &roles)}
-
-	in := validCompanyUser()
+	f := newUserFixture()
+	in := validInput(&companyA)
 	in.Email = ""
 	in.Username = "driver.bob"
 	in.Roles = []string{model.RoleDriver}
 
-	_, err := NewUserService(repo, fakeHasher{}).Create(context.Background(), in)
+	_, err := f.svc.Create(context.Background(), platformAdmin, in)
 
 	require.NoError(t, err)
-	assert.Nil(t, saved.Email, "empty email is stored as NULL, not as \"\"")
-	assert.Equal(t, "driver.bob", *saved.Username)
+	assert.Nil(t, f.repo.created[0].Email, "empty email is stored as NULL, not as \"\"")
 }
 
 func TestUserService_Create_Invalid(t *testing.T) {
@@ -134,112 +213,314 @@ func TestUserService_Create_Invalid(t *testing.T) {
 		{"company user gets platform role", func(in *CreateUserInput) { in.Roles = []string{model.RolePlatformAdmin} }, "roles"},
 		{"unknown role", func(in *CreateUserInput) { in.Roles = []string{"superuser"} }, "roles"},
 		{"platform user gets company role", func(in *CreateUserInput) { in.CompanyID = nil; in.Roles = []string{model.RoleAdmin} }, "roles"},
+		{"company does not exist", func(in *CreateUserInput) { in.CompanyID = &missingCompany }, "company_id"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			in := validCompanyUser()
+			f := newUserFixture()
+			f.svc.hasher = fakeHasher{err: errors.New("must not hash")} // validation must stop first
+			in := validInput(&companyA)
 			tt.modify(&in)
-			// No createFn, and a hasher that fails: validation must stop
-			// everything before hashing or saving.
-			svc := NewUserService(&fakeUserRepo{t: t}, fakeHasher{err: errors.New("must not hash")})
 
-			_, err := svc.Create(context.Background(), in)
+			_, err := f.svc.Create(context.Background(), platformAdmin, in)
 
 			requireValidationField(t, err, tt.wantField)
+			assert.Empty(t, f.repo.created, "nothing saved")
 		})
 	}
 }
 
-func TestUserService_Create_PlatformAdmin(t *testing.T) {
-	var saved model.User
-	var roles []string
-	repo := &fakeUserRepo{t: t, createFn: echoCreate(&saved, &roles)}
+func TestUserService_Create_HasherFailure(t *testing.T) {
+	f := newUserFixture()
+	f.svc.hasher = fakeHasher{err: errors.New("boom")}
 
-	in := validCompanyUser()
-	in.CompanyID = nil
-	in.Roles = []string{model.RolePlatformAdmin}
+	_, err := f.svc.Create(context.Background(), platformAdmin, validInput(&companyA))
 
-	u, err := NewUserService(repo, fakeHasher{}).Create(context.Background(), in)
+	assert.ErrorContains(t, err, "hash password")
+}
+
+// =====================================================================
+// Create: tenant scope and privilege escalation
+// =====================================================================
+
+func TestUserService_Create_CompanyAdminCreatesInOwnCompany(t *testing.T) {
+	f := newUserFixture()
+	admin := f.companyAdminOf(companyA)
+	in := validInput(nil) // company_id omitted
+
+	got, err := f.svc.Create(context.Background(), admin, in)
 
 	require.NoError(t, err)
-	assert.True(t, u.IsPlatformUser())
+	assert.Equal(t, companyA, *got.User.CompanyID, "the company comes from the token")
 }
 
-func TestUserService_Create_Errors(t *testing.T) {
-	t.Run("hasher failure", func(t *testing.T) {
-		svc := NewUserService(&fakeUserRepo{t: t}, fakeHasher{err: errors.New("boom")})
+func TestUserService_Create_CompanyAdminCannotTargetOtherCompany(t *testing.T) {
+	f := newUserFixture()
+	admin := f.companyAdminOf(companyA)
+	other := uuid.New()
 
-		_, err := svc.Create(context.Background(), validCompanyUser())
+	_, err := f.svc.Create(context.Background(), admin, validInput(&other))
 
-		assert.ErrorContains(t, err, "hash password")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+	assert.Empty(t, f.repo.created)
+}
+
+func TestUserService_Create_CompanyAdminCannotCreatePlatformAdmin(t *testing.T) {
+	f := newUserFixture()
+	admin := f.companyAdminOf(companyA)
+	in := validInput(nil)
+	in.Roles = []string{model.RolePlatformAdmin}
+
+	_, err := f.svc.Create(context.Background(), admin, in)
+
+	requireValidationField(t, err, "roles")
+	assert.Empty(t, f.repo.created, "privilege escalation blocked")
+}
+
+func TestUserService_Create_SystemPrincipalCreatesPlatformAdmin(t *testing.T) {
+	f := newUserFixture()
+	in := validInput(nil)
+	in.Roles = []string{model.RolePlatformAdmin}
+
+	got, err := f.svc.Create(context.Background(), auth.SystemPrincipal(), in)
+
+	require.NoError(t, err)
+	assert.True(t, got.User.IsPlatformUser())
+}
+
+// =====================================================================
+// Get / List: tenant scope
+// =====================================================================
+
+func TestUserService_Get_Scope(t *testing.T) {
+	f := newUserFixture()
+	companyB := uuid.New()
+	admin := f.companyAdminOf(companyA)
+	colleague := f.repo.add(&companyA, model.RoleDriver)
+	stranger := f.repo.add(&companyB, model.RoleDriver)
+	platformUser := f.repo.add(nil, model.RolePlatformAdmin)
+
+	got, err := f.svc.Get(context.Background(), admin, colleague.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{model.RoleDriver}, got.Roles)
+
+	_, err = f.svc.Get(context.Background(), admin, stranger.ID)
+	assert.ErrorIs(t, err, model.ErrNotFound, "other company's user: 404")
+
+	_, err = f.svc.Get(context.Background(), admin, platformUser.ID)
+	assert.ErrorIs(t, err, model.ErrNotFound, "platform staff are invisible to companies")
+
+	_, err = f.svc.Get(context.Background(), platformAdmin, stranger.ID)
+	assert.NoError(t, err, "platform users see everyone")
+}
+
+func TestUserService_List_Scope(t *testing.T) {
+	f := newUserFixture()
+	companyB := uuid.New()
+	admin := f.companyAdminOf(companyA)
+	f.repo.add(&companyA, model.RoleDriver)
+	f.repo.add(&companyB, model.RoleDriver)
+
+	t.Run("company user is forced to own company, even if asking for another", func(t *testing.T) {
+		page, err := f.svc.List(context.Background(), admin, UserListParams{CompanyID: &companyB})
+
+		require.NoError(t, err)
+		assert.Equal(t, &companyA, f.repo.listF.CompanyID)
+		assert.Equal(t, 2, page.Total, "admin + driver of company A")
+		for _, item := range page.Items {
+			assert.Equal(t, companyA, *item.User.CompanyID)
+			assert.NotEmpty(t, item.Roles, "roles are filled in")
+		}
 	})
 
-	t.Run("repository error is returned", func(t *testing.T) {
-		repo := &fakeUserRepo{t: t, createFn: func(model.User, []string) (*model.User, error) {
-			return nil, model.ErrEmailTaken
-		}}
+	t.Run("platform user may filter by company", func(t *testing.T) {
+		_, err := f.svc.List(context.Background(), platformAdmin, UserListParams{CompanyID: &companyB})
+		require.NoError(t, err)
+		assert.Equal(t, &companyB, f.repo.listF.CompanyID)
+	})
 
-		_, err := NewUserService(repo, fakeHasher{}).Create(context.Background(), validCompanyUser())
-
-		assert.ErrorIs(t, err, model.ErrEmailTaken)
+	t.Run("platform user without filter sees all", func(t *testing.T) {
+		page, err := f.svc.List(context.Background(), platformAdmin, UserListParams{})
+		require.NoError(t, err)
+		assert.Nil(t, f.repo.listF.CompanyID)
+		assert.Equal(t, 3, page.Total)
 	})
 }
 
-func TestUserService_GetByID(t *testing.T) {
-	repo := &fakeUserRepo{t: t, getByIDFn: func(uuid.UUID) (*model.User, error) {
-		return nil, model.ErrNotFound
-	}}
+// =====================================================================
+// Update / Delete: scope, self-protection, session revocation
+// =====================================================================
 
-	_, err := NewUserService(repo, fakeHasher{}).GetByID(context.Background(), uuid.New())
+func TestUserService_Update_ChangesRolesAndNames(t *testing.T) {
+	f := newUserFixture()
+	admin := f.companyAdminOf(companyA)
+	u := f.repo.add(&companyA, model.RoleDriver)
 
+	got, err := f.svc.Update(context.Background(), admin, u.ID, UpdateUserInput{
+		FirstName: ptr(" Bob "),
+		Roles:     &[]string{model.RoleDispatcher, model.RoleManager},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "Bob", got.User.FirstName)
+	assert.ElementsMatch(t, []string{model.RoleDispatcher, model.RoleManager}, got.Roles)
+	assert.Empty(t, f.revoker.revoked, "still active: sessions untouched")
+}
+
+func TestUserService_Update_DeactivationRevokesSessions(t *testing.T) {
+	f := newUserFixture()
+	admin := f.companyAdminOf(companyA)
+	u := f.repo.add(&companyA, model.RoleDriver)
+
+	got, err := f.svc.Update(context.Background(), admin, u.ID, UpdateUserInput{IsActive: ptr(false)})
+
+	require.NoError(t, err)
+	assert.False(t, got.User.IsActive)
+	assert.Equal(t, []uuid.UUID{u.ID}, f.revoker.revoked)
+}
+
+func TestUserService_Update_Denied(t *testing.T) {
+	companyB := uuid.New()
+
+	tests := []struct {
+		name    string
+		setup   func(f *userFixture) (auth.Principal, uuid.UUID)
+		in      UpdateUserInput
+		wantErr error
+		field   string
+	}{
+		{
+			name: "user of another company",
+			setup: func(f *userFixture) (auth.Principal, uuid.UUID) {
+				return f.companyAdminOf(companyA), f.repo.add(&companyB, model.RoleDriver).ID
+			},
+			in: UpdateUserInput{FirstName: ptr("X")}, wantErr: model.ErrNotFound,
+		},
+		{
+			name: "grant own roles (self-escalation)",
+			setup: func(f *userFixture) (auth.Principal, uuid.UUID) {
+				p := f.companyAdminOf(companyA)
+				return p, p.UserID
+			},
+			in: UpdateUserInput{Roles: &[]string{model.RoleAdmin, model.RoleManager}}, wantErr: model.ErrForbidden,
+		},
+		{
+			name: "deactivate yourself (self-lockout)",
+			setup: func(f *userFixture) (auth.Principal, uuid.UUID) {
+				p := f.companyAdminOf(companyA)
+				return p, p.UserID
+			},
+			in: UpdateUserInput{IsActive: ptr(false)}, wantErr: model.ErrForbidden,
+		},
+		{
+			name: "give a company user the platform_admin role",
+			setup: func(f *userFixture) (auth.Principal, uuid.UUID) {
+				return f.companyAdminOf(companyA), f.repo.add(&companyA, model.RoleDriver).ID
+			},
+			in: UpdateUserInput{Roles: &[]string{model.RolePlatformAdmin}}, field: "roles",
+		},
+		{
+			name: "even a platform admin cannot give company users platform roles",
+			setup: func(f *userFixture) (auth.Principal, uuid.UUID) {
+				return platformAdmin, f.repo.add(&companyA, model.RoleDriver).ID
+			},
+			in: UpdateUserInput{Roles: &[]string{model.RolePlatformAdmin}}, field: "roles",
+		},
+		{
+			name: "empty body",
+			setup: func(f *userFixture) (auth.Principal, uuid.UUID) {
+				return f.companyAdminOf(companyA), f.repo.add(&companyA, model.RoleDriver).ID
+			},
+			in: UpdateUserInput{}, field: "body",
+		},
+		{
+			name: "blank name",
+			setup: func(f *userFixture) (auth.Principal, uuid.UUID) {
+				return f.companyAdminOf(companyA), f.repo.add(&companyA, model.RoleDriver).ID
+			},
+			in: UpdateUserInput{LastName: ptr("  ")}, field: "last_name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newUserFixture()
+			p, target := tt.setup(f)
+			rolesBefore := slices.Clone(f.repo.roles[target])
+
+			_, err := f.svc.Update(context.Background(), p, target, tt.in)
+
+			if tt.field != "" {
+				requireValidationField(t, err, tt.field)
+			} else {
+				assert.ErrorIs(t, err, tt.wantErr)
+			}
+			assert.Equal(t, rolesBefore, f.repo.roles[target], "nothing changed")
+			assert.Empty(t, f.revoker.revoked)
+		})
+	}
+}
+
+func TestUserService_Delete(t *testing.T) {
+	t.Run("deletes and revokes sessions", func(t *testing.T) {
+		f := newUserFixture()
+		admin := f.companyAdminOf(companyA)
+		u := f.repo.add(&companyA, model.RoleDriver)
+
+		require.NoError(t, f.svc.Delete(context.Background(), admin, u.ID))
+
+		assert.NotContains(t, f.repo.users, u.ID)
+		assert.Equal(t, []uuid.UUID{u.ID}, f.revoker.revoked)
+	})
+
+	t.Run("cannot delete yourself", func(t *testing.T) {
+		f := newUserFixture()
+		admin := f.companyAdminOf(companyA)
+
+		assert.ErrorIs(t, f.svc.Delete(context.Background(), admin, admin.UserID), model.ErrForbidden)
+	})
+
+	t.Run("other company's user is not found", func(t *testing.T) {
+		f := newUserFixture()
+		admin := f.companyAdminOf(companyA)
+		other := uuid.New()
+		u := f.repo.add(&other, model.RoleDriver)
+
+		assert.ErrorIs(t, f.svc.Delete(context.Background(), admin, u.ID), model.ErrNotFound)
+		assert.Contains(t, f.repo.users, u.ID, "not deleted")
+	})
+}
+
+// =====================================================================
+// Profile / permissions
+// =====================================================================
+
+func TestUserService_GetProfile(t *testing.T) {
+	f := newUserFixture()
+	f.repo.perms = []model.Permission{model.PermTruckRead}
+	u := f.repo.add(&companyA, model.RoleDispatcher)
+
+	p, err := f.svc.GetProfile(context.Background(), u.ID)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{model.RoleDispatcher}, p.Roles)
+	assert.Equal(t, []model.Permission{model.PermTruckRead}, p.Permissions)
+
+	u.IsActive = false
+	_, err = f.svc.GetProfile(context.Background(), u.ID)
+	assert.ErrorIs(t, err, model.ErrUserInactive)
+
+	_, err = f.svc.GetProfile(context.Background(), uuid.New())
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
 
-func TestUserService_GetProfile(t *testing.T) {
-	user := &model.User{ID: uuid.New(), FirstName: "Jane", IsActive: true}
-	perms := []model.Permission{model.PermTruckRead, model.PermDriverRead}
-
-	t.Run("user with permissions", func(t *testing.T) {
-		repo := &fakeUserRepo{
-			t:         t,
-			getByIDFn: func(uuid.UUID) (*model.User, error) { return user, nil },
-			permsFn:   func(uuid.UUID) ([]model.Permission, error) { return perms, nil },
-		}
-
-		p, err := NewUserService(repo, fakeHasher{}).GetProfile(context.Background(), user.ID)
-
-		require.NoError(t, err)
-		assert.Equal(t, user, p.User)
-		assert.Equal(t, perms, p.Permissions)
-	})
-
-	t.Run("deactivated user", func(t *testing.T) {
-		inactive := &model.User{ID: uuid.New(), IsActive: false}
-		repo := &fakeUserRepo{t: t, getByIDFn: func(uuid.UUID) (*model.User, error) { return inactive, nil }}
-
-		_, err := NewUserService(repo, fakeHasher{}).GetProfile(context.Background(), inactive.ID)
-
-		assert.ErrorIs(t, err, model.ErrUserInactive)
-	})
-
-	t.Run("deleted user is not found", func(t *testing.T) {
-		repo := &fakeUserRepo{t: t, getByIDFn: func(uuid.UUID) (*model.User, error) {
-			return nil, model.ErrNotFound
-		}} // permsFn unset: must not be called
-
-		_, err := NewUserService(repo, fakeHasher{}).GetProfile(context.Background(), user.ID)
-
-		assert.ErrorIs(t, err, model.ErrNotFound)
-	})
-}
-
 func TestUserService_GetPermissions(t *testing.T) {
-	want := []model.Permission{model.PermTruckRead}
-	repo := &fakeUserRepo{t: t, permsFn: func(uuid.UUID) ([]model.Permission, error) { return want, nil }}
+	f := newUserFixture()
+	f.repo.perms = []model.Permission{model.PermTruckRead}
 
-	got, err := NewUserService(repo, fakeHasher{}).GetPermissions(context.Background(), uuid.New())
+	got, err := f.svc.GetPermissions(context.Background(), uuid.New())
 
 	require.NoError(t, err)
-	assert.Equal(t, want, got)
+	assert.Equal(t, []model.Permission{model.PermTruckRead}, got)
 }

@@ -36,3 +36,12 @@ func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(Principal)
 	return p, ok
 }
+
+// SystemPrincipal represents the system itself acting with platform authority:
+// trusted operator tools such as the createadmin CLI, run by someone who
+// already has server access. It must never be built from an HTTP request.
+// Being explicit about it makes every "acting as the system" call easy to find
+// (grep SystemPrincipal).
+func SystemPrincipal() Principal {
+	return Principal{UserID: uuid.Nil, CompanyID: nil}
+}

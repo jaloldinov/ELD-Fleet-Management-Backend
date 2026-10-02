@@ -68,10 +68,14 @@ func run() error {
 	// service, so validation and hashing rules are identical.
 	users := service.NewUserService(
 		repository.NewUserRepository(pool),
+		repository.NewCompanyRepository(pool),
+		repository.NewSessionRepository(pool),
 		auth.NewBcryptHasher(auth.DefaultBcryptCost),
 	)
 
-	u, err := users.Create(ctx, service.CreateUserInput{
+	// The CLI acts as the system itself: the explicit SystemPrincipal makes
+	// that authority visible (and greppable) instead of implicit.
+	d, err := users.Create(ctx, auth.SystemPrincipal(), service.CreateUserInput{
 		CompanyID: nil, // platform user
 		Email:     *email,
 		Password:  password,
@@ -91,7 +95,7 @@ func run() error {
 		return err
 	}
 
-	fmt.Printf("Platform admin created: %s (id %s)\n", *u.Email, u.ID)
+	fmt.Printf("Platform admin created: %s (id %s)\n", *d.User.Email, d.User.ID)
 	return nil
 }
 
