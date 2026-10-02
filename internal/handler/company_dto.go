@@ -39,8 +39,14 @@ func (r UpdateCompanyRequest) toInput() service.UpdateCompanyInput {
 	}
 }
 
+// CompanyResponse is a company as returned by the API.
+//
+// Note for developers: field comments in DTOs become public Swagger
+// descriptions. swaggertype:"string" is needed on ID because uuid.UUID is a
+// [16]byte array in Go, but a string in JSON.
 type CompanyResponse struct {
-	ID        uuid.UUID `json:"id" example:"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"`
+	// Company ID (UUIDv7, time-ordered).
+	ID        uuid.UUID `json:"id" swaggertype:"string" format:"uuid" example:"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"`
 	Name      string    `json:"name" example:"Acme Freight LLC"`
 	DOTNumber string    `json:"dot_number" example:"1234567"`
 	Timezone  string    `json:"timezone" example:"America/Chicago"`

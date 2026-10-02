@@ -1,0 +1,314 @@
+basePath: /
+definitions:
+  handler.CompanyResponse:
+    properties:
+      created_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      dot_number:
+        example: "1234567"
+        type: string
+      id:
+        description: Company ID (UUIDv7, time-ordered).
+        example: 0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b
+        format: uuid
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      name:
+        example: Acme Freight LLC
+        type: string
+      timezone:
+        example: America/Chicago
+        type: string
+      updated_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+    type: object
+  handler.CreateCompanyRequest:
+    properties:
+      dot_number:
+        example: "1234567"
+        type: string
+      name:
+        example: Acme Freight LLC
+        type: string
+      timezone:
+        example: America/Chicago
+        type: string
+    type: object
+  handler.ErrorBody:
+    properties:
+      code:
+        example: validation_failed
+        type: string
+      details:
+        additionalProperties:
+          type: string
+        type: object
+      message:
+        example: request validation failed
+        type: string
+    type: object
+  handler.ErrorResponse:
+    properties:
+      error:
+        $ref: '#/definitions/handler.ErrorBody'
+    type: object
+  handler.HealthResponse:
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
+  handler.ListCompaniesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.CompanyResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 57
+        type: integer
+    type: object
+  handler.ReadyResponse:
+    properties:
+      database:
+        example: up
+        type: string
+      status:
+        example: ok
+        type: string
+    type: object
+  handler.UpdateCompanyRequest:
+    properties:
+      dot_number:
+        example: "1234567"
+        type: string
+      is_active:
+        example: false
+        type: boolean
+      name:
+        example: Acme Freight LLC
+        type: string
+      timezone:
+        example: America/New_York
+        type: string
+    type: object
+info:
+  contact: {}
+  description: 'Backend for US motor carriers: companies, users, drivers, trucks and
+    ELD devices.'
+  title: ELD Fleet Management API
+  version: "1.0"
+paths:
+  /api/v1/companies:
+    get:
+      description: Returns companies ordered by creation time. page_size is capped
+        at 100.
+      parameters:
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListCompaniesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      summary: List companies
+      tags:
+      - companies
+    post:
+      consumes:
+      - application/json
+      description: Creates a motor carrier (tenant). New companies are active.
+      parameters:
+      - description: Company to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateCompanyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              description: URL of the created company
+              type: string
+          schema:
+            $ref: '#/definitions/handler.CompanyResponse'
+        "400":
+          description: invalid JSON or validation failed
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "409":
+          description: DOT number already used
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      summary: Create a company
+      tags:
+      - companies
+  /api/v1/companies/{id}:
+    delete:
+      description: 'Soft delete: the company is hidden but kept for history.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      summary: Delete a company
+      tags:
+      - companies
+    get:
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.CompanyResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      summary: Get a company
+      tags:
+      - companies
+    patch:
+      consumes:
+      - application/json
+      description: 'Partial update: only the fields present in the body are changed.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateCompanyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.CompanyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "409":
+          description: DOT number already used
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      summary: Update a company
+      tags:
+      - companies
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.HealthResponse'
+      summary: Liveness check
+      tags:
+      - health
+  /ready:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ReadyResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handler.ReadyResponse'
+      summary: Readiness check
+      tags:
+      - health
+swagger: "2.0"

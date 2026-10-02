@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
 	// Embeds the IANA time-zone database in the binary, so time.LoadLocation
 	// works even in minimal Docker images that have no /usr/share/zoneinfo.
 	_ "time/tzdata"
@@ -24,6 +25,12 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
 
+// General API information for Swagger (read by `make swagger`).
+//
+//	@title			ELD Fleet Management API
+//	@version		1.0
+//	@description	Backend for US motor carriers: companies, users, drivers, trucks and ELD devices.
+//	@BasePath		/
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -61,7 +68,7 @@ func run() error {
 	companyRepo := repository.NewCompanyRepository(pool)
 	companySvc := service.NewCompanyService(companyRepo)
 
-	router := server.NewRouter(log, server.Handlers{
+	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Handlers{
 		Health:  handler.NewHealthHandler(pool, log),
 		Company: handler.NewCompanyHandler(companySvc),
 	})

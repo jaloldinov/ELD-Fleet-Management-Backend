@@ -38,9 +38,13 @@ func (failingCompanyService) List(context.Context, service.ListParams) (*service
 }
 
 func newTestRouter(buf *bytes.Buffer) *gin.Engine {
+	return newTestRouterWithOptions(buf, Options{})
+}
+
+func newTestRouterWithOptions(buf *bytes.Buffer, opts Options) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(buf, true, "debug")
-	return NewRouter(log, Handlers{
+	return NewRouter(log, opts, Handlers{
 		Health:  handler.NewHealthHandler(okPinger{}, log),
 		Company: handler.NewCompanyHandler(failingCompanyService{}),
 	})
@@ -112,4 +116,28 @@ func TestRouter_InternalErrorIsLoggedButHiddenFromClient(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &entry))
 	assert.Equal(t, "ERROR", entry["level"])
 	assert.Contains(t, entry["errors"], "secret internal detail", "the log must contain the cause")
+}
+
+func TestRouter_Swagger(t *testing.T) {
+	get := func(r http.Handler, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+
+	t.Run("enabled serves UI and spec", func(t *testing.T) {
+		r := newTestRouterWithOptions(&bytes.Buffer{}, Options{EnableSwagger: true})
+
+		assert.Equal(t, http.StatusOK, get(r, "/swagger/index.html").Code)
+
+		spec := get(r, "/swagger/doc.json")
+		assert.Equal(t, http.StatusOK, spec.Code)
+		assert.Contains(t, spec.Body.String(), "/api/v1/companies", "generated spec must include our routes")
+	})
+
+	t.Run("disabled returns 404", func(t *testing.T) {
+		r := newTestRouterWithOptions(&bytes.Buffer{}, Options{EnableSwagger: false})
+
+		assert.Equal(t, http.StatusNotFound, get(r, "/swagger/index.html").Code)
+	})
 }

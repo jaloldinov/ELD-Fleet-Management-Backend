@@ -5,10 +5,22 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
+	// Blank import: its init() registers the generated spec with swag, so
+	// the Swagger UI handler can serve it.
+	_ "github.com/jaloldinov/ELD-learning/docs"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
 )
+
+// Options turns optional router features on or off.
+type Options struct {
+	// EnableSwagger serves Swagger UI at /swagger/index.html.
+	// Off in production: it would show the whole API surface to anyone.
+	EnableSwagger bool
+}
 
 // Handlers groups every HTTP handler the router needs.
 // New handlers (company, user, truck, ...) are added here as we build them.
@@ -18,7 +30,7 @@ type Handlers struct {
 }
 
 // NewRouter builds the Gin engine and registers all routes.
-func NewRouter(log *slog.Logger, h Handlers) *gin.Engine {
+func NewRouter(log *slog.Logger, opts Options, h Handlers) *gin.Engine {
 	r := gin.New()
 
 	// We are not behind a trusted proxy yet, so ignore X-Forwarded-For and use
@@ -43,6 +55,10 @@ func NewRouter(log *slog.Logger, h Handlers) *gin.Engine {
 	// Infrastructure endpoints: not versioned, never require auth.
 	r.GET("/health", h.Health.Live)
 	r.GET("/ready", h.Health.Ready)
+
+	if opts.EnableSwagger {
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	// Versioned API. A breaking change later becomes /api/v2 while v1 keeps
 	// working for old clients (e.g. ELD apps that are not updated yet).

@@ -30,6 +30,19 @@ func NewCompanyHandler(svc CompanyService) *CompanyHandler {
 }
 
 // Create handles POST /api/v1/companies.
+//
+//	@Summary		Create a company
+//	@Description	Creates a motor carrier (tenant). New companies are active.
+//	@Tags			companies
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		CreateCompanyRequest	true	"Company to create"
+//	@Success		201		{object}	CompanyResponse
+//	@Header			201		{string}	Location		"URL of the created company"
+//	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
+//	@Failure		409		{object}	ErrorResponse	"DOT number already used"
+//	@Failure		500		{object}	ErrorResponse
+//	@Router			/api/v1/companies [post]
 func (h *CompanyHandler) Create(c *gin.Context) {
 	var req CreateCompanyRequest
 	if !bindJSON(c, &req) {
@@ -50,6 +63,16 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 }
 
 // Get handles GET /api/v1/companies/:id.
+//
+//	@Summary	Get a company
+//	@Tags		companies
+//	@Produce	json
+//	@Param		id	path		string	true	"Company ID"	format(uuid)
+//	@Success	200	{object}	CompanyResponse
+//	@Failure	400	{object}	ErrorResponse	"invalid id"
+//	@Failure	404	{object}	ErrorResponse
+//	@Failure	500	{object}	ErrorResponse
+//	@Router		/api/v1/companies/{id} [get]
 func (h *CompanyHandler) Get(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id")
 	if !ok {
@@ -66,6 +89,17 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 }
 
 // List handles GET /api/v1/companies?page=1&page_size=20.
+//
+//	@Summary		List companies
+//	@Description	Returns companies ordered by creation time. page_size is capped at 100.
+//	@Tags			companies
+//	@Produce		json
+//	@Param			page		query		int	false	"Page number (1-based)"	default(1)	minimum(1)
+//	@Param			page_size	query		int	false	"Items per page"		default(20)	minimum(1)	maximum(100)
+//	@Success		200			{object}	ListCompaniesResponse
+//	@Failure		400			{object}	ErrorResponse
+//	@Failure		500			{object}	ErrorResponse
+//	@Router			/api/v1/companies [get]
 func (h *CompanyHandler) List(c *gin.Context) {
 	var v model.Validator
 	page, ok := queryInt(c, "page")
@@ -87,6 +121,20 @@ func (h *CompanyHandler) List(c *gin.Context) {
 }
 
 // Update handles PATCH /api/v1/companies/:id.
+//
+//	@Summary		Update a company
+//	@Description	Partial update: only the fields present in the body are changed.
+//	@Tags			companies
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string					true	"Company ID"	format(uuid)
+//	@Param			body	body		UpdateCompanyRequest	true	"Fields to change"
+//	@Success		200		{object}	CompanyResponse
+//	@Failure		400		{object}	ErrorResponse
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		409		{object}	ErrorResponse	"DOT number already used"
+//	@Failure		500		{object}	ErrorResponse
+//	@Router			/api/v1/companies/{id} [patch]
 func (h *CompanyHandler) Update(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id")
 	if !ok {
@@ -107,6 +155,16 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 }
 
 // Delete handles DELETE /api/v1/companies/:id (soft delete).
+//
+//	@Summary		Delete a company
+//	@Description	Soft delete: the company is hidden but kept for history.
+//	@Tags			companies
+//	@Param			id	path	string	true	"Company ID"	format(uuid)
+//	@Success		204	"No Content"
+//	@Failure		400	{object}	ErrorResponse
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		500	{object}	ErrorResponse
+//	@Router			/api/v1/companies/{id} [delete]
 func (h *CompanyHandler) Delete(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id")
 	if !ok {

@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run test test-integration test-db build \
+.PHONY: run test test-integration test-db build swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -32,6 +32,21 @@ test-db:
 
 build:
 	go build -o bin/api ./cmd/api
+
+## ---------- Swagger ----------
+
+# Pinned version via `go run`: everyone generates identical docs, no global install needed.
+SWAG := go run github.com/swaggo/swag/cmd/swag@v1.16.6
+
+# Regenerates docs/ from the annotations. Run after changing a handler or DTO.
+swagger:
+	$(SWAG) fmt
+	$(SWAG) init -g cmd/api/main.go -o docs --parseInternal
+
+# Fails if docs/ is out of date (use in CI).
+swagger-check: swagger
+	@git diff --exit-code --stat -- docs/ \
+		|| (echo "docs/ is out of date: run 'make swagger' and commit the result" && exit 1)
 
 ## ---------- Database (Docker) ----------
 
