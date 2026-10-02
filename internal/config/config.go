@@ -14,9 +14,10 @@ const (
 // Config holds every setting the application needs to start.
 // It grows as we add new pieces (database, JWT, ...).
 type Config struct {
-	Env      string // EnvDevelopment or EnvProduction
-	HTTPPort string
-	LogLevel string // debug, info, warn, error
+	Env         string // EnvDevelopment or EnvProduction
+	HTTPPort    string
+	LogLevel    string // debug, info, warn, error
+	DatabaseURL string // postgres://user:pass@host:port/db?sslmode=disable
 }
 
 // Load reads the configuration from environment variables, applies defaults,
@@ -27,6 +28,8 @@ func Load() (*Config, error) {
 		Env:      getEnv("APP_ENV", EnvDevelopment),
 		HTTPPort: getEnv("HTTP_PORT", "8080"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
+		// No default: a wrong database must never be used by accident.
+		DatabaseURL: getEnv("DATABASE_URL", ""),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -51,6 +54,10 @@ func (c *Config) validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("LOG_LEVEL must be one of debug, info, warn, error, got %q", c.LogLevel)
+	}
+
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
 	}
 
 	return nil

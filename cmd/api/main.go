@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jaloldinov/ELD-learning/internal/config"
+	"github.com/jaloldinov/ELD-learning/internal/database"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
 	"github.com/jaloldinov/ELD-learning/internal/server"
@@ -39,8 +40,18 @@ func run() error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := server.NewRouter(server.Handlers{
-		Health: handler.NewHealthHandler(),
+	// Give the database 5 seconds to answer at startup, then give up.
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dbCancel()
+	pool, err := database.NewPool(dbCtx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close() // runs last, after the HTTP server has shut down
+	log.Info("database connected")
+
+	router := server.NewRouter(log, server.Handlers{
+		Health: handler.NewHealthHandler(pool, log),
 	})
 
 	srv := &http.Server{

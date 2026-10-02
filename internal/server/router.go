@@ -2,9 +2,12 @@
 package server
 
 import (
+	"log/slog"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/jaloldinov/ELD-learning/internal/handler"
+	"github.com/jaloldinov/ELD-learning/internal/middleware"
 )
 
 // Handlers groups every HTTP handler the router needs.
@@ -14,13 +17,27 @@ type Handlers struct {
 }
 
 // NewRouter builds the Gin engine and registers all routes.
-func NewRouter(h Handlers) *gin.Engine {
-	// gin.New() starts with no middleware. gin.Default() would add Gin's own
-	// text logger; we will replace it with our slog request logger.
+func NewRouter(log *slog.Logger, h Handlers) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery()) // turns a panic into a 500 instead of crashing the process
 
-	r.GET("/health", h.Health.Check)
+	// We are not behind a trusted proxy yet, so ignore X-Forwarded-For and use
+	// the real TCP peer address for c.ClientIP(). Otherwise any client could
+	// fake its IP in our logs. (SetTrustedProxies(nil) cannot fail.)
+	_ = r.SetTrustedProxies(nil)
+
+	// Order matters. Middleware wraps like an onion:
+	//   RequestID → RequestLogger → Recovery → handler
+	// - RequestID is first, so every later step can read the ID.
+	// - RequestLogger sits outside Recovery, so when Recovery turns a panic
+	//   into a 500, the logger still sees and logs that 500.
+	r.Use(
+		middleware.RequestID(),
+		middleware.RequestLogger(log),
+		middleware.Recovery(log),
+	)
+
+	r.GET("/health", h.Health.Live)
+	r.GET("/ready", h.Health.Ready)
 
 	return r
 }
