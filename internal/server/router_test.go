@@ -19,6 +19,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
+	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
 
@@ -52,14 +53,27 @@ func (fakeTokens) Parse(token string) (*auth.TokenClaims, error) {
 
 var authHeader = map[string]string{"Authorization": "Bearer good-token"}
 
+// fakePermissions gives every caller the same fixed permission list.
+type fakePermissions []model.Permission
+
+func (f fakePermissions) GetPermissions(context.Context, uuid.UUID) ([]model.Permission, error) {
+	return f, nil
+}
+
 func newTestRouter(buf *bytes.Buffer) *gin.Engine {
-	return newTestRouterWithOptions(buf, Options{})
+	return newTestRouterWith(buf, Options{}, model.AllPermissions())
 }
 
 func newTestRouterWithOptions(buf *bytes.Buffer, opts Options) *gin.Engine {
+	return newTestRouterWith(buf, opts, model.AllPermissions())
+}
+
+// newTestRouterWith builds the real router; every caller gets perms.
+func newTestRouterWith(buf *bytes.Buffer, opts Options, perms []model.Permission) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(buf, true, "debug")
-	return NewRouter(log, opts, fakeTokens{}, Handlers{
+	sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(perms)}
+	return NewRouter(log, opts, sec, Handlers{
 		Health:  handler.NewHealthHandler(okPinger{}, log),
 		Auth:    handler.NewAuthHandler(nil),
 		User:    handler.NewUserHandler(nil),
@@ -140,6 +154,33 @@ func TestRouter_EveryNonPublicRouteRequiresAuthentication(t *testing.T) {
 		checked++
 	}
 	assert.Greater(t, checked, 5, "sanity check: protected routes were found")
+}
+
+// authenticatedOnlyRoutes need a login but no specific permission.
+var authenticatedOnlyRoutes = map[string]bool{
+	"GET /api/v1/auth/me": true,
+}
+
+// A logged-in user with NO permissions must be denied (403) everywhere except
+// public and login-only routes. A protected route that forgot its
+// perm.Require(...) fails here.
+func TestRouter_EveryProtectedRouteRequiresAPermission(t *testing.T) {
+	r := newTestRouterWith(&bytes.Buffer{}, Options{}, nil) // valid token, zero permissions
+
+	checked := 0
+	for _, route := range r.Routes() {
+		key := route.Method + " " + route.Path
+		if publicRoutes[key] || authenticatedOnlyRoutes[key] {
+			continue
+		}
+		path := strings.ReplaceAll(route.Path, ":id", uuid.NewString())
+
+		rec := send(r, route.Method, path, authHeader)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code, "%s must require a permission", key)
+		checked++
+	}
+	assert.Greater(t, checked, 4, "sanity check: protected routes were found")
 }
 
 func TestRouter_CompanyRoutesRegistered(t *testing.T) {

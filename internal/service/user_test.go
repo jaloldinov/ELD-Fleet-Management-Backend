@@ -224,3 +224,13 @@ func TestUserService_GetProfile(t *testing.T) {
 		assert.ErrorIs(t, err, model.ErrNotFound)
 	})
 }
+
+func TestUserService_GetPermissions(t *testing.T) {
+	want := []model.Permission{model.PermTruckRead}
+	repo := &fakeUserRepo{t: t, permsFn: func(uuid.UUID) ([]model.Permission, error) { return want, nil }}
+
+	got, err := NewUserService(repo, fakeHasher{}).GetPermissions(context.Background(), uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}

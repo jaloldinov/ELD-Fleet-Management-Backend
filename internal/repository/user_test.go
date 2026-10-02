@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -158,6 +159,37 @@ func TestUserRepository_PlatformUser(t *testing.T) {
 	perms, err := repo.GetPermissions(ctx, u.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, model.AllPermissions(), perms)
+}
+
+func TestUserRepository_GetPermissions_InactiveOrDeletedUserHasNone(t *testing.T) {
+	db := newTestDB(t)
+	company := createCompany(t, NewCompanyRepository(db), "Acme", "1")
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	tests := []struct {
+		name   string
+		update string
+	}{
+		{"deactivated", `UPDATE users SET is_active = false WHERE id = $1`},
+		{"soft-deleted", `UPDATE users SET deleted_at = now() WHERE id = $1`},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := repo.Create(ctx, newUser(company.ID, fmt.Sprintf("user%d@acme.com", i)), []string{model.RoleAdmin})
+			require.NoError(t, err)
+			before, err := repo.GetPermissions(ctx, u.ID)
+			require.NoError(t, err)
+			require.NotEmpty(t, before)
+
+			_, err = db.Exec(ctx, tt.update, u.ID)
+			require.NoError(t, err)
+
+			after, err := repo.GetPermissions(ctx, u.ID)
+			require.NoError(t, err)
+			assert.Empty(t, after, "access must end immediately, even with a valid token")
+		})
+	}
 }
 
 func TestUserRepository_GetPermissions_NoRoles(t *testing.T) {

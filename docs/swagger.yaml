@@ -320,8 +320,9 @@ paths:
       - auth
   /api/v1/companies:
     get:
-      description: Returns companies ordered by creation time. page_size is capped
-        at 100.
+      description: |-
+        Returns companies ordered by creation time. page_size is capped at 100.
+        Requires permission: company:read
       parameters:
       - default: 1
         description: Page number (1-based)
@@ -347,6 +348,14 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission company:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
@@ -359,7 +368,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a motor carrier (tenant). New companies are active.
+      description: |-
+        Creates a motor carrier (tenant). New companies are active.
+        Requires permission: company:create
       parameters:
       - description: Company to create
         in: body
@@ -386,6 +397,10 @@ paths:
           description: missing or invalid access token
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission company:create
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
         "409":
           description: DOT number already used
           schema:
@@ -401,7 +416,9 @@ paths:
       - companies
   /api/v1/companies/{id}:
     delete:
-      description: 'Soft delete: the company is hidden but kept for history.'
+      description: |-
+        Soft delete: the company is hidden but kept for history.
+        Requires permission: company:delete
       parameters:
       - description: Company ID
         format: uuid
@@ -414,6 +431,14 @@ paths:
           description: No Content
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission company:delete
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
         "404":
@@ -430,6 +455,7 @@ paths:
       tags:
       - companies
     get:
+      description: 'Requires permission: company:read'
       parameters:
       - description: Company ID
         format: uuid
@@ -448,6 +474,14 @@ paths:
           description: invalid id
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission company:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
         "404":
           description: Not Found
           schema:
@@ -464,7 +498,9 @@ paths:
     patch:
       consumes:
       - application/json
-      description: 'Partial update: only the fields present in the body are changed.'
+      description: |-
+        Partial update: only the fields present in the body are changed.
+        Requires permission: company:update
       parameters:
       - description: Company ID
         format: uuid
@@ -487,6 +523,14 @@ paths:
             $ref: '#/definitions/handler.CompanyResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission company:update
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
         "404":

@@ -35,13 +35,15 @@ func NewCompanyHandler(svc CompanyService) *CompanyHandler {
 //	@Description	Creates a motor carrier (tenant). New companies are active.
 //	@Tags			companies
 //	@Security		BearerAuth
+//	@Description	Requires permission: company:create
+//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
+//	@Failure		403	{object}	ErrorResponse	"missing permission company:create"
 //	@Accept			json
 //	@Produce		json
 //	@Param			body	body		CreateCompanyRequest	true	"Company to create"
 //	@Success		201		{object}	CompanyResponse
 //	@Header			201		{string}	Location		"URL of the created company"
 //	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
 //	@Failure		409		{object}	ErrorResponse	"DOT number already used"
 //	@Failure		500		{object}	ErrorResponse
 //	@Router			/api/v1/companies [post]
@@ -66,16 +68,19 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 
 // Get handles GET /api/v1/companies/:id.
 //
-//	@Summary	Get a company
-//	@Tags		companies
-//	@Security	BearerAuth
-//	@Produce	json
-//	@Param		id	path		string	true	"Company ID"	format(uuid)
-//	@Success	200	{object}	CompanyResponse
-//	@Failure	400	{object}	ErrorResponse	"invalid id"
-//	@Failure	404	{object}	ErrorResponse
-//	@Failure	500	{object}	ErrorResponse
-//	@Router		/api/v1/companies/{id} [get]
+//	@Summary		Get a company
+//	@Tags			companies
+//	@Security		BearerAuth
+//	@Description	Requires permission: company:read
+//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
+//	@Failure		403	{object}	ErrorResponse	"missing permission company:read"
+//	@Produce		json
+//	@Param			id	path		string	true	"Company ID"	format(uuid)
+//	@Success		200	{object}	CompanyResponse
+//	@Failure		400	{object}	ErrorResponse	"invalid id"
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		500	{object}	ErrorResponse
+//	@Router			/api/v1/companies/{id} [get]
 func (h *CompanyHandler) Get(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id")
 	if !ok {
@@ -97,6 +102,9 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 //	@Description	Returns companies ordered by creation time. page_size is capped at 100.
 //	@Tags			companies
 //	@Security		BearerAuth
+//	@Description	Requires permission: company:read
+//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
+//	@Failure		403	{object}	ErrorResponse	"missing permission company:read"
 //	@Produce		json
 //	@Param			page		query		int	false	"Page number (1-based)"	default(1)	minimum(1)
 //	@Param			page_size	query		int	false	"Items per page"		default(20)	minimum(1)	maximum(100)
@@ -130,6 +138,9 @@ func (h *CompanyHandler) List(c *gin.Context) {
 //	@Description	Partial update: only the fields present in the body are changed.
 //	@Tags			companies
 //	@Security		BearerAuth
+//	@Description	Requires permission: company:update
+//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
+//	@Failure		403	{object}	ErrorResponse	"missing permission company:update"
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string					true	"Company ID"	format(uuid)
@@ -165,7 +176,10 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 //	@Description	Soft delete: the company is hidden but kept for history.
 //	@Tags			companies
 //	@Security		BearerAuth
-//	@Param			id	path	string	true	"Company ID"	format(uuid)
+//	@Description	Requires permission: company:delete
+//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
+//	@Failure		403	{object}	ErrorResponse	"missing permission company:delete"
+//	@Param			id	path		string			true	"Company ID"	format(uuid)
 //	@Success		204	"No Content"
 //	@Failure		400	{object}	ErrorResponse
 //	@Failure		404	{object}	ErrorResponse

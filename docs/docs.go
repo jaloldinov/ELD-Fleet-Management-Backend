@@ -215,7 +215,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns companies ordered by creation time. page_size is capped at 100.",
+                "description": "Returns companies ordered by creation time. page_size is capped at 100.\nRequires permission: company:read",
                 "produces": [
                     "application/json"
                 ],
@@ -255,6 +255,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
                     },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission company:read",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -269,7 +281,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a motor carrier (tenant). New companies are active.",
+                "description": "Creates a motor carrier (tenant). New companies are active.\nRequires permission: company:create",
                 "consumes": [
                     "application/json"
                 ],
@@ -316,6 +328,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
                     },
+                    "403": {
+                        "description": "missing permission company:create",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
                     "409": {
                         "description": "DOT number already used",
                         "schema": {
@@ -338,6 +356,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
+                "description": "Requires permission: company:read",
                 "produces": [
                     "application/json"
                 ],
@@ -368,6 +387,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
                     },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission company:read",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -388,7 +419,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Soft delete: the company is hidden but kept for history.",
+                "description": "Soft delete: the company is hidden but kept for history.\nRequires permission: company:delete",
                 "tags": [
                     "companies"
                 ],
@@ -413,6 +444,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
                     },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission company:delete",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -433,7 +476,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Partial update: only the fields present in the body are changed.",
+                "description": "Partial update: only the fields present in the body are changed.\nRequires permission: company:update",
                 "consumes": [
                     "application/json"
                 ],
@@ -472,6 +515,18 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission company:update",
                         "schema": {
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }

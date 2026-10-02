@@ -83,10 +83,15 @@ func run() error {
 		return err
 	}
 
-	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, tokens, server.Handlers{
+	userSvc := service.NewUserService(userRepo, hasher)
+
+	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Security{
+		Tokens:      tokens,
+		Permissions: userSvc,
+	}, server.Handlers{
 		Health:  handler.NewHealthHandler(pool, log),
 		Auth:    handler.NewAuthHandler(authSvc),
-		User:    handler.NewUserHandler(service.NewUserService(userRepo, hasher)),
+		User:    handler.NewUserHandler(userSvc),
 		Company: handler.NewCompanyHandler(companySvc),
 	})
 

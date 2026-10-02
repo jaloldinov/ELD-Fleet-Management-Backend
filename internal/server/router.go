@@ -13,6 +13,7 @@ import (
 	_ "github.com/jaloldinov/ELD-learning/docs"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
+	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
 // Options turns optional router features on or off.
@@ -31,9 +32,14 @@ type Handlers struct {
 	Company *handler.CompanyHandler
 }
 
+// Security holds what the router needs to protect routes.
+type Security struct {
+	Tokens      middleware.TokenParser      // authentication: who is calling?
+	Permissions middleware.PermissionLoader // authorization: what may they do?
+}
+
 // NewRouter builds the Gin engine and registers all routes.
-// tokens verifies access tokens for protected routes.
-func NewRouter(log *slog.Logger, opts Options, tokens middleware.TokenParser, h Handlers) *gin.Engine {
+func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.Engine {
 	r := gin.New()
 
 	// We are not behind a trusted proxy yet, so ignore X-Forwarded-For and use
@@ -76,17 +82,22 @@ func NewRouter(log *slog.Logger, opts Options, tokens middleware.TokenParser, h 
 	// ---------- Protected: every route below requires a valid access token ----------
 	// Registering the middleware on the GROUP (not per route) means a new
 	// route added here can never forget authentication.
-	protected := v1.Group("", middleware.Authenticate(tokens))
+	protected := v1.Group("", middleware.Authenticate(sec.Tokens))
+	perm := middleware.NewPermissionChecker(sec.Permissions)
 
+	// Only needs a login: everyone may ask "who am I?".
 	protected.GET("/auth/me", h.User.Me)
 
-	// TODO(5e): require permissions; today any logged-in user may manage companies.
+	// Every other protected route declares the permission it needs, right
+	// next to the route, so a reviewer sees "who may call this" at a glance.
+	// TODO(5f): tenant scope. company:read/update are also held by company
+	// roles, who must only see THEIR company.
 	companies := protected.Group("/companies")
-	companies.POST("", h.Company.Create)
-	companies.GET("", h.Company.List)
-	companies.GET("/:id", h.Company.Get)
-	companies.PATCH("/:id", h.Company.Update)
-	companies.DELETE("/:id", h.Company.Delete)
+	companies.POST("", perm.Require(model.PermCompanyCreate), h.Company.Create)
+	companies.GET("", perm.Require(model.PermCompanyRead), h.Company.List)
+	companies.GET("/:id", perm.Require(model.PermCompanyRead), h.Company.Get)
+	companies.PATCH("/:id", perm.Require(model.PermCompanyUpdate), h.Company.Update)
+	companies.DELETE("/:id", perm.Require(model.PermCompanyDelete), h.Company.Delete)
 
 	return r
 }

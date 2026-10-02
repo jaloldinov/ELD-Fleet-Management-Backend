@@ -102,12 +102,19 @@ func (r *UserRepository) GetByLogin(ctx context.Context, login string) (*model.U
 }
 
 // GetPermissions returns the union of the permissions of all the user's roles.
+//
+// A deactivated or deleted user has NO permissions. Their access token may
+// still be valid for a few minutes (JWTs cannot be revoked), but every
+// permission check fails immediately.
 func (r *UserRepository) GetPermissions(ctx context.Context, userID uuid.UUID) ([]model.Permission, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT DISTINCT rp.permission_code
-		FROM user_roles ur
+		FROM users u
+		JOIN user_roles ur       ON ur.user_id = u.id
 		JOIN role_permissions rp ON rp.role_id = ur.role_id
-		WHERE ur.user_id = $1
+		WHERE u.id = $1
+		  AND u.is_active
+		  AND u.deleted_at IS NULL
 		ORDER BY 1`,
 		userID,
 	)

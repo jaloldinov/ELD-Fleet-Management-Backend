@@ -102,6 +102,12 @@ func (s *UserService) GetByID(ctx context.Context, id uuid.UUID) (*model.User, e
 	return s.repo.GetByID(ctx, id)
 }
 
+// GetPermissions returns a user's effective permissions (empty for inactive
+// or deleted users). Used by the permission middleware on every request.
+func (s *UserService) GetPermissions(ctx context.Context, id uuid.UUID) ([]model.Permission, error) {
+	return s.repo.GetPermissions(ctx, id)
+}
+
 // GetProfile returns a user and their permissions (for "who am I?").
 func (s *UserService) GetProfile(ctx context.Context, id uuid.UUID) (*UserProfile, error) {
 	u, err := s.repo.GetByID(ctx, id)
