@@ -19,7 +19,9 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/database"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
+	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/server"
+	"github.com/jaloldinov/ELD-learning/internal/service"
 )
 
 func main() {
@@ -53,8 +55,15 @@ func run() error {
 	defer pool.Close() // runs last, after the HTTP server has shut down
 	log.Info("database connected")
 
+	// Wire the 3 layers, bottom-up: repository → service → handler.
+	// Each layer receives the one below it through a constructor (dependency
+	// injection), so nothing reaches for globals and every layer is testable.
+	companyRepo := repository.NewCompanyRepository(pool)
+	companySvc := service.NewCompanyService(companyRepo)
+
 	router := server.NewRouter(log, server.Handlers{
-		Health: handler.NewHealthHandler(pool, log),
+		Health:  handler.NewHealthHandler(pool, log),
+		Company: handler.NewCompanyHandler(companySvc),
 	})
 
 	srv := &http.Server{

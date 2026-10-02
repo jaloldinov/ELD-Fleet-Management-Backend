@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
+	"github.com/jaloldinov/ELD-learning/internal/service"
 )
 
 // These tests check the wiring: that routes exist and the middleware chain is
@@ -24,11 +26,23 @@ type okPinger struct{}
 
 func (okPinger) Ping(context.Context) error { return nil }
 
+// failingCompanyService embeds the interface, so it satisfies it without
+// implementing every method. Only List is overridden; calling any other
+// method would panic (nil embedded interface), which is fine for this test.
+type failingCompanyService struct {
+	handler.CompanyService
+}
+
+func (failingCompanyService) List(context.Context, service.ListParams) (*service.CompanyPage, error) {
+	return nil, errors.New("connection reset: secret internal detail")
+}
+
 func newTestRouter(buf *bytes.Buffer) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(buf, true, "debug")
 	return NewRouter(log, Handlers{
-		Health: handler.NewHealthHandler(okPinger{}, log),
+		Health:  handler.NewHealthHandler(okPinger{}, log),
+		Company: handler.NewCompanyHandler(failingCompanyService{}),
 	})
 }
 
@@ -68,5 +82,34 @@ func TestRouter_UnknownRouteIs404(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/does-not-exist", nil))
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.JSONEq(t, `{"error":{"code":"not_found","message":"route not found"}}`, rec.Body.String())
 	assert.Contains(t, buf.String(), `"level":"WARN"`)
+}
+
+func TestRouter_CompanyRoutesRegistered(t *testing.T) {
+	var buf bytes.Buffer
+	r := newTestRouter(&buf)
+
+	// An invalid UUID is rejected by the handler before the service is called,
+	// so a 400 (not 404) proves the route exists.
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/companies/not-a-uuid", nil))
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestRouter_InternalErrorIsLoggedButHiddenFromClient(t *testing.T) {
+	var buf bytes.Buffer
+	r := newTestRouter(&buf)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/companies", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "secret internal detail", "client must not see the cause")
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &entry))
+	assert.Equal(t, "ERROR", entry["level"])
+	assert.Contains(t, entry["errors"], "secret internal detail", "the log must contain the cause")
 }

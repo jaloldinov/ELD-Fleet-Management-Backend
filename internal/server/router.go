@@ -13,7 +13,8 @@ import (
 // Handlers groups every HTTP handler the router needs.
 // New handlers (company, user, truck, ...) are added here as we build them.
 type Handlers struct {
-	Health *handler.HealthHandler
+	Health  *handler.HealthHandler
+	Company *handler.CompanyHandler
 }
 
 // NewRouter builds the Gin engine and registers all routes.
@@ -36,8 +37,24 @@ func NewRouter(log *slog.Logger, h Handlers) *gin.Engine {
 		middleware.Recovery(log),
 	)
 
+	// Unknown routes return our JSON error format instead of Gin's plain text.
+	r.NoRoute(handler.NotFound)
+
+	// Infrastructure endpoints: not versioned, never require auth.
 	r.GET("/health", h.Health.Live)
 	r.GET("/ready", h.Health.Ready)
+
+	// Versioned API. A breaking change later becomes /api/v2 while v1 keeps
+	// working for old clients (e.g. ELD apps that are not updated yet).
+	v1 := r.Group("/api/v1")
+
+	// TODO(auth step): only platform admins may manage companies.
+	companies := v1.Group("/companies")
+	companies.POST("", h.Company.Create)
+	companies.GET("", h.Company.List)
+	companies.GET("/:id", h.Company.Get)
+	companies.PATCH("/:id", h.Company.Update)
+	companies.DELETE("/:id", h.Company.Delete)
 
 	return r
 }
