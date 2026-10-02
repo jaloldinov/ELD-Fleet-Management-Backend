@@ -9,6 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// Embeds the IANA time-zone database in the binary, so time.LoadLocation
+	// works even in minimal Docker images that have no /usr/share/zoneinfo.
+	_ "time/tzdata"
 
 	"github.com/gin-gonic/gin"
 
