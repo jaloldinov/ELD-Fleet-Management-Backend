@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run test test-integration build \
+.PHONY: run test test-integration test-db build \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -13,12 +13,22 @@ MIGRATIONS_DIR := migrations
 run:
 	go run ./cmd/api
 
+# Fast unit tests only. TEST_DATABASE_URL is cleared (it is exported from .env),
+# so tests that need a database are skipped.
 test:
-	go test ./... -race -cover
+	TEST_DATABASE_URL= go test ./... -race -cover
 
-# Also runs tests that need a real database.
-test-integration:
-	TEST_DATABASE_URL="$(DATABASE_URL)" go test ./... -race -cover
+# Also runs tests that need a real database (uses TEST_DATABASE_URL, never DATABASE_URL).
+# -p 1 runs packages one at a time, because they share the same test database.
+test-integration: test-db
+	go test ./... -race -cover -p 1
+
+# Creates the eld_test database if missing and applies all migrations to it.
+test-db:
+	@docker compose exec -T postgres psql -U eld -d postgres -tAc \
+		"SELECT 1 FROM pg_database WHERE datname = 'eld_test'" | grep -q 1 \
+		|| docker compose exec -T postgres createdb -U eld eld_test
+	migrate -path $(MIGRATIONS_DIR) -database "$(TEST_DATABASE_URL)" up
 
 build:
 	go build -o bin/api ./cmd/api
