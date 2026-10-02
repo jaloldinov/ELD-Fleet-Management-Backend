@@ -33,9 +33,20 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
-	// TRUNCATE is much faster than DELETE for emptying tables. CASCADE will
-	// also empty tables that reference these ones (users, trucks, ... later).
-	_, err = pool.Exec(context.Background(), `TRUNCATE companies CASCADE`)
+	// Remove test data, children before parents (foreign keys), but keep the
+	// seed data from migrations (permissions, system roles, role_permissions).
+	//
+	// Do NOT use "TRUNCATE companies CASCADE": CASCADE empties every table
+	// that references companies *entirely*, including roles, which would wipe
+	// the seeded system roles.
+	//
+	// Exec without arguments uses Postgres' simple protocol, which allows
+	// several statements in one call.
+	_, err = pool.Exec(context.Background(), `
+		DELETE FROM user_roles;
+		DELETE FROM users;
+		DELETE FROM roles WHERE company_id IS NOT NULL;
+		DELETE FROM companies;`)
 	require.NoError(t, err)
 
 	return pool

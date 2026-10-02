@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run test test-integration test-db build swagger swagger-check \
+.PHONY: run test test-integration test-db test-db-reset build swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -29,6 +29,11 @@ test-db:
 		"SELECT 1 FROM pg_database WHERE datname = 'eld_test'" | grep -q 1 \
 		|| docker compose exec -T postgres createdb -U eld eld_test
 	migrate -path $(MIGRATIONS_DIR) -database "$(TEST_DATABASE_URL)" up
+
+# Drops and recreates the test database from scratch (all migrations re-run).
+test-db-reset:
+	docker compose exec -T postgres dropdb -U eld --if-exists eld_test
+	$(MAKE) test-db
 
 build:
 	go build -o bin/api ./cmd/api
