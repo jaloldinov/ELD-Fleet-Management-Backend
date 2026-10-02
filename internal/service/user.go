@@ -36,6 +36,13 @@ var (
 type UserRepository interface {
 	Create(ctx context.Context, u model.User, roleNames []string) (*model.User, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.User, error)
+	GetPermissions(ctx context.Context, userID uuid.UUID) ([]model.Permission, error)
+}
+
+// UserProfile is a user together with their effective permissions.
+type UserProfile struct {
+	User        *model.User
+	Permissions []model.Permission
 }
 
 // PasswordHasher hashes passwords. auth.BcryptHasher in production; tests use
@@ -93,6 +100,19 @@ func (s *UserService) Create(ctx context.Context, in CreateUserInput) (*model.Us
 
 func (s *UserService) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	return s.repo.GetByID(ctx, id)
+}
+
+// GetProfile returns a user and their permissions (for "who am I?").
+func (s *UserService) GetProfile(ctx context.Context, id uuid.UUID) (*UserProfile, error) {
+	u, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	perms, err := s.repo.GetPermissions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &UserProfile{User: u, Permissions: perms}, nil
 }
 
 func validateNewUser(companyID *uuid.UUID, email, username, password, firstName, lastName string, roles []string) error {

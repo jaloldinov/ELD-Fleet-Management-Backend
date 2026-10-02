@@ -88,6 +88,46 @@ definitions:
         example: correct horse battery staple
         type: string
     type: object
+  handler.MeResponse:
+    properties:
+      company_id:
+        description: Null for platform users.
+        example: 0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c
+        format: uuid
+        type: string
+      created_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      email:
+        example: jane@acme.com
+        type: string
+      first_name:
+        example: Jane
+        type: string
+      id:
+        example: 0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b
+        format: uuid
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      last_login_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      last_name:
+        example: Smith
+        type: string
+      permissions:
+        example:
+        - truck:read
+        - driver:read
+        items:
+          type: string
+        type: array
+      username:
+        example: jane.smith
+        type: string
+    type: object
   handler.ReadyResponse:
     properties:
       database:
@@ -215,6 +255,29 @@ paths:
       summary: Log out
       tags:
       - auth
+  /api/v1/auth/me:
+    get:
+      description: Returns the authenticated user and their effective permissions.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.MeResponse'
+        "401":
+          description: missing/invalid token, or the user no longer exists
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Current user
+      tags:
+      - auth
   /api/v1/auth/refresh:
     post:
       consumes:
@@ -288,6 +351,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: List companies
       tags:
       - companies
@@ -317,6 +382,10 @@ paths:
           description: invalid JSON or validation failed
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
         "409":
           description: DOT number already used
           schema:
@@ -325,6 +394,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Create a company
       tags:
       - companies
@@ -353,6 +424,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Delete a company
       tags:
       - companies
@@ -383,6 +456,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Get a company
       tags:
       - companies
@@ -426,6 +501,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Update a company
       tags:
       - companies
@@ -457,4 +534,10 @@ paths:
       summary: Readiness check
       tags:
       - health
+securityDefinitions:
+  BearerAuth:
+    description: 'Access token from /api/v1/auth/login. Enter: Bearer <access_token>'
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

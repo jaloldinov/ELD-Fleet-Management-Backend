@@ -34,12 +34,14 @@ func NewCompanyHandler(svc CompanyService) *CompanyHandler {
 //	@Summary		Create a company
 //	@Description	Creates a motor carrier (tenant). New companies are active.
 //	@Tags			companies
+//	@Security		BearerAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			body	body		CreateCompanyRequest	true	"Company to create"
 //	@Success		201		{object}	CompanyResponse
 //	@Header			201		{string}	Location		"URL of the created company"
 //	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
+//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
 //	@Failure		409		{object}	ErrorResponse	"DOT number already used"
 //	@Failure		500		{object}	ErrorResponse
 //	@Router			/api/v1/companies [post]
@@ -66,6 +68,7 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 //
 //	@Summary	Get a company
 //	@Tags		companies
+//	@Security	BearerAuth
 //	@Produce	json
 //	@Param		id	path		string	true	"Company ID"	format(uuid)
 //	@Success	200	{object}	CompanyResponse
@@ -93,6 +96,7 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 //	@Summary		List companies
 //	@Description	Returns companies ordered by creation time. page_size is capped at 100.
 //	@Tags			companies
+//	@Security		BearerAuth
 //	@Produce		json
 //	@Param			page		query		int	false	"Page number (1-based)"	default(1)	minimum(1)
 //	@Param			page_size	query		int	false	"Items per page"		default(20)	minimum(1)	maximum(100)
@@ -125,6 +129,7 @@ func (h *CompanyHandler) List(c *gin.Context) {
 //	@Summary		Update a company
 //	@Description	Partial update: only the fields present in the body are changed.
 //	@Tags			companies
+//	@Security		BearerAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string					true	"Company ID"	format(uuid)
@@ -159,6 +164,7 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 //	@Summary		Delete a company
 //	@Description	Soft delete: the company is hidden but kept for history.
 //	@Tags			companies
+//	@Security		BearerAuth
 //	@Param			id	path	string	true	"Company ID"	format(uuid)
 //	@Success		204	"No Content"
 //	@Failure		400	{object}	ErrorResponse

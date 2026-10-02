@@ -37,7 +37,9 @@ type ErrorBody struct {
 	Details map[string]string `json:"details,omitempty"`
 }
 
-func respondError(c *gin.Context, status int, code, message string, details map[string]string) {
+// RespondError writes an error in the standard API format and aborts the
+// request. Exported so middleware returns errors in the same shape.
+func RespondError(c *gin.Context, status int, code, message string, details map[string]string) {
 	// Abort stops any remaining handlers in the chain from running.
 	c.AbortWithStatusJSON(status, ErrorResponse{
 		Error: ErrorBody{Code: code, Message: message, Details: details},
@@ -51,36 +53,36 @@ func handleError(c *gin.Context, err error) {
 
 	switch {
 	case errors.As(err, &vErr):
-		respondError(c, http.StatusBadRequest, CodeValidation, "request validation failed", vErr.Fields)
+		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed", vErr.Fields)
 	case errors.Is(err, model.ErrNotFound):
-		respondError(c, http.StatusNotFound, CodeNotFound, "resource not found", nil)
+		RespondError(c, http.StatusNotFound, CodeNotFound, "resource not found", nil)
 	case errors.Is(err, model.ErrDOTNumberTaken),
 		errors.Is(err, model.ErrEmailTaken),
 		errors.Is(err, model.ErrUsernameTaken):
-		respondError(c, http.StatusConflict, CodeConflict, err.Error(), nil)
+		RespondError(c, http.StatusConflict, CodeConflict, err.Error(), nil)
 	case errors.Is(err, model.ErrInvalidCredentials):
-		respondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
+		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
 	case errors.Is(err, model.ErrRefreshTokenReused):
 		// Security event: attach it so the request log records it, but the
 		// client gets exactly the same answer as for any invalid token.
 		_ = c.Error(err)
-		respondError(c, http.StatusUnauthorized, CodeUnauthorized, model.ErrRefreshTokenInvalid.Error(), nil)
+		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, model.ErrRefreshTokenInvalid.Error(), nil)
 	case errors.Is(err, model.ErrRefreshTokenInvalid):
-		respondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
+		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
 	case errors.Is(err, model.ErrUserInactive):
-		respondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
+		RespondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
 	default:
 		// Unexpected error: a bug or an outage. Attach it to the context so the
 		// RequestLogger middleware logs it, and hide the details from the client.
 		_ = c.Error(err)
-		respondError(c, http.StatusInternalServerError, CodeInternal, "internal server error", nil)
+		RespondError(c, http.StatusInternalServerError, CodeInternal, "internal server error", nil)
 	}
 }
 
 // NotFound answers requests to routes that do not exist, in our error format
 // (Gin's default is a plain-text "404 page not found").
 func NotFound(c *gin.Context) {
-	respondError(c, http.StatusNotFound, CodeNotFound, "route not found", nil)
+	RespondError(c, http.StatusNotFound, CodeNotFound, "route not found", nil)
 }
 
 // bindJSON decodes the request body into dst. On failure it writes a 400 and
@@ -88,7 +90,7 @@ func NotFound(c *gin.Context) {
 // it can mention Go type names.
 func bindJSON(c *gin.Context, dst any) bool {
 	if err := c.ShouldBindJSON(dst); err != nil {
-		respondError(c, http.StatusBadRequest, CodeBadRequest, "request body must be valid JSON", nil)
+		RespondError(c, http.StatusBadRequest, CodeBadRequest, "request body must be valid JSON", nil)
 		return false
 	}
 	return true
@@ -99,7 +101,7 @@ func bindJSON(c *gin.Context, dst any) bool {
 func parseUUIDParam(c *gin.Context, name string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param(name))
 	if err != nil {
-		respondError(c, http.StatusBadRequest, CodeValidation, "request validation failed",
+		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed",
 			map[string]string{name: "must be a valid UUID"})
 		return uuid.Nil, false
 	}

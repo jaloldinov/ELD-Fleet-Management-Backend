@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/requestid"
 )
 
@@ -31,6 +32,11 @@ func RequestLogger(log *slog.Logger) gin.HandlerFunc {
 			"status", status,
 			"latency_ms", float64(time.Since(start).Microseconds()) / 1000,
 			"client_ip", c.ClientIP(),
+		}
+		// Authenticate (deeper in the chain) has run by now, so for protected
+		// routes we know who made the request.
+		if p, ok := auth.PrincipalFromContext(c.Request.Context()); ok {
+			attrs = append(attrs, "user_id", p.UserID.String())
 		}
 		if len(c.Errors) > 0 {
 			attrs = append(attrs, "errors", c.Errors.String())

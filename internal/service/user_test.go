@@ -17,6 +17,14 @@ type fakeUserRepo struct {
 	t         *testing.T
 	createFn  func(u model.User, roles []string) (*model.User, error)
 	getByIDFn func(id uuid.UUID) (*model.User, error)
+	permsFn   func(id uuid.UUID) ([]model.Permission, error)
+}
+
+func (f *fakeUserRepo) GetPermissions(_ context.Context, id uuid.UUID) ([]model.Permission, error) {
+	if f.permsFn == nil {
+		f.t.Fatal("unexpected call to GetPermissions")
+	}
+	return f.permsFn(id)
 }
 
 func (f *fakeUserRepo) Create(_ context.Context, u model.User, roles []string) (*model.User, error) {
@@ -186,4 +194,33 @@ func TestUserService_GetByID(t *testing.T) {
 	_, err := NewUserService(repo, fakeHasher{}).GetByID(context.Background(), uuid.New())
 
 	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+func TestUserService_GetProfile(t *testing.T) {
+	user := &model.User{ID: uuid.New(), FirstName: "Jane"}
+	perms := []model.Permission{model.PermTruckRead, model.PermDriverRead}
+
+	t.Run("user with permissions", func(t *testing.T) {
+		repo := &fakeUserRepo{
+			t:         t,
+			getByIDFn: func(uuid.UUID) (*model.User, error) { return user, nil },
+			permsFn:   func(uuid.UUID) ([]model.Permission, error) { return perms, nil },
+		}
+
+		p, err := NewUserService(repo, fakeHasher{}).GetProfile(context.Background(), user.ID)
+
+		require.NoError(t, err)
+		assert.Equal(t, user, p.User)
+		assert.Equal(t, perms, p.Permissions)
+	})
+
+	t.Run("deleted user is not found", func(t *testing.T) {
+		repo := &fakeUserRepo{t: t, getByIDFn: func(uuid.UUID) (*model.User, error) {
+			return nil, model.ErrNotFound
+		}} // permsFn unset: must not be called
+
+		_, err := NewUserService(repo, fakeHasher{}).GetProfile(context.Background(), user.ID)
+
+		assert.ErrorIs(t, err, model.ErrNotFound)
+	})
 }

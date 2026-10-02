@@ -113,6 +113,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/auth/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the authenticated user and their effective permissions.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Current user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.MeResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing/invalid token, or the user no longer exists",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/refresh": {
             "post": {
                 "description": "Exchanges a refresh token for a new access + refresh token pair.\nThe presented refresh token stops working (rotation). Presenting it again is treated as theft and ends all sessions of the user.",
@@ -173,6 +210,11 @@ const docTemplate = `{
         },
         "/api/v1/companies": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Returns companies ordered by creation time. page_size is capped at 100.",
                 "produces": [
                     "application/json"
@@ -222,6 +264,11 @@ const docTemplate = `{
                 }
             },
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Creates a motor carrier (tenant). New companies are active.",
                 "consumes": [
                     "application/json"
@@ -263,6 +310,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
                     },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
                     "409": {
                         "description": "DOT number already used",
                         "schema": {
@@ -280,6 +333,11 @@ const docTemplate = `{
         },
         "/api/v1/companies/{id}": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -325,6 +383,11 @@ const docTemplate = `{
                 }
             },
             "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Soft delete: the company is hidden but kept for history.",
                 "tags": [
                     "companies"
@@ -365,6 +428,11 @@ const docTemplate = `{
                 }
             },
             "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Partial update: only the fields present in the body are changed.",
                 "consumes": [
                     "application/json"
@@ -600,6 +668,60 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.MeResponse": {
+            "type": "object",
+            "properties": {
+                "company_id": {
+                    "description": "Null for platform users.",
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T11:26:26Z"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "jane@acme.com"
+                },
+                "first_name": {
+                    "type": "string",
+                    "example": "Jane"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "last_login_at": {
+                    "type": "string",
+                    "example": "2026-10-02T11:26:26Z"
+                },
+                "last_name": {
+                    "type": "string",
+                    "example": "Smith"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "truck:read",
+                        "driver:read"
+                    ]
+                },
+                "username": {
+                    "type": "string",
+                    "example": "jane.smith"
+                }
+            }
+        },
         "handler.ReadyResponse": {
             "type": "object",
             "properties": {
@@ -671,6 +793,14 @@ const docTemplate = `{
                     "example": "America/New_York"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Access token from /api/v1/auth/login. Enter: Bearer \u003caccess_token\u003e",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }`

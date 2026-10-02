@@ -27,11 +27,13 @@ type Options struct {
 type Handlers struct {
 	Health  *handler.HealthHandler
 	Auth    *handler.AuthHandler
+	User    *handler.UserHandler
 	Company *handler.CompanyHandler
 }
 
 // NewRouter builds the Gin engine and registers all routes.
-func NewRouter(log *slog.Logger, opts Options, h Handlers) *gin.Engine {
+// tokens verifies access tokens for protected routes.
+func NewRouter(log *slog.Logger, opts Options, tokens middleware.TokenParser, h Handlers) *gin.Engine {
 	r := gin.New()
 
 	// We are not behind a trusted proxy yet, so ignore X-Forwarded-For and use
@@ -65,14 +67,21 @@ func NewRouter(log *slog.Logger, opts Options, h Handlers) *gin.Engine {
 	// working for old clients (e.g. ELD apps that are not updated yet).
 	v1 := r.Group("/api/v1")
 
-	// Public: no token needed to obtain a token.
-	authGroup := v1.Group("/auth")
-	authGroup.POST("/login", h.Auth.Login)
-	authGroup.POST("/refresh", h.Auth.Refresh)
-	authGroup.POST("/logout", h.Auth.Logout)
+	// ---------- Public: no token needed (you cannot need a token to get one) ----------
+	public := v1.Group("/auth")
+	public.POST("/login", h.Auth.Login)
+	public.POST("/refresh", h.Auth.Refresh) // the refresh token itself is the credential
+	public.POST("/logout", h.Auth.Logout)
 
-	// TODO(auth step): only platform admins may manage companies.
-	companies := v1.Group("/companies")
+	// ---------- Protected: every route below requires a valid access token ----------
+	// Registering the middleware on the GROUP (not per route) means a new
+	// route added here can never forget authentication.
+	protected := v1.Group("", middleware.Authenticate(tokens))
+
+	protected.GET("/auth/me", h.User.Me)
+
+	// TODO(5e): require permissions; today any logged-in user may manage companies.
+	companies := protected.Group("/companies")
 	companies.POST("", h.Company.Create)
 	companies.GET("", h.Company.List)
 	companies.GET("/:id", h.Company.Get)

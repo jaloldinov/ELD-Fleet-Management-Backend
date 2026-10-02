@@ -28,10 +28,15 @@ import (
 
 // General API information for Swagger (read by `make swagger`).
 //
-//	@title			ELD Fleet Management API
-//	@version		1.0
-//	@description	Backend for US motor carriers: companies, users, drivers, trucks and ELD devices.
-//	@BasePath		/
+//	@title						ELD Fleet Management API
+//	@version					1.0
+//	@description				Backend for US motor carriers: companies, users, drivers, trucks and ELD devices.
+//	@BasePath					/
+//
+//	@securityDefinitions.apikey	BearerAuth
+//	@in							header
+//	@name						Authorization
+//	@description				Access token from /api/v1/auth/login. Enter: Bearer <access_token>
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -78,9 +83,10 @@ func run() error {
 		return err
 	}
 
-	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Handlers{
+	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, tokens, server.Handlers{
 		Health:  handler.NewHealthHandler(pool, log),
 		Auth:    handler.NewAuthHandler(authSvc),
+		User:    handler.NewUserHandler(service.NewUserService(userRepo, hasher)),
 		Company: handler.NewCompanyHandler(companySvc),
 	})
 
