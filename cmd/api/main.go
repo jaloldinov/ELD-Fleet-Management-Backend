@@ -118,7 +118,11 @@ func run() error {
 		return err
 	})
 
-	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Security{
+	router := server.NewRouter(log, server.Options{
+		EnableSwagger:  !cfg.IsProduction(),
+		TrustedProxies: cfg.TrustedProxies,
+		HSTS:           cfg.IsProduction(),
+	}, server.Security{
 		Tokens:      tokens,
 		Permissions: userSvc,
 		AuthLimiter: authIPLimiter,
@@ -136,6 +140,16 @@ func run() error {
 		Addr:              ":" + cfg.HTTPPort,
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second, // protects against slow-header (Slowloris) attacks
+		// The whole request (headers + body) must arrive within 15s, so a
+		// client cannot hold a connection by dripping its body byte by byte.
+		ReadTimeout: 15 * time.Second,
+		// Handler + writing the response. Generous for our short requests;
+		// a request that needs longer is a bug or belongs in a background job.
+		WriteTimeout: 30 * time.Second,
+		// Keep-alive connections idle longer than this are closed.
+		IdleTimeout: 60 * time.Second,
+		// Default is 1 MB; our headers are a JWT and a few short values.
+		MaxHeaderBytes: 64 << 10,
 	}
 
 	// ctx is cancelled when the process receives Ctrl+C (SIGINT) or SIGTERM

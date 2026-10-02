@@ -2,6 +2,7 @@
 package server
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,15 @@ type Options struct {
 	// EnableSwagger serves Swagger UI at /swagger/index.html.
 	// Off in production: it would show the whole API surface to anyone.
 	EnableSwagger bool
+
+	// TrustedProxies: see config.Config.TrustedProxies. Must be validated
+	// IPs/CIDRs (config.Load does this).
+	TrustedProxies []string
+
+	// HSTS sends Strict-Transport-Security. Only in production, where the
+	// API is served over HTTPS; in development it would make browsers refuse
+	// plain http://localhost.
+	HSTS bool
 }
 
 // Handlers groups every HTTP handler the router needs.
@@ -46,10 +56,15 @@ type Security struct {
 func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.Engine {
 	r := gin.New()
 
-	// We are not behind a trusted proxy yet, so ignore X-Forwarded-For and use
-	// the real TCP peer address for c.ClientIP(). Otherwise any client could
-	// fake its IP in our logs. (SetTrustedProxies(nil) cannot fail.)
-	_ = r.SetTrustedProxies(nil)
+	// c.ClientIP() believes X-Forwarded-For only when the request comes from
+	// a trusted proxy. With none configured it uses the TCP peer address, so
+	// clients cannot fake their IP (in logs, or to dodge rate limits).
+	// Behind a load balancer, its address MUST be configured, or every
+	// client shares the balancer's IP and one rate limit.
+	if err := r.SetTrustedProxies(opts.TrustedProxies); err != nil {
+		// config.Load validated the list, so this is a programming error.
+		panic(fmt.Sprintf("invalid trusted proxies: %v", err))
+	}
 
 	// Order matters. Middleware wraps like an onion:
 	//   RequestID → RequestLogger → Recovery → BodyLimit → handler
@@ -68,8 +83,9 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 	r.NoRoute(handler.NotFound)
 
 	// Infrastructure endpoints: not versioned, never require auth.
-	r.GET("/health", h.Health.Live)
-	r.GET("/ready", h.Health.Ready)
+	secHeaders := middleware.SecurityHeaders(opts.HSTS)
+	r.GET("/health", secHeaders, h.Health.Live)
+	r.GET("/ready", secHeaders, h.Health.Ready)
 
 	if opts.EnableSwagger {
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -77,7 +93,7 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 
 	// Versioned API. A breaking change later becomes /api/v2 while v1 keeps
 	// working for old clients (e.g. ELD apps that are not updated yet).
-	v1 := r.Group("/api/v1")
+	v1 := r.Group("/api/v1", secHeaders)
 
 	// ---------- Public: no token needed (you cannot need a token to get one) ----------
 	// Rate limited per client IP: these are the routes attackers can call

@@ -263,3 +263,60 @@ func TestRouter_AuthRoutesAreRateLimitedByIP(t *testing.T) {
 		"one limit shared by all /auth routes")
 	assert.Equal(t, http.StatusOK, send(r, http.MethodGet, "/health", nil).Code, "other routes are not limited")
 }
+
+func TestRouter_SecurityHeadersOnAPIButNotSwagger(t *testing.T) {
+	r := newTestRouterWithOptions(&bytes.Buffer{}, Options{EnableSwagger: true})
+
+	api := send(r, http.MethodGet, "/api/v1/companies", authHeader)
+	assert.Equal(t, "no-store", api.Header().Get("Cache-Control"))
+	assert.Equal(t, "nosniff", api.Header().Get("X-Content-Type-Options"))
+	assert.Empty(t, api.Header().Get("Strict-Transport-Security"), "HSTS off unless enabled")
+
+	login := send(r, http.MethodPost, "/api/v1/auth/login", nil)
+	assert.Equal(t, "no-store", login.Header().Get("Cache-Control"), "token responses must never be cached")
+
+	ui := send(r, http.MethodGet, "/swagger/index.html", nil)
+	assert.Equal(t, http.StatusOK, ui.Code)
+	assert.Empty(t, ui.Header().Get("Content-Security-Policy"), "the CSP would block Swagger UI's scripts")
+}
+
+func TestRouter_TrustedProxies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	log := logger.New(&bytes.Buffer{}, true, "debug")
+	var seen string
+	recordIP := recordingLimiter(func(key string) { seen = key })
+
+	for _, tc := range []struct {
+		name    string
+		trusted []string
+		want    string
+	}{
+		{"no proxy trusted: X-Forwarded-For is ignored", nil, "10.0.0.7"},
+		{"load balancer trusted: the real client IP is used", []string{"10.0.0.0/8"}, "203.0.113.50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(nil), AuthLimiter: recordIP}
+			r := NewRouter(log, Options{TrustedProxies: tc.trusted}, sec, Handlers{
+				Health:    handler.NewHealthHandler(okPinger{}, log),
+				Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
+				User:      handler.NewUserHandler(nil),
+				Driver:    handler.NewDriverHandler(nil),
+				Truck:     handler.NewTruckHandler(nil),
+				ELDDevice: handler.NewELDDeviceHandler(nil),
+				Company:   handler.NewCompanyHandler(failingCompanyService{}),
+			})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
+			req.RemoteAddr = "10.0.0.7:4444" // the load balancer
+			req.Header.Set("X-Forwarded-For", "203.0.113.50")
+
+			r.ServeHTTP(httptest.NewRecorder(), req)
+
+			assert.Equal(t, tc.want, seen)
+		})
+	}
+}
+
+// recordingLimiter allows everything and reports each key it sees.
+type recordingLimiter func(key string)
+
+func (f recordingLimiter) Take(key string) (time.Duration, bool) { f(key); return 0, true }

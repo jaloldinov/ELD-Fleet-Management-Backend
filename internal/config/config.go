@@ -3,7 +3,9 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -27,6 +29,11 @@ type Config struct {
 	JWTSecret       string        // HMAC key for signing access tokens
 	AccessTokenTTL  time.Duration // how long an access token is valid
 	RefreshTokenTTL time.Duration // how long a refresh token (session) is valid
+
+	// TrustedProxies are the load balancers / reverse proxies (IPs or CIDRs)
+	// whose X-Forwarded-For header we believe. Empty = trust no one and use
+	// the TCP peer address as the client IP.
+	TrustedProxies []string
 }
 
 // Load reads the configuration from environment variables, applies defaults,
@@ -52,6 +59,7 @@ func Load() (*Config, error) {
 		JWTSecret:       getEnv("JWT_SECRET", ""),
 		AccessTokenTTL:  ttl,
 		RefreshTokenTTL: refreshTTL,
+		TrustedProxies:  splitList(getEnv("TRUSTED_PROXIES", "")),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -95,7 +103,27 @@ func (c *Config) validate() error {
 		return fmt.Errorf("REFRESH_TOKEN_TTL must be between 1h and 2160h (90 days), got %s", c.RefreshTokenTTL)
 	}
 
+	for _, p := range c.TrustedProxies {
+		if net.ParseIP(p) == nil {
+			if _, _, err := net.ParseCIDR(p); err != nil {
+				return fmt.Errorf("TRUSTED_PROXIES: %q is not an IP address or CIDR", p)
+			}
+		}
+	}
+
 	return nil
+}
+
+// splitList splits a comma-separated value, trimming spaces and dropping
+// empty items: "a, b,," -> [a b].
+func splitList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func getEnv(key, fallback string) string {

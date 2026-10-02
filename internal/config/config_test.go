@@ -28,6 +28,7 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "")
 	t.Setenv("ACCESS_TOKEN_TTL", "")
 	t.Setenv("REFRESH_TOKEN_TTL", "")
+	t.Setenv("TRUSTED_PROXIES", "")
 	setRequired(t)
 
 	cfg, err := Load()
@@ -40,6 +41,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, testJWTSecret, cfg.JWTSecret)
 	assert.Equal(t, 15*time.Minute, cfg.AccessTokenTTL)
 	assert.Equal(t, 30*24*time.Hour, cfg.RefreshTokenTTL)
+	assert.Empty(t, cfg.TrustedProxies, "trust no proxy unless told to")
 	assert.False(t, cfg.IsProduction())
 }
 
@@ -49,6 +51,7 @@ func TestLoad_FromEnv(t *testing.T) {
 	t.Setenv("HTTP_PORT", "9000")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("ACCESS_TOKEN_TTL", "5m")
+	t.Setenv("TRUSTED_PROXIES", " 10.0.0.0/8, 192.168.1.5,, ")
 
 	cfg, err := Load()
 
@@ -57,6 +60,7 @@ func TestLoad_FromEnv(t *testing.T) {
 	assert.Equal(t, "9000", cfg.HTTPPort)
 	assert.Equal(t, "debug", cfg.LogLevel)
 	assert.Equal(t, 5*time.Minute, cfg.AccessTokenTTL)
+	assert.Equal(t, []string{"10.0.0.0/8", "192.168.1.5"}, cfg.TrustedProxies, "trimmed, empty items dropped")
 	assert.True(t, cfg.IsProduction())
 }
 
@@ -77,6 +81,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "ttl too long", key: "ACCESS_TOKEN_TTL", value: "24h"},
 		{name: "refresh ttl too short", key: "REFRESH_TOKEN_TTL", value: "30m"},
 		{name: "refresh ttl too long", key: "REFRESH_TOKEN_TTL", value: "2400h"},
+		{name: "trusted proxy not an ip", key: "TRUSTED_PROXIES", value: "10.0.0.1, lb.internal"},
+		{name: "trusted proxy bad cidr", key: "TRUSTED_PROXIES", value: "10.0.0.0/33"},
 	}
 
 	for _, tt := range tests {
