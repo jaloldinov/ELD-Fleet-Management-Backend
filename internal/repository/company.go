@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
@@ -156,10 +155,7 @@ func mapCompanyError(op string, err error) error {
 		return model.ErrNotFound
 	}
 
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) &&
-		pgErr.Code == pgUniqueViolation &&
-		pgErr.ConstraintName == "companies_dot_number_alive_uniq" {
+	if isUniqueViolation(err, "companies_dot_number_alive_uniq") {
 		return model.ErrDOTNumberTaken
 	}
 

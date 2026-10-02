@@ -17,6 +17,9 @@ import (
 var (
 	ErrNotFound       = errors.New("not found")
 	ErrDOTNumberTaken = errors.New("dot number is already used by another company")
+	ErrEmailTaken     = errors.New("email is already used by another user")
+	ErrUsernameTaken  = errors.New("username is already used by another user")
+	ErrRoleNotFound   = errors.New("role not found")
 )
 
 // ValidationError lists every invalid input field and why it is invalid.

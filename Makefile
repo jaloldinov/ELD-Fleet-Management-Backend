@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run test test-integration test-db test-db-reset build swagger swagger-check \
+.PHONY: run test test-integration test-db test-db-reset build create-admin swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -37,6 +37,11 @@ test-db-reset:
 
 build:
 	go build -o bin/api ./cmd/api
+
+# Creates a platform admin; asks for the password (hidden input).
+# Usage: make create-admin email=admin@example.com first=Ada last=Admin
+create-admin:
+	go run ./cmd/createadmin -email="$(email)" -first-name="$(first)" -last-name="$(last)"
 
 ## ---------- Swagger ----------
 
