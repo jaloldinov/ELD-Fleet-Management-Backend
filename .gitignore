@@ -1,0 +1,15 @@
+# Binaries
+/bin/
+*.exe
+
+# Environment / secrets
+.env
+
+# Test & coverage output
+*.out
+coverage.html
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
