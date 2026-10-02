@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,6 +31,7 @@ const (
 	CodeNotFound     = "not_found"
 	CodeConflict     = "conflict"
 	CodeTooLarge     = "payload_too_large"
+	CodeRateLimited  = "rate_limited"
 	CodeInternal     = "internal_error"
 )
 
@@ -50,6 +53,14 @@ func RespondError(c *gin.Context, status int, code, message string, details map[
 	c.AbortWithStatusJSON(status, ErrorResponse{
 		Error: ErrorBody{Code: code, Message: message, Details: details},
 	})
+}
+
+// RespondRateLimited writes a 429 with a Retry-After header (whole seconds,
+// rounded up), so well-behaved clients know when to try again.
+func RespondRateLimited(c *gin.Context, retryAfter time.Duration) {
+	secs := int64(math.Ceil(retryAfter.Seconds()))
+	c.Header("Retry-After", strconv.FormatInt(secs, 10))
+	RespondError(c, http.StatusTooManyRequests, CodeRateLimited, "too many requests, try again later", nil)
 }
 
 // handleError is the single place where service/domain errors become HTTP

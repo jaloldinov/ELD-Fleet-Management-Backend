@@ -39,6 +39,7 @@ type Handlers struct {
 type Security struct {
 	Tokens      middleware.TokenParser      // authentication: who is calling?
 	Permissions middleware.PermissionLoader // authorization: what may they do?
+	AuthLimiter middleware.RateLimiter      // per-IP limit on the public /auth routes
 }
 
 // NewRouter builds the Gin engine and registers all routes.
@@ -79,7 +80,9 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 	v1 := r.Group("/api/v1")
 
 	// ---------- Public: no token needed (you cannot need a token to get one) ----------
-	public := v1.Group("/auth")
+	// Rate limited per client IP: these are the routes attackers can call
+	// without a token, and login runs an expensive bcrypt check.
+	public := v1.Group("/auth", middleware.RateLimitByIP(sec.AuthLimiter))
 	public.POST("/login", h.Auth.Login)
 	public.POST("/refresh", h.Auth.Refresh) // the refresh token itself is the credential
 	public.POST("/logout", h.Auth.Logout)

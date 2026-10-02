@@ -41,9 +41,30 @@ func (f *fakeAuthService) Logout(_ context.Context, token string) error {
 
 var authTestNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
+// fakeLimiter allows everything unless blocked is set, and records calls.
+type fakeLimiter struct {
+	blocked  bool
+	taken    []string
+	resetKey string
+}
+
+func (f *fakeLimiter) Take(key string) (time.Duration, bool) {
+	f.taken = append(f.taken, key)
+	if f.blocked {
+		return 90*time.Second + time.Millisecond, false
+	}
+	return 0, true
+}
+
+func (f *fakeLimiter) Reset(key string) { f.resetKey = key }
+
 func newAuthRouter(svc AuthService) *gin.Engine {
+	return newAuthRouterWithLimiter(svc, &fakeLimiter{})
+}
+
+func newAuthRouterWithLimiter(svc AuthService, l LoginLimiter) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	h := NewAuthHandler(svc)
+	h := NewAuthHandler(svc, l)
 	h.now = func() time.Time { return authTestNow }
 	r := gin.New()
 	r.POST("/api/v1/auth/login", h.Login)
@@ -138,7 +159,7 @@ func TestAuthHandler_Refresh_ReuseLooksLikeInvalidButIsRecorded(t *testing.T) {
 	var recorded []*gin.Error
 	r := gin.New()
 	r.Use(func(c *gin.Context) { c.Next(); recorded = c.Errors })
-	h := NewAuthHandler(&fakeAuthService{err: model.ErrRefreshTokenReused})
+	h := NewAuthHandler(&fakeAuthService{err: model.ErrRefreshTokenReused}, &fakeLimiter{})
 	r.POST("/refresh", h.Refresh)
 
 	reused := do(r, http.MethodPost, "/refresh", `{}`)
@@ -159,4 +180,49 @@ func TestClientInfo_TruncatesUserAgent(t *testing.T) {
 	newAuthRouter(svc).ServeHTTP(httptest.NewRecorder(), req)
 
 	assert.Len(t, svc.gotClient.UserAgent, maxUserAgentLen)
+}
+
+func loginRequest(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "203.0.113.7:5555"
+	return req
+}
+
+func TestAuthHandler_Login_RateLimitKeyAndReset(t *testing.T) {
+	lim := &fakeLimiter{}
+	rec := httptest.NewRecorder()
+
+	newAuthRouterWithLimiter(&fakeAuthService{pair: samplePair()}, lim).
+		ServeHTTP(rec, loginRequest(`{"login":"  Jane@Acme.com ","password":"pw"}`))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"jane@acme.com|203.0.113.7"}, lim.taken,
+		"normalized login + client IP, so case/space variants share one limit")
+	assert.Equal(t, "jane@acme.com|203.0.113.7", lim.resetKey, "success clears earlier failures")
+}
+
+func TestAuthHandler_Login_FailureDoesNotReset(t *testing.T) {
+	lim := &fakeLimiter{}
+	rec := httptest.NewRecorder()
+
+	newAuthRouterWithLimiter(&fakeAuthService{err: model.ErrInvalidCredentials}, lim).
+		ServeHTTP(rec, loginRequest(`{"login":"jane@acme.com","password":"wrong"}`))
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Len(t, lim.taken, 1)
+	assert.Empty(t, lim.resetKey, "a failure keeps counting")
+}
+
+func TestAuthHandler_Login_Blocked(t *testing.T) {
+	svc := &fakeAuthService{pair: samplePair()}
+	rec := httptest.NewRecorder()
+
+	newAuthRouterWithLimiter(svc, &fakeLimiter{blocked: true}).
+		ServeHTTP(rec, loginRequest(`{"login":"jane@acme.com","password":"pw"}`))
+
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.Equal(t, "91", rec.Header().Get("Retry-After"), "seconds, rounded up")
+	assert.Equal(t, CodeRateLimited, decodeError(t, rec).Code)
+	assert.Empty(t, svc.gotLogin, "the password is not even checked")
 }

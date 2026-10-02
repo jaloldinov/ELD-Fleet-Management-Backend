@@ -21,6 +21,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/database"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
+	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/server"
 	"github.com/jaloldinov/ELD-learning/internal/service"
@@ -92,12 +93,26 @@ func run() error {
 	// Shared: TruckService manages trucks; ELDDeviceService looks them up.
 	truckRepo := repository.NewTruckRepository(pool)
 
+	// Background jobs run until jobsCtx is cancelled (when run returns).
+	jobsCtx, stopJobs := context.WithCancel(context.Background())
+	defer stopJobs()
+
+	// Rate limits for the public auth routes (in memory, per instance):
+	//   - per IP: 20 requests/min on /auth/*. Generous enough for a carrier
+	//     office where many drivers share one NAT address at shift start.
+	//   - per login+IP: 5 login attempts per 15 min; a success resets it.
+	authIPLimiter := ratelimit.New(20, time.Minute)
+	loginLimiter := ratelimit.New(5, 15*time.Minute)
+	go authIPLimiter.RunCleanup(jobsCtx)
+	go loginLimiter.RunCleanup(jobsCtx)
+
 	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Security{
 		Tokens:      tokens,
 		Permissions: userSvc,
+		AuthLimiter: authIPLimiter,
 	}, server.Handlers{
 		Health:    handler.NewHealthHandler(pool, log),
-		Auth:      handler.NewAuthHandler(authSvc),
+		Auth:      handler.NewAuthHandler(authSvc, loginLimiter),
 		User:      handler.NewUserHandler(userSvc),
 		Company:   handler.NewCompanyHandler(companySvc),
 		Driver:    handler.NewDriverHandler(driverSvc),

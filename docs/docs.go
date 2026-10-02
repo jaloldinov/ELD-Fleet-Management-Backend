@@ -64,6 +64,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "too many attempts (per IP, or 5 failed logins per 15 min); see Retry-After",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -100,6 +106,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "invalid JSON",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "too many requests from this IP; see Retry-After",
                         "schema": {
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
@@ -201,6 +213,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "account is disabled",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "too many requests from this IP; see Retry-After",
                         "schema": {
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }

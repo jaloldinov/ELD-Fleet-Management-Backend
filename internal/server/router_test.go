@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/logger"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
 
@@ -72,10 +74,10 @@ func newTestRouterWithOptions(buf *bytes.Buffer, opts Options) *gin.Engine {
 func newTestRouterWith(buf *bytes.Buffer, opts Options, perms []model.Permission) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(buf, true, "debug")
-	sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(perms)}
+	sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(perms), AuthLimiter: ratelimit.New(1000, time.Minute)}
 	return NewRouter(log, opts, sec, Handlers{
 		Health:    handler.NewHealthHandler(okPinger{}, log),
-		Auth:      handler.NewAuthHandler(nil),
+		Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
 		User:      handler.NewUserHandler(nil),
 		Driver:    handler.NewDriverHandler(nil),
 		Truck:     handler.NewTruckHandler(nil),
@@ -239,4 +241,25 @@ func TestRouter_LoginRouteRegistered(t *testing.T) {
 	// Broken JSON is rejected by the handler before the (nil) service is
 	// called, so a 400 (not 404) proves the route exists.
 	assert.Equal(t, http.StatusBadRequest, send(r, http.MethodPost, "/api/v1/auth/login", nil).Code)
+}
+
+func TestRouter_AuthRoutesAreRateLimitedByIP(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	log := logger.New(&bytes.Buffer{}, true, "debug")
+	sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(nil), AuthLimiter: ratelimit.New(1, time.Minute)}
+	r := NewRouter(log, Options{}, sec, Handlers{
+		Health:    handler.NewHealthHandler(okPinger{}, log),
+		Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
+		User:      handler.NewUserHandler(nil),
+		Driver:    handler.NewDriverHandler(nil),
+		Truck:     handler.NewTruckHandler(nil),
+		ELDDevice: handler.NewELDDeviceHandler(nil),
+		Company:   handler.NewCompanyHandler(failingCompanyService{}),
+	})
+
+	// The body "{" is invalid, so the first call stops at 400 in the handler.
+	assert.Equal(t, http.StatusBadRequest, send(r, http.MethodPost, "/api/v1/auth/login", nil).Code)
+	assert.Equal(t, http.StatusTooManyRequests, send(r, http.MethodPost, "/api/v1/auth/refresh", nil).Code,
+		"one limit shared by all /auth routes")
+	assert.Equal(t, http.StatusOK, send(r, http.MethodGet, "/health", nil).Code, "other routes are not limited")
 }

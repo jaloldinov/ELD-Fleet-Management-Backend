@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,13 +44,20 @@ type TokenResponse struct {
 	RefreshExpiresIn int `json:"refresh_expires_in" example:"2592000"`
 }
 
-type AuthHandler struct {
-	svc AuthService
-	now func() time.Time // replaceable in tests
+// LoginLimiter throttles login attempts per key (ratelimit.Keyed).
+type LoginLimiter interface {
+	Take(key string) (retryAfter time.Duration, ok bool)
+	Reset(key string)
 }
 
-func NewAuthHandler(svc AuthService) *AuthHandler {
-	return &AuthHandler{svc: svc, now: time.Now}
+type AuthHandler struct {
+	svc     AuthService
+	limiter LoginLimiter
+	now     func() time.Time // replaceable in tests
+}
+
+func NewAuthHandler(svc AuthService, limiter LoginLimiter) *AuthHandler {
+	return &AuthHandler{svc: svc, limiter: limiter, now: time.Now}
 }
 
 // Login handles POST /api/v1/auth/login.
@@ -65,6 +73,7 @@ func NewAuthHandler(svc AuthService) *AuthHandler {
 //	@Failure		400		{object}	ErrorResponse	"invalid JSON"
 //	@Failure		401		{object}	ErrorResponse	"invalid login or password"
 //	@Failure		403		{object}	ErrorResponse	"account is disabled"
+//	@Failure		429		{object}	ErrorResponse	"too many attempts (per IP, or 5 failed logins per 15 min); see Retry-After"
 //	@Failure		500		{object}	ErrorResponse
 //	@Router			/api/v1/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -73,11 +82,22 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// Throttle guessing per login AND client IP. Keying on the login alone
+	// would let anyone lock a real user out by failing on purpose.
+	// The token is taken BEFORE the (slow) password check, so parallel
+	// requests cannot slip past the limit.
+	key := strings.ToLower(strings.TrimSpace(req.Login)) + "|" + c.ClientIP()
+	if retryAfter, ok := h.limiter.Take(key); !ok {
+		RespondRateLimited(c, retryAfter)
+		return
+	}
+
 	pair, err := h.svc.Login(c.Request.Context(), req.Login, req.Password, clientInfo(c))
 	if err != nil {
 		handleError(c, err)
 		return
 	}
+	h.limiter.Reset(key) // success: earlier failures no longer count
 	h.respondTokens(c, pair)
 }
 
@@ -94,6 +114,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 //	@Failure		400		{object}	ErrorResponse	"invalid JSON"
 //	@Failure		401		{object}	ErrorResponse	"invalid or expired refresh token"
 //	@Failure		403		{object}	ErrorResponse	"account is disabled"
+//	@Failure		429		{object}	ErrorResponse	"too many requests from this IP; see Retry-After"
 //	@Failure		500		{object}	ErrorResponse
 //	@Router			/api/v1/auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
@@ -120,6 +141,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 //	@Param			body	body	RefreshRequest	true	"Refresh token of the session to end"
 //	@Success		204		"No Content"
 //	@Failure		400		{object}	ErrorResponse	"invalid JSON"
+//	@Failure		429		{object}	ErrorResponse	"too many requests from this IP; see Retry-After"
 //	@Failure		500		{object}	ErrorResponse
 //	@Router			/api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
