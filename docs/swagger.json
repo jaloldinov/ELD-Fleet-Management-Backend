@@ -8,6 +8,64 @@
     },
     "basePath": "/",
     "paths": {
+        "/api/v1/auth/login": {
+            "post": {
+                "description": "Exchanges a login (email or username) and password for an access token.\nUnknown user and wrong password return the same 401 on purpose.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Log in",
+                "parameters": [
+                    {
+                        "description": "Credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.TokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid login or password",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "account is disabled",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/companies": {
             "get": {
                 "description": "Returns companies ordered by creation time. page_size is capped at 100.",
@@ -423,6 +481,20 @@
                 }
             }
         },
+        "handler.LoginRequest": {
+            "type": "object",
+            "properties": {
+                "login": {
+                    "description": "Email or username.",
+                    "type": "string",
+                    "example": "admin@example.com"
+                },
+                "password": {
+                    "type": "string",
+                    "example": "correct horse battery staple"
+                }
+            }
+        },
         "handler.ReadyResponse": {
             "type": "object",
             "properties": {
@@ -433,6 +505,25 @@
                 "status": {
                     "type": "string",
                     "example": "ok"
+                }
+            }
+        },
+        "handler.TokenResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                },
+                "expires_in": {
+                    "description": "Seconds until the access token expires.",
+                    "type": "integer",
+                    "example": 900
+                },
+                "token_type": {
+                    "description": "Always \"Bearer\": send the token as \"Authorization: Bearer \u003caccess_token\u003e\".",
+                    "type": "string",
+                    "example": "Bearer"
                 }
             }
         },

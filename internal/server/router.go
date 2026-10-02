@@ -26,6 +26,7 @@ type Options struct {
 // New handlers (company, user, truck, ...) are added here as we build them.
 type Handlers struct {
 	Health  *handler.HealthHandler
+	Auth    *handler.AuthHandler
 	Company *handler.CompanyHandler
 }
 
@@ -63,6 +64,10 @@ func NewRouter(log *slog.Logger, opts Options, h Handlers) *gin.Engine {
 	// Versioned API. A breaking change later becomes /api/v2 while v1 keeps
 	// working for old clients (e.g. ELD apps that are not updated yet).
 	v1 := r.Group("/api/v1")
+
+	// Public: no token needed to obtain a token.
+	authGroup := v1.Group("/auth")
+	authGroup.POST("/login", h.Auth.Login)
 
 	// TODO(auth step): only platform admins may manage companies.
 	companies := v1.Group("/companies")

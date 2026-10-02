@@ -101,6 +101,15 @@ func (r *UserRepository) GetByLogin(ctx context.Context, login string) (*model.U
 	return u, nil
 }
 
+// UpdateLastLogin records the time of a successful login.
+func (r *UserRepository) UpdateLastLogin(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("update last login: %w", err)
+	}
+	return nil
+}
+
 // GetPermissions returns the union of the permissions of all the user's roles.
 func (r *UserRepository) GetPermissions(ctx context.Context, userID uuid.UUID) ([]model.Permission, error) {
 	rows, err := r.db.Query(ctx, `

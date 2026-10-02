@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,7 @@ func newTestRouterWithOptions(buf *bytes.Buffer, opts Options) *gin.Engine {
 	log := logger.New(buf, true, "debug")
 	return NewRouter(log, opts, Handlers{
 		Health:  handler.NewHealthHandler(okPinger{}, log),
+		Auth:    handler.NewAuthHandler(nil),
 		Company: handler.NewCompanyHandler(failingCompanyService{}),
 	})
 }
@@ -140,4 +142,15 @@ func TestRouter_Swagger(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, get(r, "/swagger/index.html").Code)
 	})
+}
+
+func TestRouter_LoginRouteRegistered(t *testing.T) {
+	r := newTestRouter(&bytes.Buffer{})
+
+	// Broken JSON is rejected by the handler before the (nil) service is
+	// called, so a 400 (not 404) proves the route exists.
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{")))
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }

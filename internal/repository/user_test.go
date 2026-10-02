@@ -160,6 +160,22 @@ func TestUserRepository_PlatformUser(t *testing.T) {
 	assert.ElementsMatch(t, model.AllPermissions(), perms)
 }
 
+func TestUserRepository_UpdateLastLogin(t *testing.T) {
+	db := newTestDB(t)
+	company := createCompany(t, NewCompanyRepository(db), "Acme", "1")
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+	u, err := repo.Create(ctx, newUser(company.ID, "jane@acme.com"), []string{model.RoleAdmin})
+	require.NoError(t, err)
+	require.Nil(t, u.LastLoginAt, "never logged in yet")
+
+	require.NoError(t, repo.UpdateLastLogin(ctx, u.ID))
+
+	got, err := repo.GetByID(ctx, u.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, got.LastLoginAt)
+}
+
 func TestUserRepository_GetPermissions_NoRoles(t *testing.T) {
 	db := newTestDB(t)
 

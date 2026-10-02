@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/config"
 	"github.com/jaloldinov/ELD-learning/internal/database"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
@@ -68,8 +69,17 @@ func run() error {
 	companyRepo := repository.NewCompanyRepository(pool)
 	companySvc := service.NewCompanyService(companyRepo)
 
+	userRepo := repository.NewUserRepository(pool)
+	hasher := auth.NewBcryptHasher(auth.DefaultBcryptCost)
+	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
+	authSvc, err := service.NewAuthService(userRepo, hasher, tokens)
+	if err != nil {
+		return err
+	}
+
 	router := server.NewRouter(log, server.Options{EnableSwagger: !cfg.IsProduction()}, server.Handlers{
 		Health:  handler.NewHealthHandler(pool, log),
+		Auth:    handler.NewAuthHandler(authSvc),
 		Company: handler.NewCompanyHandler(companySvc),
 	})
 

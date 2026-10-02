@@ -17,11 +17,13 @@ import (
 // Stable, machine-readable error codes. Clients branch on these; the
 // human-readable message may change.
 const (
-	CodeBadRequest = "bad_request"
-	CodeValidation = "validation_failed"
-	CodeNotFound   = "not_found"
-	CodeConflict   = "conflict"
-	CodeInternal   = "internal_error"
+	CodeBadRequest   = "bad_request"
+	CodeValidation   = "validation_failed"
+	CodeUnauthorized = "unauthorized" // not logged in / bad credentials / bad token
+	CodeForbidden    = "forbidden"    // logged in, but not allowed
+	CodeNotFound     = "not_found"
+	CodeConflict     = "conflict"
+	CodeInternal     = "internal_error"
 )
 
 // ErrorResponse is the body of every error response in the API.
@@ -52,8 +54,14 @@ func handleError(c *gin.Context, err error) {
 		respondError(c, http.StatusBadRequest, CodeValidation, "request validation failed", vErr.Fields)
 	case errors.Is(err, model.ErrNotFound):
 		respondError(c, http.StatusNotFound, CodeNotFound, "resource not found", nil)
-	case errors.Is(err, model.ErrDOTNumberTaken):
+	case errors.Is(err, model.ErrDOTNumberTaken),
+		errors.Is(err, model.ErrEmailTaken),
+		errors.Is(err, model.ErrUsernameTaken):
 		respondError(c, http.StatusConflict, CodeConflict, err.Error(), nil)
+	case errors.Is(err, model.ErrInvalidCredentials):
+		respondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
+	case errors.Is(err, model.ErrUserInactive):
+		respondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
 	default:
 		// Unexpected error: a bug or an outage. Attach it to the context so the
 		// RequestLogger middleware logs it, and hide the details from the client.
