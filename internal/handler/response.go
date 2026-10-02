@@ -4,9 +4,14 @@
 package handler
 
 import (
+	"encoding"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -23,6 +28,7 @@ const (
 	CodeForbidden    = "forbidden"    // logged in, but not allowed
 	CodeNotFound     = "not_found"
 	CodeConflict     = "conflict"
+	CodeTooLarge     = "payload_too_large"
 	CodeInternal     = "internal_error"
 )
 
@@ -92,15 +98,84 @@ func NotFound(c *gin.Context) {
 	RespondError(c, http.StatusNotFound, CodeNotFound, "route not found", nil)
 }
 
-// bindJSON decodes the request body into dst. On failure it writes a 400 and
-// returns false. The decoder's message is not returned to the client because
-// it can mention Go type names.
+// bindJSON decodes the request body into dst, strictly:
+//   - unknown fields are rejected, so a typo like "unit_numbr" is an error
+//     instead of a silently ignored field (and a 200 that changed nothing);
+//   - the body must be exactly one JSON value;
+//   - errors say what is wrong and, where possible, which field.
+//
+// On failure it writes the error response and returns false.
 func bindJSON(c *gin.Context, dst any) bool {
-	if err := c.ShouldBindJSON(dst); err != nil {
-		RespondError(c, http.StatusBadRequest, CodeBadRequest, "request body must be valid JSON", nil)
-		return false
+	dec := json.NewDecoder(c.Request.Body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(dst)
+	if err == nil && dec.Decode(&struct{}{}) != io.EOF {
+		err = errTrailingData
 	}
-	return true
+	if err == nil {
+		return true
+	}
+
+	var (
+		tooLarge *http.MaxBytesError
+		typeErr  *json.UnmarshalTypeError
+		syntax   *json.SyntaxError
+	)
+	switch {
+	case errors.As(err, &tooLarge):
+		RespondError(c, http.StatusRequestEntityTooLarge, CodeTooLarge,
+			"request body must be at most "+strconv.FormatInt(tooLarge.Limit, 10)+" bytes", nil)
+	case errors.Is(err, io.EOF):
+		RespondError(c, http.StatusBadRequest, CodeBadRequest, "request body must not be empty", nil)
+	case errors.As(err, &typeErr) && typeErr.Field != "":
+		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed",
+			map[string]string{typeErr.Field: "must be " + jsonTypeName(typeErr.Type)})
+	case strings.HasPrefix(err.Error(), "json: unknown field "):
+		// encoding/json has no typed error for this; the message format is
+		// stable (and covered by a test).
+		field := strings.Trim(strings.TrimPrefix(err.Error(), "json: unknown field "), `"`)
+		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed",
+			map[string]string{field: "unknown field"})
+	case errors.As(err, &syntax), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, errTrailingData):
+		RespondError(c, http.StatusBadRequest, CodeBadRequest, "request body must be valid JSON", nil)
+	default:
+		// A value the target type rejects, e.g. an invalid UUID string.
+		// These messages describe the client's input, so they are safe to show.
+		RespondError(c, http.StatusBadRequest, CodeBadRequest, "invalid request body: "+err.Error(), nil)
+	}
+	return false
+}
+
+var (
+	errTrailingData     = errors.New("request body must contain a single JSON value")
+	textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+)
+
+// jsonTypeName describes a Go type in JSON terms for error messages.
+func jsonTypeName(t reflect.Type) string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	// uuid.UUID is a [16]byte, but in JSON it is a string.
+	if reflect.PointerTo(t).Implements(textUnmarshalerType) {
+		return "a string"
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "a string"
+	case reflect.Bool:
+		return "true or false"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "an integer"
+	case reflect.Float32, reflect.Float64:
+		return "a number"
+	case reflect.Slice, reflect.Array:
+		return "an array"
+	default:
+		return "an object"
+	}
 }
 
 // parseUUIDParam reads a UUID path parameter. On failure it writes a 400 and

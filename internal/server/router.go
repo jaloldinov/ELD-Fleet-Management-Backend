@@ -51,14 +51,16 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 	_ = r.SetTrustedProxies(nil)
 
 	// Order matters. Middleware wraps like an onion:
-	//   RequestID → RequestLogger → Recovery → handler
+	//   RequestID → RequestLogger → Recovery → BodyLimit → handler
 	// - RequestID is first, so every later step can read the ID.
 	// - RequestLogger sits outside Recovery, so when Recovery turns a panic
 	//   into a 500, the logger still sees and logs that 500.
+	// - BodyLimit sits inside the logger, so refused (413) bodies are logged.
 	r.Use(
 		middleware.RequestID(),
 		middleware.RequestLogger(log),
 		middleware.Recovery(log),
+		middleware.BodyLimit(middleware.MaxBodyBytes),
 	)
 
 	// Unknown routes return our JSON error format instead of Gin's plain text.
