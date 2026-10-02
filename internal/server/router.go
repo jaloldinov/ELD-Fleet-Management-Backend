@@ -31,6 +31,7 @@ type Handlers struct {
 	User    *handler.UserHandler
 	Company *handler.CompanyHandler
 	Driver  *handler.DriverHandler
+	Truck   *handler.TruckHandler
 }
 
 // Security holds what the router needs to protect routes.
@@ -115,6 +116,13 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 	drivers.GET("/:id", perm.Require(model.PermDriverRead), h.Driver.Get)
 	drivers.PATCH("/:id", perm.Require(model.PermDriverUpdate), h.Driver.Update)
 	drivers.DELETE("/:id", perm.Require(model.PermDriverDelete), h.Driver.Delete)
+
+	trucks := protected.Group("/trucks")
+	trucks.POST("", perm.Require(model.PermTruckCreate), h.Truck.Create)
+	trucks.GET("", perm.Require(model.PermTruckRead), h.Truck.List)
+	trucks.GET("/:id", perm.Require(model.PermTruckRead), h.Truck.Get)
+	trucks.PATCH("/:id", perm.Require(model.PermTruckUpdate), h.Truck.Update)
+	trucks.DELETE("/:id", perm.Require(model.PermTruckDelete), h.Truck.Delete)
 
 	return r
 }

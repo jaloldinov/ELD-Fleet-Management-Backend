@@ -78,6 +78,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts Options, perms []model.Permission
 		Auth:    handler.NewAuthHandler(nil),
 		User:    handler.NewUserHandler(nil),
 		Driver:  handler.NewDriverHandler(nil),
+		Truck:   handler.NewTruckHandler(nil),
 		Company: handler.NewCompanyHandler(failingCompanyService{}),
 	})
 }

@@ -98,6 +98,7 @@ func run() error {
 		User:    handler.NewUserHandler(userSvc),
 		Company: handler.NewCompanyHandler(companySvc),
 		Driver:  handler.NewDriverHandler(driverSvc),
+		Truck:   handler.NewTruckHandler(service.NewTruckService(repository.NewTruckRepository(pool), companyRepo)),
 	})
 
 	srv := &http.Server{

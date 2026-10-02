@@ -73,6 +73,38 @@ definitions:
         example: driver.bob
         type: string
     type: object
+  handler.CreateTruckRequest:
+    properties:
+      company_id:
+        description: 'Platform users: required. Company users: omit (their own company
+          is used).'
+        format: uuid
+        type: string
+      license_plate:
+        example: ABC1234
+        type: string
+      make:
+        example: Freightliner
+        type: string
+      model:
+        example: Cascadia
+        type: string
+      plate_state:
+        example: TX
+        type: string
+      unit_number:
+        description: The carrier's own truck number.
+        example: "101"
+        type: string
+      vin:
+        description: 17 characters; the check digit is validated. Cannot be changed
+          later.
+        example: 1M8GDM9AXKP042788
+        type: string
+      year:
+        example: 2022
+        type: integer
+    type: object
   handler.CreateUserRequest:
     properties:
       company_id:
@@ -203,6 +235,22 @@ definitions:
         example: 8
         type: integer
     type: object
+  handler.ListTrucksResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.TruckResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 14
+        type: integer
+    type: object
   handler.ListUsersResponse:
     properties:
       items:
@@ -312,6 +360,45 @@ definitions:
         example: Bearer
         type: string
     type: object
+  handler.TruckResponse:
+    properties:
+      company_id:
+        format: uuid
+        type: string
+      created_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      id:
+        format: uuid
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      license_plate:
+        example: ABC1234
+        type: string
+      make:
+        example: Freightliner
+        type: string
+      model:
+        example: Cascadia
+        type: string
+      plate_state:
+        example: TX
+        type: string
+      unit_number:
+        example: "101"
+        type: string
+      updated_at:
+        example: "2026-10-02T11:26:26Z"
+        type: string
+      vin:
+        example: 1M8GDM9AXKP042788
+        type: string
+      year:
+        example: 2022
+        type: integer
+    type: object
   handler.UpdateCompanyRequest:
     properties:
       dot_number:
@@ -338,6 +425,30 @@ definitions:
       license_state:
         example: OK
         type: string
+    type: object
+  handler.UpdateTruckRequest:
+    properties:
+      is_active:
+        example: false
+        type: boolean
+      license_plate:
+        example: XYZ9876
+        type: string
+      make:
+        example: Volvo
+        type: string
+      model:
+        example: VNL 860
+        type: string
+      plate_state:
+        example: OK
+        type: string
+      unit_number:
+        example: 101A
+        type: string
+      year:
+        example: 2023
+        type: integer
     type: object
   handler.UpdateUserRequest:
     properties:
@@ -1037,6 +1148,245 @@ paths:
       summary: My driver profile
       tags:
       - drivers
+  /api/v1/trucks:
+    get:
+      description: |-
+        Requires permission: truck:read
+        Company users always get their own company's trucks (company_id is ignored).
+      parameters:
+      - description: Filter by company (platform users only)
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - description: Only active (true) or inactive (false) trucks
+        in: query
+        name: is_active
+        type: boolean
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListTrucksResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission truck:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List trucks
+      tags:
+      - trucks
+    post:
+      consumes:
+      - application/json
+      description: 'Requires permission: truck:create'
+      parameters:
+      - description: Truck to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateTruckRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.TruckResponse'
+        "400":
+          description: invalid JSON or validation failed
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission truck:create
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "409":
+          description: VIN or unit number already used
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a truck
+      tags:
+      - trucks
+  /api/v1/trucks/{id}:
+    delete:
+      description: |-
+        Requires permission: truck:delete
+        Soft delete; the VIN and unit number can be registered again afterwards.
+      parameters:
+      - description: Truck ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission truck:delete
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a truck
+      tags:
+      - trucks
+    get:
+      description: 'Requires permission: truck:read'
+      parameters:
+      - description: Truck ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.TruckResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission truck:read
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a truck
+      tags:
+      - trucks
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: truck:update
+        Partial update. The VIN cannot be changed.
+      parameters:
+      - description: Truck ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateTruckRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.TruckResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "403":
+          description: missing permission truck:update
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "409":
+          description: unit number already used
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a truck
+      tags:
+      - trucks
   /api/v1/users:
     get:
       description: |-

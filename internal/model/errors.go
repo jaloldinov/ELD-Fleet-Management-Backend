@@ -19,12 +19,14 @@ var (
 	// ErrForbidden: the caller may not perform this action, decided by a
 	// business rule in the service (permissions are checked earlier, by
 	// middleware). Becomes HTTP 403.
-	ErrForbidden      = errors.New("you are not allowed to perform this action")
-	ErrDOTNumberTaken = errors.New("dot number is already used by another company")
-	ErrEmailTaken     = errors.New("email is already used by another user")
-	ErrUsernameTaken  = errors.New("username is already used by another user")
-	ErrRoleNotFound   = errors.New("role not found")
-	ErrLicenseTaken   = errors.New("this license number is already registered in that state")
+	ErrForbidden       = errors.New("you are not allowed to perform this action")
+	ErrDOTNumberTaken  = errors.New("dot number is already used by another company")
+	ErrEmailTaken      = errors.New("email is already used by another user")
+	ErrUsernameTaken   = errors.New("username is already used by another user")
+	ErrRoleNotFound    = errors.New("role not found")
+	ErrLicenseTaken    = errors.New("this license number is already registered in that state")
+	ErrVINTaken        = errors.New("a truck with this VIN is already registered")
+	ErrUnitNumberTaken = errors.New("this unit number is already used in your fleet")
 
 	// ErrInvalidCredentials is deliberately the same for "no such user" and
 	// "wrong password", so attackers cannot learn which accounts exist.

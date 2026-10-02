@@ -952,6 +952,363 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/trucks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: truck:read\nCompany users always get their own company's trucks (company_id is ignored).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "trucks"
+                ],
+                "summary": "List trucks",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Filter by company (platform users only)",
+                        "name": "company_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only active (true) or inactive (false) trucks",
+                        "name": "is_active",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListTrucksResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission truck:read",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: truck:create",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "trucks"
+                ],
+                "summary": "Create a truck",
+                "parameters": [
+                    {
+                        "description": "Truck to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreateTruckRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.TruckResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON or validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission truck:create",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "VIN or unit number already used",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/trucks/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: truck:read",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "trucks"
+                ],
+                "summary": "Get a truck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Truck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.TruckResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission truck:read",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: truck:delete\nSoft delete; the VIN and unit number can be registered again afterwards.",
+                "tags": [
+                    "trucks"
+                ],
+                "summary": "Delete a truck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Truck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission truck:delete",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: truck:update\nPartial update. The VIN cannot be changed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "trucks"
+                ],
+                "summary": "Update a truck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Truck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.UpdateTruckRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.TruckResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission truck:update",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "unit number already used",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [
@@ -1440,6 +1797,46 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.CreateTruckRequest": {
+            "type": "object",
+            "properties": {
+                "company_id": {
+                    "description": "Platform users: required. Company users: omit (their own company is used).",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "license_plate": {
+                    "type": "string",
+                    "example": "ABC1234"
+                },
+                "make": {
+                    "type": "string",
+                    "example": "Freightliner"
+                },
+                "model": {
+                    "type": "string",
+                    "example": "Cascadia"
+                },
+                "plate_state": {
+                    "type": "string",
+                    "example": "TX"
+                },
+                "unit_number": {
+                    "description": "The carrier's own truck number.",
+                    "type": "string",
+                    "example": "101"
+                },
+                "vin": {
+                    "description": "17 characters; the check digit is validated. Cannot be changed later.",
+                    "type": "string",
+                    "example": "1M8GDM9AXKP042788"
+                },
+                "year": {
+                    "type": "integer",
+                    "example": 2022
+                }
+            }
+        },
         "handler.CreateUserRequest": {
             "type": "object",
             "properties": {
@@ -1618,6 +2015,29 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.ListTrucksResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.TruckResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 14
+                }
+            }
+        },
         "handler.ListUsersResponse": {
             "type": "object",
             "properties": {
@@ -1769,6 +2189,59 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.TruckResponse": {
+            "type": "object",
+            "properties": {
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-02T11:26:26Z"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "license_plate": {
+                    "type": "string",
+                    "example": "ABC1234"
+                },
+                "make": {
+                    "type": "string",
+                    "example": "Freightliner"
+                },
+                "model": {
+                    "type": "string",
+                    "example": "Cascadia"
+                },
+                "plate_state": {
+                    "type": "string",
+                    "example": "TX"
+                },
+                "unit_number": {
+                    "type": "string",
+                    "example": "101"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-02T11:26:26Z"
+                },
+                "vin": {
+                    "type": "string",
+                    "example": "1M8GDM9AXKP042788"
+                },
+                "year": {
+                    "type": "integer",
+                    "example": 2022
+                }
+            }
+        },
         "handler.UpdateCompanyRequest": {
             "type": "object",
             "properties": {
@@ -1804,6 +2277,39 @@ const docTemplate = `{
                 "license_state": {
                     "type": "string",
                     "example": "OK"
+                }
+            }
+        },
+        "handler.UpdateTruckRequest": {
+            "type": "object",
+            "properties": {
+                "is_active": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "license_plate": {
+                    "type": "string",
+                    "example": "XYZ9876"
+                },
+                "make": {
+                    "type": "string",
+                    "example": "Volvo"
+                },
+                "model": {
+                    "type": "string",
+                    "example": "VNL 860"
+                },
+                "plate_state": {
+                    "type": "string",
+                    "example": "OK"
+                },
+                "unit_number": {
+                    "type": "string",
+                    "example": "101A"
+                },
+                "year": {
+                    "type": "integer",
+                    "example": 2023
                 }
             }
         },

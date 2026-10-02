@@ -59,7 +59,9 @@ func handleError(c *gin.Context, err error) {
 	case errors.Is(err, model.ErrDOTNumberTaken),
 		errors.Is(err, model.ErrEmailTaken),
 		errors.Is(err, model.ErrUsernameTaken),
-		errors.Is(err, model.ErrLicenseTaken):
+		errors.Is(err, model.ErrLicenseTaken),
+		errors.Is(err, model.ErrVINTaken),
+		errors.Is(err, model.ErrUnitNumberTaken):
 		RespondError(c, http.StatusConflict, CodeConflict, err.Error(), nil)
 	case errors.Is(err, model.ErrInvalidCredentials):
 		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
