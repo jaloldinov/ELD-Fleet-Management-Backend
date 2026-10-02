@@ -29,6 +29,10 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 	require.True(t, strings.HasSuffix(cfg.ConnConfig.Database, "_test"),
 		"refusing to run: database %q does not end with _test", cfg.ConnConfig.Database)
 
+	// Enough connections for concurrency tests to really run in parallel
+	// (the default is max(4, number of CPUs)).
+	cfg.MaxConns = 25
+
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
@@ -43,6 +47,7 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 	// Exec without arguments uses Postgres' simple protocol, which allows
 	// several statements in one call.
 	_, err = pool.Exec(context.Background(), `
+		DELETE FROM refresh_tokens;
 		DELETE FROM user_roles;
 		DELETE FROM users;
 		DELETE FROM roles WHERE company_id IS NOT NULL;

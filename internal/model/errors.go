@@ -25,6 +25,13 @@ var (
 	// "wrong password", so attackers cannot learn which accounts exist.
 	ErrInvalidCredentials = errors.New("invalid login or password")
 	ErrUserInactive       = errors.New("account is disabled")
+
+	// ErrRefreshTokenInvalid: unknown, expired or revoked refresh token.
+	ErrRefreshTokenInvalid = errors.New("invalid or expired refresh token")
+	// ErrRefreshTokenReused: an already-rotated token was presented again,
+	// which means a copy was stolen. Clients see the same 401 as
+	// ErrRefreshTokenInvalid; the distinct error exists so it gets logged.
+	ErrRefreshTokenReused = errors.New("refresh token reuse detected")
 )
 
 // ValidationError lists every invalid input field and why it is invalid.

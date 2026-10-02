@@ -72,7 +72,8 @@ func run() error {
 	userRepo := repository.NewUserRepository(pool)
 	hasher := auth.NewBcryptHasher(auth.DefaultBcryptCost)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
-	authSvc, err := service.NewAuthService(userRepo, hasher, tokens)
+	sessionRepo := repository.NewSessionRepository(pool)
+	authSvc, err := service.NewAuthService(userRepo, sessionRepo, hasher, tokens, cfg.RefreshTokenTTL)
 	if err != nil {
 		return err
 	}

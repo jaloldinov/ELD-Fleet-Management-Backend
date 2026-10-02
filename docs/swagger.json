@@ -10,7 +10,7 @@
     "paths": {
         "/api/v1/auth/login": {
             "post": {
-                "description": "Exchanges a login (email or username) and password for an access token.\nUnknown user and wrong password return the same 401 on purpose.",
+                "description": "Exchanges a login (email or username) and password for an access token and a refresh token.\nUnknown user and wrong password return the same 401 on purpose.",
                 "consumes": [
                     "application/json"
                 ],
@@ -47,6 +47,104 @@
                     },
                     "401": {
                         "description": "invalid login or password",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "account is disabled",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/logout": {
+            "post": {
+                "description": "Ends the session of the given refresh token. Always 204, even for unknown tokens.\nThe access token stays valid until it expires (max 15 minutes); clients should discard it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Log out",
+                "parameters": [
+                    {
+                        "description": "Refresh token of the session to end",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid JSON",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/refresh": {
+            "post": {
+                "description": "Exchanges a refresh token for a new access + refresh token pair.\nThe presented refresh token stops working (rotation). Presenting it again is treated as theft and ends all sessions of the user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Refresh tokens",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.RefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.TokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "invalid or expired refresh token",
                         "schema": {
                             "$ref": "#/definitions/handler.ErrorResponse"
                         }
@@ -508,6 +606,15 @@
                 }
             }
         },
+        "handler.RefreshRequest": {
+            "type": "object",
+            "properties": {
+                "refresh_token": {
+                    "type": "string",
+                    "example": "q3Jx0yJ8Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t"
+                }
+            }
+        },
         "handler.TokenResponse": {
             "type": "object",
             "properties": {
@@ -519,6 +626,16 @@
                     "description": "Seconds until the access token expires.",
                     "type": "integer",
                     "example": 900
+                },
+                "refresh_expires_in": {
+                    "description": "Seconds until the refresh token (the session) expires.",
+                    "type": "integer",
+                    "example": 2592000
+                },
+                "refresh_token": {
+                    "description": "Single-use: exchange it at /api/v1/auth/refresh for a new pair.",
+                    "type": "string",
+                    "example": "q3Jx0yJ8Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t"
                 },
                 "token_type": {
                     "description": "Always \"Bearer\": send the token as \"Authorization: Bearer \u003caccess_token\u003e\".",

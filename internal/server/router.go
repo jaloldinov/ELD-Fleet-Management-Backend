@@ -68,6 +68,8 @@ func NewRouter(log *slog.Logger, opts Options, h Handlers) *gin.Engine {
 	// Public: no token needed to obtain a token.
 	authGroup := v1.Group("/auth")
 	authGroup.POST("/login", h.Auth.Login)
+	authGroup.POST("/refresh", h.Auth.Refresh)
+	authGroup.POST("/logout", h.Auth.Logout)
 
 	// TODO(auth step): only platform admins may manage companies.
 	companies := v1.Group("/companies")

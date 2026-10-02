@@ -27,6 +27,7 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("HTTP_PORT", "")
 	t.Setenv("LOG_LEVEL", "")
 	t.Setenv("ACCESS_TOKEN_TTL", "")
+	t.Setenv("REFRESH_TOKEN_TTL", "")
 	setRequired(t)
 
 	cfg, err := Load()
@@ -38,6 +39,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, testDatabaseURL, cfg.DatabaseURL)
 	assert.Equal(t, testJWTSecret, cfg.JWTSecret)
 	assert.Equal(t, 15*time.Minute, cfg.AccessTokenTTL)
+	assert.Equal(t, 30*24*time.Hour, cfg.RefreshTokenTTL)
 	assert.False(t, cfg.IsProduction())
 }
 
@@ -73,6 +75,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{name: "unparsable ttl", key: "ACCESS_TOKEN_TTL", value: "15 minutes"},
 		{name: "ttl too short", key: "ACCESS_TOKEN_TTL", value: "10s"},
 		{name: "ttl too long", key: "ACCESS_TOKEN_TTL", value: "24h"},
+		{name: "refresh ttl too short", key: "REFRESH_TOKEN_TTL", value: "30m"},
+		{name: "refresh ttl too long", key: "REFRESH_TOKEN_TTL", value: "2400h"},
 	}
 
 	for _, tt := range tests {

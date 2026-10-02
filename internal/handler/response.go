@@ -60,6 +60,13 @@ func handleError(c *gin.Context, err error) {
 		respondError(c, http.StatusConflict, CodeConflict, err.Error(), nil)
 	case errors.Is(err, model.ErrInvalidCredentials):
 		respondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
+	case errors.Is(err, model.ErrRefreshTokenReused):
+		// Security event: attach it so the request log records it, but the
+		// client gets exactly the same answer as for any invalid token.
+		_ = c.Error(err)
+		respondError(c, http.StatusUnauthorized, CodeUnauthorized, model.ErrRefreshTokenInvalid.Error(), nil)
+	case errors.Is(err, model.ErrRefreshTokenInvalid):
+		respondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
 	case errors.Is(err, model.ErrUserInactive):
 		respondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
 	default:
