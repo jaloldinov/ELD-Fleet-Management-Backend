@@ -15,6 +15,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
 
@@ -226,4 +227,22 @@ func TestAuthHandler_Login_Blocked(t *testing.T) {
 	assert.Equal(t, "91", rec.Header().Get("Retry-After"), "seconds, rounded up")
 	assert.Equal(t, apierror.CodeRateLimited, decodeError(t, rec).Code)
 	assert.Empty(t, svc.gotLogin, "the password is not even checked")
+}
+
+// With the real limiter: a limit changed at runtime (as the rate-limit API
+// does) is what the login endpoint enforces, without rebuilding anything.
+func TestAuthHandler_Login_UsesCurrentConfiguredLimit(t *testing.T) {
+	lim := ratelimit.New(5, 15*time.Minute)
+	r := newAuthRouterWithLimiter(&fakeAuthService{err: model.ErrInvalidCredentials}, lim)
+	attempt := func() int {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, loginRequest(`{"login":"jane@acme.com","password":"wrong"}`))
+		return rec.Code
+	}
+
+	require.NoError(t, lim.SetLimit(2, 15*time.Minute)) // admin changes 5 → 2
+
+	assert.Equal(t, http.StatusUnauthorized, attempt())
+	assert.Equal(t, http.StatusUnauthorized, attempt())
+	assert.Equal(t, http.StatusTooManyRequests, attempt(), "the third attempt is over the new limit of 2")
 }

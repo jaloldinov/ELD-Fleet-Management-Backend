@@ -41,6 +41,7 @@ type Handlers struct {
 	Driver    *DriverHandler
 	Truck     *TruckHandler
 	ELDDevice *ELDDeviceHandler
+	RateLimit *RateLimitHandler
 }
 
 // RouterSecurity holds what the router needs to protect routes.
@@ -156,6 +157,12 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	elds.DELETE("/:id", perm.Require(model.PermELDDelete), h.ELDDevice.Delete)
 	elds.PUT("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.AssignTruck)
 	elds.DELETE("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.UnassignTruck)
+
+	// Platform settings: permissions seeded for platform_admin only.
+	rateLimits := protected.Group("/rate-limits")
+	rateLimits.GET("", perm.Require(model.PermRateLimitRead), h.RateLimit.List)
+	rateLimits.GET("/:name", perm.Require(model.PermRateLimitRead), h.RateLimit.Get)
+	rateLimits.PATCH("/:name", perm.Require(model.PermRateLimitUpdate), h.RateLimit.Update)
 
 	return r
 }

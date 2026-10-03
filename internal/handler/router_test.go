@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
@@ -83,6 +84,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		Truck:     handler.NewTruckHandler(nil),
 		ELDDevice: handler.NewELDDeviceHandler(nil),
 		Company:   handler.NewCompanyHandler(failingCompanyService{}),
+		RateLimit: handler.NewRateLimitHandler(nil),
 	})
 }
 
@@ -255,6 +257,7 @@ func TestRouter_AuthRoutesAreRateLimitedByIP(t *testing.T) {
 		Truck:     handler.NewTruckHandler(nil),
 		ELDDevice: handler.NewELDDeviceHandler(nil),
 		Company:   handler.NewCompanyHandler(failingCompanyService{}),
+		RateLimit: handler.NewRateLimitHandler(nil),
 	})
 
 	// The body "{" is invalid, so the first call stops at 400 in the handler.
@@ -320,3 +323,15 @@ func TestRouter_TrustedProxies(t *testing.T) {
 type recordingLimiter func(key string)
 
 func (f recordingLimiter) Take(key string) (time.Duration, bool) { f(key); return 0, true }
+
+// Read access must not imply write access to security settings.
+func TestRouter_RateLimitUpdateNeedsUpdatePermission(t *testing.T) {
+	r := newTestRouterWith(&bytes.Buffer{}, handler.RouterOptions{}, []model.Permission{model.PermRateLimitRead})
+
+	rec := send(r, http.MethodPatch, "/api/v1/rate-limits/login_attempts", authHeader)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	var body apierror.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, string(model.PermRateLimitUpdate), body.Error.Details["permission"])
+}

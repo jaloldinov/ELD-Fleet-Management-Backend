@@ -33,6 +33,10 @@ const (
 	PermELDRead   Permission = "eld:read"
 	PermELDUpdate Permission = "eld:update"
 	PermELDDelete Permission = "eld:delete"
+
+	// Platform settings: seeded for platform_admin only.
+	PermRateLimitRead   Permission = "ratelimit:read"
+	PermRateLimitUpdate Permission = "ratelimit:update"
 )
 
 // AllPermissions lists every permission the code knows about.
@@ -43,6 +47,7 @@ func AllPermissions() []Permission {
 		PermDriverCreate, PermDriverRead, PermDriverUpdate, PermDriverDelete,
 		PermTruckCreate, PermTruckRead, PermTruckUpdate, PermTruckDelete,
 		PermELDCreate, PermELDRead, PermELDUpdate, PermELDDelete,
+		PermRateLimitRead, PermRateLimitUpdate,
 	}
 }
 

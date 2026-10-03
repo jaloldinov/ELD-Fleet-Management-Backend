@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // newTestLimiter returns a limiter with a controllable clock.
@@ -104,4 +105,82 @@ func TestKeyed_RunCleanupStopsWithContext(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("RunCleanup did not stop")
 	}
+}
+
+func TestNew_PanicsOnInvalidLimit(t *testing.T) {
+	assert.Panics(t, func() { New(0, time.Minute) })
+	assert.Panics(t, func() { New(1, 0) })
+}
+
+func TestKeyed_SetLimitAppliesToNewKeys(t *testing.T) {
+	k, _ := newTestLimiter(5, 15*time.Minute)
+
+	require.NoError(t, k.SetLimit(2, time.Minute))
+	limit, window := k.Limit()
+	assert.Equal(t, 2, limit)
+	assert.Equal(t, time.Minute, window)
+
+	k.Take("a")
+	k.Take("a")
+	retry, ok := k.Take("a")
+	assert.False(t, ok, "the new limit (2) is used")
+	assert.Equal(t, 30*time.Second, retry, "one token comes back every 1m/2")
+}
+
+func TestKeyed_SetLimitCapsRemainingTokens(t *testing.T) {
+	k, _ := newTestLimiter(5, 15*time.Minute)
+	k.Take("a") // 4 of 5 left
+
+	require.NoError(t, k.SetLimit(2, 15*time.Minute))
+
+	for i := range 2 {
+		_, ok := k.Take("a")
+		assert.True(t, ok, "attempt %d: 4 left, capped at the new limit 2", i+1)
+	}
+	_, ok := k.Take("a")
+	assert.False(t, ok)
+}
+
+func TestKeyed_SetLimitDoesNotRefillExhaustedKeys(t *testing.T) {
+	k, _ := newTestLimiter(5, 15*time.Minute)
+	for range 5 {
+		k.Take("a") // exhausted
+	}
+
+	require.NoError(t, k.SetLimit(10, 15*time.Minute))
+	_, ok := k.Take("a")
+
+	assert.False(t, ok, "saving settings must not give attackers fresh attempts")
+}
+
+func TestKeyed_SetLimitLooseningRefillsAtNewRate(t *testing.T) {
+	k, clock := newTestLimiter(1, time.Hour)
+	k.Take("a") // blocked for an hour at the old rate
+
+	require.NoError(t, k.SetLimit(60, time.Hour)) // one token per minute
+	*clock = clock.Add(time.Minute)
+	_, ok := k.Take("a")
+
+	assert.True(t, ok, "tokens come back at the new rate")
+}
+
+func TestKeyed_SetLimitRejectsInvalidValues(t *testing.T) {
+	k, _ := newTestLimiter(5, time.Minute)
+
+	assert.ErrorIs(t, k.SetLimit(0, time.Minute), ErrInvalidLimit)
+	assert.ErrorIs(t, k.SetLimit(5, 0), ErrInvalidLimit)
+	limit, window := k.Limit()
+	assert.Equal(t, 5, limit, "unchanged")
+	assert.Equal(t, time.Minute, window, "unchanged")
+}
+
+func TestKeyed_SweepUsesCurrentWindow(t *testing.T) {
+	k, clock := newTestLimiter(5, time.Hour)
+	k.Take("a")
+	require.NoError(t, k.SetLimit(5, time.Minute))
+
+	*clock = clock.Add(2 * time.Minute)
+	k.sweep()
+
+	assert.Equal(t, 0, k.Len(), "idle for longer than the new window")
 }

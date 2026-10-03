@@ -74,7 +74,7 @@ func NewAuthHandler(svc AuthService, limiter LoginLimiter) *AuthHandler {
 //	@Failure		400		{object}	apierror.Response	"invalid JSON"
 //	@Failure		401		{object}	apierror.Response	"invalid login or password"
 //	@Failure		403		{object}	apierror.Response	"account is disabled"
-//	@Failure		429		{object}	apierror.Response	"too many attempts (per IP, or 5 failed logins per 15 min); see Retry-After"
+//	@Failure		429		{object}	apierror.Response	"too many attempts (rate limits auth_requests or login_attempts, see /api/v1/rate-limits); see Retry-After"
 //	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {

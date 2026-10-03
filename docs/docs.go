@@ -65,7 +65,7 @@ const docTemplate = `{
                         }
                     },
                     "429": {
-                        "description": "too many attempts (per IP, or 5 failed logins per 15 min); see Retry-After",
+                        "description": "too many attempts (rate limits auth_requests or login_attempts, see /api/v1/rate-limits); see Retry-After",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -1474,6 +1474,189 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/rate-limits": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: ratelimit:read (platform users only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rate-limits"
+                ],
+                "summary": "List rate limits",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListRateLimitsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission ratelimit:read, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/rate-limits/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: ratelimit:read (platform users only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rate-limits"
+                ],
+                "summary": "Get a rate limit",
+                "parameters": [
+                    {
+                        "enum": [
+                            "auth_requests",
+                            "login_attempts"
+                        ],
+                        "type": "string",
+                        "description": "Rule name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.RateLimitResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission ratelimit:read, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "unknown rule",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: ratelimit:update (platform users only)\nPartial update. Saved in the database and applied immediately on this instance; other instances apply it within a minute.\nKeys that already used up their attempts are not reset: their tokens come back at the new rate.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rate-limits"
+                ],
+                "summary": "Update a rate limit",
+                "parameters": [
+                    {
+                        "enum": [
+                            "auth_requests",
+                            "login_attempts"
+                        ],
+                        "type": "string",
+                        "description": "Rule name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.UpdateRateLimitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.RateLimitResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON or validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission ratelimit:update, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "unknown rule",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/trucks": {
             "get": {
                 "security": [
@@ -2634,6 +2817,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.ListRateLimitsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.RateLimitResponse"
+                    }
+                }
+            }
+        },
         "handler.ListTrucksResponse": {
             "type": "object",
             "properties": {
@@ -2754,6 +2948,36 @@ const docTemplate = `{
                 "username": {
                     "type": "string",
                     "example": "jane.smith"
+                }
+            }
+        },
+        "handler.RateLimitResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Login attempts per login name + client IP; a successful login resets it"
+                },
+                "limit": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "name": {
+                    "description": "auth_requests: per client IP, all /api/v1/auth/* routes.\nlogin_attempts: per login name + client IP, POST /api/v1/auth/login.",
+                    "type": "string",
+                    "example": "login_attempts"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-03T11:26:26Z"
+                },
+                "updated_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "window_seconds": {
+                    "type": "integer",
+                    "example": 900
                 }
             }
         },
@@ -2913,6 +3137,21 @@ const docTemplate = `{
                 "model": {
                     "type": "string",
                     "example": "PT30"
+                }
+            }
+        },
+        "handler.UpdateRateLimitRequest": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "description": "Maximum events per window, per key. 1-10000.",
+                    "type": "integer",
+                    "example": 5
+                },
+                "window_seconds": {
+                    "description": "Window length in seconds. 1-86400 (24 hours).",
+                    "type": "integer",
+                    "example": 900
                 }
             }
         },

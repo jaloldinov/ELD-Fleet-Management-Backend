@@ -22,7 +22,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/jobs"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
-	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
+	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
@@ -97,14 +97,28 @@ func run() error {
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	defer stopJobs()
 
-	// Rate limits for the public auth routes (in memory, per instance):
-	//   - per IP: 20 requests/min on /auth/*. Generous enough for a carrier
-	//     office where many drivers share one NAT address at shift start.
-	//   - per login+IP: 5 login attempts per 15 min; a success resets it.
-	authIPLimiter := ratelimit.New(20, time.Minute)
-	loginLimiter := ratelimit.New(5, 15*time.Minute)
+	// Rate limits for the public auth routes (in memory, per instance). The
+	// numbers live in the rate_limits table and are changed through
+	// /api/v1/rate-limits by a platform admin:
+	//   - auth_requests: per IP on /auth/*.
+	//   - login_attempts: per login+IP on /auth/login; a success resets it.
+	// Startup fails if they cannot be loaded: better than running unprotected.
+	rateLimitSvc := service.NewRateLimitService(repository.NewRateLimitRepository(pool))
+	authIPLimiter, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitAuthRequests)
+	if err != nil {
+		return err
+	}
+	loginLimiter, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitLoginAttempts)
+	if err != nil {
+		return err
+	}
 	go authIPLimiter.RunCleanup(jobsCtx)
 	go loginLimiter.RunCleanup(jobsCtx)
+
+	// Every minute: re-read the rate limits, so a change saved through
+	// another instance arrives here too. One tiny query per minute, instead
+	// of one per login. If the database is down, the current values stay.
+	go jobs.Every(jobsCtx, log, "rate-limit-refresh", time.Minute, rateLimitSvc.Refresh)
 
 	// Hourly: delete refresh tokens that expired over 7 days ago. Safe to
 	// run on every instance at once: deleting already-deleted rows is a no-op.
@@ -133,6 +147,7 @@ func run() error {
 		Driver:    handler.NewDriverHandler(driverSvc),
 		Truck:     handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo)),
 		ELDDevice: handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo)),
+		RateLimit: handler.NewRateLimitHandler(rateLimitSvc),
 	})
 
 	srv := &http.Server{

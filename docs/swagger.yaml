@@ -307,6 +307,13 @@ definitions:
         example: 14
         type: integer
     type: object
+  handler.ListRateLimitsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.RateLimitResponse'
+        type: array
+    type: object
   handler.ListTrucksResponse:
     properties:
       items:
@@ -394,6 +401,31 @@ definitions:
       username:
         example: jane.smith
         type: string
+    type: object
+  handler.RateLimitResponse:
+    properties:
+      description:
+        example: Login attempts per login name + client IP; a successful login resets
+          it
+        type: string
+      limit:
+        example: 5
+        type: integer
+      name:
+        description: |-
+          auth_requests: per client IP, all /api/v1/auth/* routes.
+          login_attempts: per login name + client IP, POST /api/v1/auth/login.
+        example: login_attempts
+        type: string
+      updated_at:
+        example: "2026-10-03T11:26:26Z"
+        type: string
+      updated_by:
+        format: uuid
+        type: string
+      window_seconds:
+        example: 900
+        type: integer
     type: object
   handler.ReadyResponse:
     properties:
@@ -509,6 +541,17 @@ definitions:
       model:
         example: PT30
         type: string
+    type: object
+  handler.UpdateRateLimitRequest:
+    properties:
+      limit:
+        description: Maximum events per window, per key. 1-10000.
+        example: 5
+        type: integer
+      window_seconds:
+        description: Window length in seconds. 1-86400 (24 hours).
+        example: 900
+        type: integer
     type: object
   handler.UpdateTruckRequest:
     properties:
@@ -633,8 +676,8 @@ paths:
           schema:
             $ref: '#/definitions/apierror.Response'
         "429":
-          description: too many attempts (per IP, or 5 failed logins per 15 min);
-            see Retry-After
+          description: too many attempts (rate limits auth_requests or login_attempts,
+            see /api/v1/rate-limits); see Retry-After
           schema:
             $ref: '#/definitions/apierror.Response'
         "500":
@@ -1586,6 +1629,127 @@ paths:
       summary: Install a device in a truck
       tags:
       - eld-devices
+  /api/v1/rate-limits:
+    get:
+      description: 'Requires permission: ratelimit:read (platform users only)'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListRateLimitsResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission ratelimit:read, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: List rate limits
+      tags:
+      - rate-limits
+  /api/v1/rate-limits/{name}:
+    get:
+      description: 'Requires permission: ratelimit:read (platform users only)'
+      parameters:
+      - description: Rule name
+        enum:
+        - auth_requests
+        - login_attempts
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.RateLimitResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission ratelimit:read, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: unknown rule
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Get a rate limit
+      tags:
+      - rate-limits
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: ratelimit:update (platform users only)
+        Partial update. Saved in the database and applied immediately on this instance; other instances apply it within a minute.
+        Keys that already used up their attempts are not reset: their tokens come back at the new rate.
+      parameters:
+      - description: Rule name
+        enum:
+        - auth_requests
+        - login_attempts
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateRateLimitRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.RateLimitResponse'
+        "400":
+          description: invalid JSON or validation failed
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission ratelimit:update, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: unknown rule
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Update a rate limit
+      tags:
+      - rate-limits
   /api/v1/trucks:
     get:
       description: |-
