@@ -71,6 +71,13 @@ func run() error {
 	defer pool.Close() // runs last, after the HTTP server has shut down
 	log.Info("database connected")
 
+	// Roles and permissions are defined in the code (model.Permissions,
+	// model.SystemRoles); make the database match before serving requests.
+	// Only adds, never removes; see repository.RBACRepository.Sync.
+	if err := service.SyncRBAC(dbCtx, repository.NewRBACRepository(pool), log); err != nil {
+		return err
+	}
+
 	// Wire the 3 layers, bottom-up: repository → service → handler.
 	// Each layer receives the one below it through a constructor (dependency
 	// injection), so nothing reaches for globals and every layer is testable.

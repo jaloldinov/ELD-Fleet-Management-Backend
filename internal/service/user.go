@@ -26,10 +26,8 @@ var usernameRe = regexp.MustCompile(`^[a-z0-9._-]{3,50}$`)
 // Which system roles each kind of user may have. The database cannot enforce
 // this (it spans users.company_id and roles.scope), so the service does.
 var (
-	platformRoles = map[string]bool{model.RolePlatformAdmin: true}
-	companyRoles  = map[string]bool{
-		model.RoleAdmin: true, model.RoleManager: true, model.RoleDispatcher: true, model.RoleDriver: true,
-	}
+	platformRoles = model.SystemRolesByScope(model.RoleScopePlatform)
+	companyRoles  = model.SystemRolesByScope(model.RoleScopeCompany)
 )
 
 // UserRepository is what UserService needs from the data layer.

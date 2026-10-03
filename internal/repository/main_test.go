@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
 // newTestDB connects to TEST_DATABASE_URL and empties all tables, so each test
@@ -55,6 +57,11 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 		DELETE FROM users;
 		DELETE FROM roles WHERE company_id IS NOT NULL;
 		DELETE FROM companies;`)
+	require.NoError(t, err)
+
+	// Like the API at startup: roles and permissions defined in the code
+	// exist even if no migration created them.
+	_, err = NewRBACRepository(pool).Sync(context.Background(), model.SystemRoles(), model.Permissions())
 	require.NoError(t, err)
 
 	return pool
