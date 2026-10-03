@@ -107,6 +107,21 @@ func (r *UserRepository) GetByLogin(ctx context.Context, login string) (*model.U
 	return u, nil
 }
 
+// UpdatePassword sets a new password hash. Only for active, not deleted
+// users: model.ErrNotFound otherwise.
+func (r *UserRepository) UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
+	tag, err := r.q(ctx).Exec(ctx, `
+		UPDATE users SET password_hash = $2
+		WHERE id = $1 AND is_active AND deleted_at IS NULL`, id, passwordHash)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return model.ErrNotFound
+	}
+	return nil
+}
+
 // GetPermissions returns the union of the permissions of all the user's roles.
 //
 // A deactivated or deleted user has NO permissions. Their access token may

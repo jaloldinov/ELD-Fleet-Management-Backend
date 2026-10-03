@@ -253,6 +253,18 @@ definitions:
         example: "2026-10-02T11:26:26Z"
         type: string
     type: object
+  handler.ForgotPasswordRequest:
+    properties:
+      email:
+        example: jane@acme.com
+        type: string
+    type: object
+  handler.ForgotPasswordResponse:
+    properties:
+      message:
+        example: If an account with this email exists, a reset code has been sent.
+        type: string
+    type: object
   handler.HealthResponse:
     properties:
       status:
@@ -440,6 +452,15 @@ definitions:
     properties:
       refresh_token:
         example: q3Jx0yJ8Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t
+        type: string
+    type: object
+  handler.ResetPasswordRequest:
+    properties:
+      new_password:
+        example: correct horse battery staple
+        type: string
+      reset_token:
+        example: pX3k9Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t2u3
         type: string
     type: object
   handler.TokenResponse:
@@ -635,6 +656,27 @@ definitions:
         example: jane.smith
         type: string
     type: object
+  handler.VerifyResetCodeRequest:
+    properties:
+      code:
+        description: The 6-digit code from the email.
+        example: "048213"
+        type: string
+      email:
+        example: jane@acme.com
+        type: string
+    type: object
+  handler.VerifyResetCodeResponse:
+    properties:
+      expires_in:
+        description: Seconds until the reset token expires.
+        example: 600
+        type: integer
+      reset_token:
+        description: 'Single use: send it to /api/v1/auth/password/reset.'
+        example: pX3k9Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t2u3
+        type: string
+    type: object
 info:
   contact: {}
   description: 'Backend for US motor carriers: companies, users, drivers, trucks and
@@ -744,6 +786,112 @@ paths:
       security:
       - BearerAuth: []
       summary: Current user
+      tags:
+      - auth
+  /api/v1/auth/password/forgot:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Step 1 of 3. Emails a 6-digit code (valid 10 minutes, 5 attempts) if the address belongs to an active account.
+        Always answers 202 with the same message, so it never reveals whether an account exists.
+        Users without an email address (username-only drivers) must ask an administrator.
+      parameters:
+      - description: Account email
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/handler.ForgotPasswordResponse'
+        "400":
+          description: invalid JSON or email
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "429":
+          description: too many requests (rate limits password_reset_requests or auth_requests);
+            see Retry-After
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      summary: 'Forgot password: email a code'
+      tags:
+      - auth
+  /api/v1/auth/password/reset:
+    post:
+      consumes:
+      - application/json
+      description: Step 3 of 3. Sets the new password, ends every session of the user
+        (log in again) and emails a notice.
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ResetPasswordRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid JSON, weak new_password, or invalid_reset_token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "429":
+          description: too many requests from this IP; see Retry-After
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      summary: 'Forgot password: set a new password'
+      tags:
+      - auth
+  /api/v1/auth/password/verify:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Step 2 of 3. Exchanges the emailed code for a single-use reset token (valid 10 minutes).
+        Each wrong code uses one of the 5 attempts; then a new code must be requested.
+      parameters:
+      - description: Email and code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.VerifyResetCodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.VerifyResetCodeResponse'
+        "400":
+          description: invalid JSON, or invalid_reset_code (wrong, expired or used
+            up)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "429":
+          description: too many requests from this IP; see Retry-After
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      summary: 'Forgot password: verify the code'
       tags:
       - auth
   /api/v1/auth/refresh:

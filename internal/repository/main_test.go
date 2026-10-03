@@ -53,6 +53,7 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 		DELETE FROM trucks;
 		DELETE FROM drivers;
 		DELETE FROM refresh_tokens;
+		DELETE FROM password_resets;
 		DELETE FROM user_roles;
 		DELETE FROM users;
 		DELETE FROM roles WHERE company_id IS NOT NULL;

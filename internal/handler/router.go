@@ -42,6 +42,7 @@ type Handlers struct {
 	Truck     *TruckHandler
 	ELDDevice *ELDDeviceHandler
 	RateLimit *RateLimitHandler
+	Password  *PasswordResetHandler
 }
 
 // RouterSecurity holds what the router needs to protect routes.
@@ -104,6 +105,9 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	public.POST("/login", h.Auth.Login)
 	public.POST("/refresh", h.Auth.Refresh) // the refresh token itself is the credential
 	public.POST("/logout", h.Auth.Logout)
+	public.POST("/password/forgot", h.Password.Forgot)
+	public.POST("/password/verify", h.Password.Verify)
+	public.POST("/password/reset", h.Password.Reset) // the reset token is the credential
 
 	// ---------- Protected: every route below requires a valid access token ----------
 	// Registering the middleware on the GROUP (not per route) means a new

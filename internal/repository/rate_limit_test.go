@@ -33,7 +33,7 @@ func TestRateLimitRepository_SeededRules(t *testing.T) {
 	limits, err := NewRateLimitRepository(db).List(context.Background())
 
 	require.NoError(t, err)
-	require.Len(t, limits, 2)
+	require.Len(t, limits, 3)
 	byName := map[string]model.RateLimit{}
 	for _, rl := range limits {
 		byName[rl.Name] = rl
@@ -44,6 +44,9 @@ func TestRateLimitRepository_SeededRules(t *testing.T) {
 	assert.Equal(t, 5, byName[model.RateLimitLoginAttempts].Limit)
 	assert.Equal(t, 15*time.Minute, byName[model.RateLimitLoginAttempts].Window)
 	assert.NotEmpty(t, byName[model.RateLimitLoginAttempts].Description)
+	// Added with password reset (migration 000012).
+	assert.Equal(t, 3, byName[model.RateLimitPasswordReset].Limit)
+	assert.Equal(t, time.Hour, byName[model.RateLimitPasswordReset].Window)
 }
 
 func TestRateLimitRepository_GetByName_Unknown(t *testing.T) {

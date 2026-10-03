@@ -85,6 +85,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		ELDDevice: handler.NewELDDeviceHandler(nil),
 		Company:   handler.NewCompanyHandler(failingCompanyService{}),
 		RateLimit: handler.NewRateLimitHandler(nil),
+		Password:  handler.NewPasswordResetHandler(nil, nil),
 	})
 }
 
@@ -141,6 +142,10 @@ var publicRoutes = map[string]bool{
 	"POST /api/v1/auth/login":   true,
 	"POST /api/v1/auth/refresh": true,
 	"POST /api/v1/auth/logout":  true,
+
+	"POST /api/v1/auth/password/forgot": true,
+	"POST /api/v1/auth/password/verify": true,
+	"POST /api/v1/auth/password/reset":  true,
 }
 
 func TestRouter_EveryNonPublicRouteRequiresAuthentication(t *testing.T) {
@@ -258,6 +263,7 @@ func TestRouter_AuthRoutesAreRateLimitedByIP(t *testing.T) {
 		ELDDevice: handler.NewELDDeviceHandler(nil),
 		Company:   handler.NewCompanyHandler(failingCompanyService{}),
 		RateLimit: handler.NewRateLimitHandler(nil),
+		Password:  handler.NewPasswordResetHandler(nil, nil),
 	})
 
 	// The body "{" is invalid, so the first call stops at 400 in the handler.

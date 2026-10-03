@@ -28,6 +28,11 @@ const (
 	CodeTooLarge     = "payload_too_large"
 	CodeRateLimited  = "rate_limited"
 	CodeInternal     = "internal_error"
+
+	// Password reset: "wrong or expired code, try again" vs "the reset
+	// token is no longer valid, start over".
+	CodeInvalidResetCode  = "invalid_reset_code"
+	CodeInvalidResetToken = "invalid_reset_token"
 )
 
 // Response is the body of every error response in the API.

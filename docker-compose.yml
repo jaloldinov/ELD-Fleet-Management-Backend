@@ -35,6 +35,15 @@ services:
       timeout: 3s
       retries: 15
 
+  # Fake mail server for development: catches every email the API sends
+  # (nothing reaches real inboxes). Read them at http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: eld-mailpit
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web inbox
+
   # The services below only start with the "app" profile, so `make db-up`
   # still starts just Postgres for local development:
   #   docker compose --profile app up --build
@@ -58,6 +67,8 @@ services:
       # Inside the compose network Postgres is "postgres:5432", not localhost:5433.
       DATABASE_URL: postgres://eld:eld@postgres:5432/eld?sslmode=disable
       REDIS_URL: redis://redis:6379/0
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
       HTTP_PORT: "8080"
     ports:
       - "8080:8080"

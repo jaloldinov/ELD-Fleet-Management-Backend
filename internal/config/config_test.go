@@ -30,6 +30,8 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("REFRESH_TOKEN_TTL", "")
 	t.Setenv("TRUSTED_PROXIES", "")
 	t.Setenv("REDIS_URL", "")
+	t.Setenv("SMTP_HOST", "")
+	t.Setenv("SMTP_PORT", "")
 	setRequired(t)
 
 	cfg, err := Load()
@@ -44,6 +46,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 30*24*time.Hour, cfg.RefreshTokenTTL)
 	assert.Empty(t, cfg.TrustedProxies, "trust no proxy unless told to")
 	assert.Empty(t, cfg.RedisURL, "optional: rate limits count in memory without it")
+	assert.Empty(t, cfg.SMTPHost, "optional: emails are only logged without it")
+	assert.Equal(t, 587, cfg.SMTPPort)
 	assert.False(t, cfg.IsProduction())
 }
 
@@ -110,4 +114,60 @@ func TestLoad_ErrorNeverContainsSecret(t *testing.T) {
 
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "my-short-secret")
+}
+
+func TestLoad_SMTP(t *testing.T) {
+	setRequired(t)
+	t.Setenv("SMTP_HOST", "smtp.gmail.com")
+	t.Setenv("SMTP_PORT", "587")
+	t.Setenv("SMTP_USERNAME", "me@gmail.com")
+	t.Setenv("SMTP_PASSWORD", "abcd efgh ijkl mnop")
+	t.Setenv("SMTP_FROM", "me@gmail.com")
+	t.Setenv("SMTP_FROM_NAME", "ELD Fleet")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.Equal(t, "smtp.gmail.com", cfg.SMTPHost)
+	assert.Equal(t, "me@gmail.com", cfg.SMTPFrom)
+	assert.Equal(t, "ELD Fleet", cfg.SMTPFromName)
+}
+
+func TestLoad_SMTPInvalid(t *testing.T) {
+	tests := map[string]map[string]string{
+		"port not a number":     {"SMTP_PORT": "smtp"},
+		"port out of range":     {"SMTP_HOST": "h", "SMTP_FROM": "a@b.co", "SMTP_PORT": "70000"},
+		"missing from":          {"SMTP_HOST": "h", "SMTP_FROM": ""},
+		"bad from":              {"SMTP_HOST": "h", "SMTP_FROM": "not an address"},
+		"from with name":        {"SMTP_HOST": "h", "SMTP_FROM": "ELD <a@b.co>"},
+		"user without password": {"SMTP_HOST": "h", "SMTP_FROM": "a@b.co", "SMTP_USERNAME": "u", "SMTP_PASSWORD": ""},
+	}
+	for name, env := range tests {
+		t.Run(name, func(t *testing.T) {
+			setRequired(t)
+			for _, k := range []string{"SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"} {
+				t.Setenv(k, "")
+			}
+			for k, v := range env {
+				t.Setenv(k, v)
+			}
+
+			_, err := Load()
+
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestLoad_SMTPPasswordNeverInError(t *testing.T) {
+	setRequired(t)
+	t.Setenv("SMTP_HOST", "h")
+	t.Setenv("SMTP_FROM", "a@b.co")
+	t.Setenv("SMTP_USERNAME", "")
+	t.Setenv("SMTP_PASSWORD", "super-secret-app-password")
+
+	_, err := Load()
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "super-secret-app-password")
 }

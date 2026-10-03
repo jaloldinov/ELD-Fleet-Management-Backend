@@ -49,6 +49,10 @@ func handleError(c *gin.Context, err error) {
 		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, model.ErrRefreshTokenInvalid.Error(), nil)
 	case errors.Is(err, model.ErrRefreshTokenInvalid):
 		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, err.Error(), nil)
+	case errors.Is(err, model.ErrResetCodeInvalid):
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeInvalidResetCode, err.Error(), nil)
+	case errors.Is(err, model.ErrResetTokenInvalid):
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeInvalidResetToken, err.Error(), nil)
 	case errors.Is(err, model.ErrForbidden):
 		apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden, err.Error(), nil)
 	case errors.Is(err, model.ErrUserInactive):

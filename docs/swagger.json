@@ -161,6 +161,156 @@
                 }
             }
         },
+        "/api/v1/auth/password/forgot": {
+            "post": {
+                "description": "Step 1 of 3. Emails a 6-digit code (valid 10 minutes, 5 attempts) if the address belongs to an active account.\nAlways answers 202 with the same message, so it never reveals whether an account exists.\nUsers without an email address (username-only drivers) must ask an administrator.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Forgot password: email a code",
+                "parameters": [
+                    {
+                        "description": "Account email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.ForgotPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ForgotPasswordResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON or email",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "429": {
+                        "description": "too many requests (rate limits password_reset_requests or auth_requests); see Retry-After",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password/reset": {
+            "post": {
+                "description": "Step 3 of 3. Sets the new password, ends every session of the user (log in again) and emails a notice.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Forgot password: set a new password",
+                "parameters": [
+                    {
+                        "description": "Reset token and new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.ResetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid JSON, weak new_password, or invalid_reset_token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "429": {
+                        "description": "too many requests from this IP; see Retry-After",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password/verify": {
+            "post": {
+                "description": "Step 2 of 3. Exchanges the emailed code for a single-use reset token (valid 10 minutes).\nEach wrong code uses one of the 5 attempts; then a new code must be requested.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Forgot password: verify the code",
+                "parameters": [
+                    {
+                        "description": "Email and code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.VerifyResetCodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.VerifyResetCodeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON, or invalid_reset_code (wrong, expired or used up)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "429": {
+                        "description": "too many requests from this IP; see Retry-After",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/refresh": {
             "post": {
                 "description": "Exchanges a refresh token for a new access + refresh token pair.\nThe presented refresh token stops working (rotation). Presenting it again is treated as theft and ends all sessions of the user.",
@@ -2732,6 +2882,24 @@
                 }
             }
         },
+        "handler.ForgotPasswordRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "jane@acme.com"
+                }
+            }
+        },
+        "handler.ForgotPasswordResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "If an account with this email exists, a reset code has been sent."
+                }
+            }
+        },
         "handler.HealthResponse": {
             "type": "object",
             "properties": {
@@ -2993,6 +3161,19 @@
                 "refresh_token": {
                     "type": "string",
                     "example": "q3Jx0yJ8Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t"
+                }
+            }
+        },
+        "handler.ResetPasswordRequest": {
+            "type": "object",
+            "properties": {
+                "new_password": {
+                    "type": "string",
+                    "example": "correct horse battery staple"
+                },
+                "reset_token": {
+                    "type": "string",
+                    "example": "pX3k9Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t2u3"
                 }
             }
         },
@@ -3258,6 +3439,35 @@
                 "username": {
                     "type": "string",
                     "example": "jane.smith"
+                }
+            }
+        },
+        "handler.VerifyResetCodeRequest": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "The 6-digit code from the email.",
+                    "type": "string",
+                    "example": "048213"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "jane@acme.com"
+                }
+            }
+        },
+        "handler.VerifyResetCodeResponse": {
+            "type": "object",
+            "properties": {
+                "expires_in": {
+                    "description": "Seconds until the reset token expires.",
+                    "type": "integer",
+                    "example": 600
+                },
+                "reset_token": {
+                    "description": "Single use: send it to /api/v1/auth/password/reset.",
+                    "type": "string",
+                    "example": "pX3k9Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t2u3"
                 }
             }
         }

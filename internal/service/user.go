@@ -342,8 +342,7 @@ func validateNewUser(companyID *uuid.UUID, email, username, password, firstName,
 			"must be 3-50 characters: letters, digits, dot, underscore or hyphen")
 	}
 
-	v.Check(utf8.RuneCountInString(password) >= passwordMinLen, "password", "must be at least 8 characters")
-	v.Check(len(password) <= auth.MaxPasswordBytes, "password", "must be at most 72 bytes")
+	checkPassword(&v, "password", password)
 
 	v.Check(firstName != "", "first_name", "is required")
 	v.Check(utf8.RuneCountInString(firstName) <= userNameMaxLen, "first_name", "must be at most 100 characters")
@@ -353,6 +352,12 @@ func validateNewUser(companyID *uuid.UUID, email, username, password, firstName,
 	checkRoles(&v, companyID, roles)
 
 	return v.Err()
+}
+
+// checkPassword applies the password rules (user creation, password reset).
+func checkPassword(v *validation.Validator, field, password string) {
+	v.Check(utf8.RuneCountInString(password) >= passwordMinLen, field, "must be at least 8 characters")
+	v.Check(len(password) <= auth.MaxPasswordBytes, field, "must be at most 72 bytes")
 }
 
 // checkRoles: at least one role, and every role must fit the user's scope

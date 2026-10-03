@@ -36,4 +36,9 @@ var (
 	// which means a copy was stolen. Clients see the same 401 as
 	// ErrRefreshTokenInvalid; the distinct error exists so it gets logged.
 	ErrRefreshTokenReused = errors.New("refresh token reuse detected")
+
+	// Password reset. Deliberately vague: "no such email", "wrong code",
+	// "expired" and "too many attempts" all look the same to the client.
+	ErrResetCodeInvalid  = errors.New("invalid or expired code")
+	ErrResetTokenInvalid = errors.New("invalid or expired reset token")
 )

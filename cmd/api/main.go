@@ -22,6 +22,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/jobs"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
+	"github.com/jaloldinov/ELD-learning/internal/mail"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
@@ -123,6 +124,11 @@ func run() error {
 	}
 	go authLocal.RunCleanup(jobsCtx)
 	go loginLocal.RunCleanup(jobsCtx)
+	resetLocal, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitPasswordReset)
+	if err != nil {
+		return err
+	}
+	go resetLocal.RunCleanup(jobsCtx)
 
 	// Where attempts are COUNTED:
 	//   - REDIS_URL set: in Redis, shared by all instances (3 servers still
@@ -132,6 +138,7 @@ func run() error {
 	//     instance (local development).
 	var authIPLimiter middleware.RateLimiter = authLocal
 	var loginLimiter handler.LoginLimiter = loginLocal
+	var resetLimiter handler.ResetRequestLimiter = resetLocal
 	if cfg.RedisURL != "" {
 		rdb, err := database.NewRedis(cfg.RedisURL, log)
 		if err != nil {
@@ -146,6 +153,7 @@ func run() error {
 		}
 		authIPLimiter = ratelimit.NewRedis(rdb, model.RateLimitAuthRequests, authLocal, log)
 		loginLimiter = ratelimit.NewRedis(rdb, model.RateLimitLoginAttempts, loginLocal, log)
+		resetLimiter = ratelimit.NewRedis(rdb, model.RateLimitPasswordReset, resetLocal, log)
 	} else {
 		log.Warn("REDIS_URL not set; rate limits count in memory per instance (fine for a single instance only)")
 	}
@@ -157,6 +165,38 @@ func run() error {
 
 	// Hourly: delete refresh tokens that expired over 7 days ago. Safe to
 	// run on every instance at once: deleting already-deleted rows is a no-op.
+	// Email (password reset codes). Sent in the background, so a request
+	// never waits for the mail server. Without SMTP_HOST, emails are only
+	// logged (without their body) and "forgot password" cannot work.
+	var mailer service.Mailer = mail.Disabled{Log: log}
+	var mailQueue *mail.Async
+	if cfg.SMTPHost != "" {
+		smtpSender, err := mail.NewSMTP(mail.SMTPConfig{
+			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
+			Username: cfg.SMTPUsername, Password: cfg.SMTPPassword,
+			From: cfg.SMTPFrom, FromName: cfg.SMTPFromName,
+		})
+		if err != nil {
+			return err
+		}
+		mailQueue = mail.NewAsync(smtpSender, log, 100, 15*time.Second)
+		mailer = mailQueue
+		log.Info("email enabled", "smtp_host", cfg.SMTPHost, "smtp_port", cfg.SMTPPort)
+	} else {
+		log.Warn("SMTP_HOST not set; emails are not sent (password reset will not work)")
+	}
+
+	resetRepo := repository.NewPasswordResetRepository(pool)
+	passwordResetSvc := service.NewPasswordResetService(resetRepo, userRepo, sessionRepo, txManager,
+		auth.NewResetCodeHasher(cfg.JWTSecret), hasher, mailer, log)
+
+	// Hourly: delete password resets older than a day (they expire after
+	// 10 minutes; a day keeps recent ones for investigating abuse).
+	go jobs.Every(jobsCtx, log, "password-reset-cleanup", time.Hour, func(ctx context.Context) error {
+		_, err := resetRepo.DeleteCreatedBefore(ctx, time.Now().Add(-24*time.Hour))
+		return err
+	})
+
 	sessionCleaner := service.NewSessionCleaner(sessionRepo, 7*24*time.Hour)
 	go jobs.Every(jobsCtx, log, "refresh-token-cleanup", time.Hour, func(ctx context.Context) error {
 		n, err := sessionCleaner.Run(ctx)
@@ -183,6 +223,7 @@ func run() error {
 		Truck:     handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo)),
 		ELDDevice: handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo)),
 		RateLimit: handler.NewRateLimitHandler(rateLimitSvc),
+		Password:  handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
 	})
 
 	srv := &http.Server{
@@ -230,5 +271,16 @@ func run() error {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
 	log.Info("server stopped")
+
+	// After the server: requests may still have queued emails. Give the
+	// queue a few seconds to deliver them (a code lost here can be
+	// requested again).
+	if mailQueue != nil {
+		mailCtx, mailCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer mailCancel()
+		if err := mailQueue.Close(mailCtx); err != nil {
+			log.Warn("emails still queued at shutdown were dropped", "error", err)
+		}
+	}
 	return nil
 }

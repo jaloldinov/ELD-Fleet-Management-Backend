@@ -13,6 +13,8 @@ const (
 	RateLimitAuthRequests = "auth_requests"
 	// RateLimitLoginAttempts: login attempts per login name + client IP.
 	RateLimitLoginAttempts = "login_attempts"
+	// RateLimitPasswordReset: "send me a reset code" requests per email.
+	RateLimitPasswordReset = "password_reset_requests"
 )
 
 // RateLimit allows at most Limit events per Window for each key (a client

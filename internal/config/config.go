@@ -4,7 +4,9 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/mail"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +33,17 @@ type Config struct {
 	// is only correct with a single instance. Set it in production.
 	RedisURL string
 
+	// SMTP sends emails (password reset codes). Optional: without SMTPHost,
+	// emails are not sent (only logged), so "forgot password" cannot work.
+	// Gmail: smtp.gmail.com, port 587, the Gmail address as user and From,
+	// and a 16-character App Password (not the account password).
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string // empty = no authentication (Mailpit in development)
+	SMTPPassword string
+	SMTPFrom     string // plain address: you@gmail.com
+	SMTPFromName string // shown as the sender's name; default "ELD"
+
 	JWTSecret       string        // HMAC key for signing access tokens
 	AccessTokenTTL  time.Duration // how long an access token is valid
 	RefreshTokenTTL time.Duration // how long a refresh token (session) is valid
@@ -53,6 +66,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid config: REFRESH_TOKEN_TTL: %w", err)
 	}
+	smtpPort, err := strconv.Atoi(getEnv("SMTP_PORT", "587"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid config: SMTP_PORT must be a number")
+	}
 
 	cfg := &Config{
 		Env:      getEnv("APP_ENV", EnvDevelopment),
@@ -62,6 +79,12 @@ func Load() (*Config, error) {
 		// well-known secret must never be used by accident.
 		DatabaseURL:     getEnv("DATABASE_URL", ""),
 		RedisURL:        getEnv("REDIS_URL", ""),
+		SMTPHost:        getEnv("SMTP_HOST", ""),
+		SMTPPort:        smtpPort,
+		SMTPUsername:    getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:    getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:        getEnv("SMTP_FROM", ""),
+		SMTPFromName:    getEnv("SMTP_FROM_NAME", "ELD"),
 		JWTSecret:       getEnv("JWT_SECRET", ""),
 		AccessTokenTTL:  ttl,
 		RefreshTokenTTL: refreshTTL,
@@ -107,6 +130,21 @@ func (c *Config) validate() error {
 
 	if c.RefreshTokenTTL < time.Hour || c.RefreshTokenTTL > 90*24*time.Hour {
 		return fmt.Errorf("REFRESH_TOKEN_TTL must be between 1h and 2160h (90 days), got %s", c.RefreshTokenTTL)
+	}
+
+	if c.SMTPHost != "" {
+		if c.SMTPPort < 1 || c.SMTPPort > 65535 {
+			return fmt.Errorf("SMTP_PORT must be between 1 and 65535, got %d", c.SMTPPort)
+		}
+		// A plain address: "Name <addr>" would break shells that source
+		// .env (the < is a redirection); the name is SMTP_FROM_NAME.
+		if a, err := mail.ParseAddress(c.SMTPFrom); err != nil || a.Address != c.SMTPFrom {
+			return fmt.Errorf("SMTP_FROM must be a plain email address like you@gmail.com (the name goes in SMTP_FROM_NAME), got %q", c.SMTPFrom)
+		}
+		// Never print the password itself.
+		if (c.SMTPUsername == "") != (c.SMTPPassword == "") {
+			return fmt.Errorf("SMTP_USERNAME and SMTP_PASSWORD must be set together")
+		}
 	}
 
 	for _, p := range c.TrustedProxies {
