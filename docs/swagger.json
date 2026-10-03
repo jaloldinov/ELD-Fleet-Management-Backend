@@ -2502,6 +2502,77 @@
                 }
             }
         },
+        "/api/v1/users/{id}/password": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: user:set_password\nFor users who cannot use \"forgot password\" (e.g. drivers without an email address) or are locked out.\nThe user is logged out everywhere. Not for your own account, nor for disabled accounts (activate them first).",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Set a user's password",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.SetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid id, invalid JSON or weak new_password",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission user:set_password, your own account, or account is disabled",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "produces": [
@@ -3174,6 +3245,16 @@
                 "reset_token": {
                     "type": "string",
                     "example": "pX3k9Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t2u3"
+                }
+            }
+        },
+        "handler.SetPasswordRequest": {
+            "type": "object",
+            "properties": {
+                "new_password": {
+                    "description": "At least 8 characters, at most 72 bytes.",
+                    "type": "string",
+                    "example": "correct horse battery staple"
                 }
             }
         },

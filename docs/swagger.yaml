@@ -463,6 +463,13 @@ definitions:
         example: pX3k9Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t2u3
         type: string
     type: object
+  handler.SetPasswordRequest:
+    properties:
+      new_password:
+        description: At least 8 characters, at most 72 bytes.
+        example: correct horse battery staple
+        type: string
+    type: object
   handler.TokenResponse:
     properties:
       access_token:
@@ -2369,6 +2376,56 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a user
+      tags:
+      - users
+  /api/v1/users/{id}/password:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: user:set_password
+        For users who cannot use "forgot password" (e.g. drivers without an email address) or are locked out.
+        The user is logged out everywhere. Not for your own account, nor for disabled accounts (activate them first).
+      parameters:
+      - description: User ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.SetPasswordRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid id, invalid JSON or weak new_password
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission user:set_password, your own account, or
+            account is disabled
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Set a user's password
       tags:
       - users
   /health:

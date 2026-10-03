@@ -22,6 +22,7 @@ type UserService interface {
 	List(ctx context.Context, p auth.Principal, params service.UserListParams) (*service.UserPage, error)
 	Update(ctx context.Context, p auth.Principal, id uuid.UUID, in service.UpdateUserInput) (*service.UserDetails, error)
 	Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error
+	SetPassword(ctx context.Context, p auth.Principal, id uuid.UUID, newPassword string) error
 	GetProfile(ctx context.Context, id uuid.UUID) (*service.UserProfile, error)
 }
 
@@ -267,4 +268,42 @@ func principal(c *gin.Context) (auth.Principal, bool) {
 		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, "authentication required", nil)
 	}
 	return p, ok
+}
+
+// SetPassword handles PUT /api/v1/users/:id/password.
+//
+//	@Summary		Set a user's password
+//	@Description	Requires permission: user:set_password
+//	@Description	For users who cannot use "forgot password" (e.g. drivers without an email address) or are locked out.
+//	@Description	The user is logged out everywhere. Not for your own account, nor for disabled accounts (activate them first).
+//	@Tags			users
+//	@Accept			json
+//	@Security		BearerAuth
+//	@Param			id		path	string				true	"User ID"	format(uuid)
+//	@Param			body	body	SetPasswordRequest	true	"New password"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	apierror.Response	"invalid id, invalid JSON or weak new_password"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission user:set_password, your own account, or account is disabled"
+//	@Failure		404		{object}	apierror.Response
+//	@Failure		500		{object}	apierror.Response
+//	@Router			/api/v1/users/{id}/password [put]
+func (h *UserHandler) SetPassword(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req SetPasswordRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if err := h.svc.SetPassword(c.Request.Context(), p, id, req.NewPassword); err != nil {
+		handleError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

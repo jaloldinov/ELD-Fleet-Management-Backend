@@ -134,6 +134,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	users.GET("/:id", perm.Require(model.PermUserRead), h.User.Get)
 	users.PATCH("/:id", perm.Require(model.PermUserUpdate), h.User.Update)
 	users.DELETE("/:id", perm.Require(model.PermUserDelete), h.User.Delete)
+	users.PUT("/:id/password", perm.Require(model.PermUserSetPassword), h.User.SetPassword)
 
 	drivers := protected.Group("/drivers")
 	// Login only: a driver reads their OWN profile (identity, not a permission).

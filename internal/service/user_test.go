@@ -27,6 +27,15 @@ type memUserRepo struct {
 	listF   model.UserFilter
 }
 
+func (m *memUserRepo) UpdatePassword(_ context.Context, id uuid.UUID, hash string) error {
+	u, ok := m.users[id]
+	if !ok || !u.IsActive || u.DeletedAt != nil {
+		return model.ErrNotFound
+	}
+	u.PasswordHash = hash
+	return nil
+}
+
 func newMemUserRepo() *memUserRepo {
 	return &memUserRepo{users: map[uuid.UUID]*model.User{}, roles: map[uuid.UUID][]string{}}
 }
@@ -523,4 +532,74 @@ func TestUserService_GetPermissions(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []model.Permission{model.PermTruckRead}, got)
+}
+
+// ---------- SetPassword ----------
+
+func TestUserService_SetPassword(t *testing.T) {
+	f := newUserFixture()
+	companyID := uuid.New()
+	admin := f.companyAdminOf(companyID)
+	driver := f.repo.add(&companyID, model.RoleDriver)
+
+	err := f.svc.SetPassword(context.Background(), admin, driver.ID, "temporary-pass-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "hashed:temporary-pass-1", f.repo.users[driver.ID].PasswordHash)
+	assert.Equal(t, []uuid.UUID{driver.ID}, f.revoker.revoked, "logged out everywhere")
+}
+
+func TestUserService_SetPassword_PlatformAdminAnyCompany(t *testing.T) {
+	f := newUserFixture()
+	companyID := uuid.New()
+	driver := f.repo.add(&companyID, model.RoleDriver)
+
+	require.NoError(t, f.svc.SetPassword(context.Background(), platformAdmin, driver.ID, "temporary-pass-1"))
+}
+
+func TestUserService_SetPassword_Refused(t *testing.T) {
+	f := newUserFixture()
+	companyA, companyB := uuid.New(), uuid.New()
+	admin := f.companyAdminOf(companyA)
+	other := f.repo.add(&companyB, model.RoleDriver)
+	disabled := f.repo.add(&companyA, model.RoleDriver)
+	disabled.IsActive = false
+	platformUser := f.repo.add(nil, model.RolePlatformAdmin)
+
+	tests := []struct {
+		name    string
+		target  uuid.UUID
+		wantErr error
+	}{
+		{"another company's user", other.ID, model.ErrNotFound},
+		{"a platform user", platformUser.ID, model.ErrNotFound},
+		{"unknown user", uuid.New(), model.ErrNotFound},
+		{"own account", admin.UserID, model.ErrForbidden},
+		{"disabled user", disabled.ID, model.ErrUserInactive},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := f.svc.SetPassword(context.Background(), admin, tc.target, "temporary-pass-1")
+
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
+	assert.Empty(t, f.revoker.revoked, "nobody was logged out")
+	for _, u := range f.repo.users {
+		assert.NotEqual(t, "hashed:temporary-pass-1", u.PasswordHash, "no password changed")
+	}
+}
+
+func TestUserService_SetPassword_Validation(t *testing.T) {
+	f := newUserFixture()
+	companyID := uuid.New()
+	admin := f.companyAdminOf(companyID)
+	driver := f.repo.add(&companyID, model.RoleDriver)
+	f.svc.hasher = fakeHasher{err: errors.New("must not hash")} // validation must stop first
+
+	for _, pw := range []string{"", "short", strings.Repeat("x", 73)} {
+		err := f.svc.SetPassword(context.Background(), admin, driver.ID, pw)
+
+		requireValidationField(t, err, "new_password")
+	}
 }

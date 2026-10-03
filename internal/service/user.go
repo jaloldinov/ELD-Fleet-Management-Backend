@@ -39,6 +39,7 @@ type UserRepository interface {
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 	GetRoles(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID][]string, error)
 	GetPermissions(ctx context.Context, userID uuid.UUID) ([]model.Permission, error)
+	UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) error
 }
 
 // CompanyLookup checks that a company exists (repository.CompanyRepository).
@@ -283,6 +284,41 @@ func (s *UserService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID
 	if err := s.repo.SoftDelete(ctx, id); err != nil {
 		return err
 	}
+	return s.sessions.RevokeAllForUser(ctx, id)
+}
+
+// SetPassword sets another user's password: for users who cannot use
+// "forgot password" (drivers with a username but no email) or are locked
+// out. The user is logged out everywhere, so whoever knew the old password
+// loses access. Tenant scope as for Update; nobody sets their own password
+// here (that must require the current password).
+func (s *UserService) SetPassword(ctx context.Context, p auth.Principal, id uuid.UUID, newPassword string) error {
+	if id == p.UserID {
+		return model.ErrForbidden
+	}
+	var v validation.Validator
+	checkPassword(&v, "new_password", newPassword)
+	if err := v.Err(); err != nil {
+		return err
+	}
+
+	u, err := s.getInScope(ctx, p, id)
+	if err != nil {
+		return err
+	}
+	if !u.IsActive {
+		return model.ErrUserInactive // activate the account first
+	}
+
+	hash, err := s.hasher.Hash(newPassword)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdatePassword(ctx, id, hash); err != nil {
+		return err
+	}
+	// After the change: a failure here returns an error and can simply be
+	// retried (setting the same password again is harmless).
 	return s.sessions.RevokeAllForUser(ctx, id)
 }
 

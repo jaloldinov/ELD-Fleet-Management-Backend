@@ -47,6 +47,9 @@ var (
 	PermUserRead   = define("user:read", "View users", RoleAdmin, RoleManager)
 	PermUserUpdate = define("user:update", "Edit users and their roles", RoleAdmin)
 	PermUserDelete = define("user:delete", "Delete users", RoleAdmin)
+	// Separate from user:update: setting someone's password means being able
+	// to log in as them, so it is granted on its own.
+	PermUserSetPassword = define("user:set_password", "Set other users' passwords", RoleAdmin)
 
 	PermDriverCreate = define("driver:create", "Create drivers", RoleAdmin, RoleManager)
 	PermDriverRead   = define("driver:read", "View drivers", RoleAdmin, RoleManager, RoleDispatcher)

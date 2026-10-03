@@ -344,3 +344,15 @@ func TestRouter_RateLimitUpdateNeedsUpdatePermission(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, string(model.PermRateLimitUpdate), body.Error.Details["permission"])
 }
+
+// Editing a user must not imply setting their password.
+func TestRouter_SetPasswordNeedsItsOwnPermission(t *testing.T) {
+	r := newTestRouterWith(&bytes.Buffer{}, handler.RouterOptions{}, []model.Permission{model.PermUserUpdate})
+
+	rec := send(r, http.MethodPut, "/api/v1/users/"+uuid.NewString()+"/password", authHeader)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	var body apierror.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, string(model.PermUserSetPassword), body.Error.Details["permission"])
+}

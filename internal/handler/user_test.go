@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
@@ -26,6 +27,7 @@ type fakeUserService struct {
 	gotCreate    service.CreateUserInput
 	gotUpdate    service.UpdateUserInput
 	gotList      service.UserListParams
+	gotPassword  string
 
 	details *service.UserDetails
 	page    *service.UserPage
@@ -55,6 +57,11 @@ func (f *fakeUserService) Update(_ context.Context, p auth.Principal, id uuid.UU
 
 func (f *fakeUserService) Delete(_ context.Context, p auth.Principal, id uuid.UUID) error {
 	f.gotPrincipal, f.gotID = p, id
+	return f.err
+}
+
+func (f *fakeUserService) SetPassword(_ context.Context, p auth.Principal, id uuid.UUID, pw string) error {
+	f.gotPrincipal, f.gotID, f.gotPassword = p, id, pw
 	return f.err
 }
 
@@ -96,6 +103,7 @@ func userRouter(svc UserService, caller *auth.Principal) *gin.Engine {
 	g.GET("/:id", h.Get)
 	g.PATCH("/:id", h.Update)
 	g.DELETE("/:id", h.Delete)
+	g.PUT("/:id/password", h.SetPassword)
 	return r
 }
 
@@ -264,4 +272,44 @@ func TestUserHandler_Me_Errors(t *testing.T) {
 	t.Run("unexpected error", func(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, getMe(userRouter(&fakeUserService{err: errors.New("db down")}, caller)).Code)
 	})
+}
+
+func TestUserHandler_SetPassword(t *testing.T) {
+	svc := &fakeUserService{}
+
+	rec := do(userRouter(svc, &testCaller), http.MethodPut, "/api/v1/users/"+testUserID.String()+"/password",
+		`{"new_password":"temporary-pass-1"}`)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, testCaller, svc.gotPrincipal)
+	assert.Equal(t, testUserID, svc.gotID)
+	assert.Equal(t, "temporary-pass-1", svc.gotPassword)
+}
+
+func TestUserHandler_SetPassword_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		path, body string
+		svcErr     error
+		wantStatus int
+		wantCode   string
+	}{
+		{"own account", testUserID.String(), `{"new_password":"temporary-pass-1"}`, model.ErrForbidden, http.StatusForbidden, apierror.CodeForbidden},
+		{"disabled user", testUserID.String(), `{"new_password":"temporary-pass-1"}`, model.ErrUserInactive, http.StatusForbidden, apierror.CodeForbidden},
+		{"not in your company", testUserID.String(), `{"new_password":"temporary-pass-1"}`, model.ErrNotFound, http.StatusNotFound, apierror.CodeNotFound},
+		{"weak password", testUserID.String(), `{"new_password":"short"}`,
+			&validation.ValidationError{Fields: map[string]string{"new_password": "must be at least 8 characters"}}, http.StatusBadRequest, apierror.CodeValidation},
+		{"bad id", "not-a-uuid", `{"new_password":"temporary-pass-1"}`, nil, http.StatusBadRequest, apierror.CodeValidation},
+		{"wrong field", testUserID.String(), `{"password":"temporary-pass-1"}`, nil, http.StatusBadRequest, apierror.CodeValidation},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeUserService{err: tc.svcErr}
+
+			rec := do(userRouter(svc, &testCaller), http.MethodPut, "/api/v1/users/"+tc.path+"/password", tc.body)
+
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			assert.Equal(t, tc.wantCode, decodeError(t, rec).Code)
+		})
+	}
 }

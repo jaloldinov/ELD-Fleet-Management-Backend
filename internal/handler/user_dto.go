@@ -106,3 +106,8 @@ func newMeResponse(p *service.UserProfile) MeResponse {
 	}
 	return MeResponse{UserResponse: newUserResponse(p.User, p.Roles), Permissions: perms}
 }
+
+type SetPasswordRequest struct {
+	// At least 8 characters, at most 72 bytes.
+	NewPassword string `json:"new_password" example:"correct horse battery staple"`
+}
