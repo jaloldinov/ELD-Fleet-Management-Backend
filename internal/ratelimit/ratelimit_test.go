@@ -21,10 +21,10 @@ func TestKeyed_BurstThenBlocked(t *testing.T) {
 	k, _ := newTestLimiter(5, 15*time.Minute)
 
 	for i := range 5 {
-		_, ok := k.Take("a")
+		_, ok := k.Take(context.Background(), "a")
 		assert.True(t, ok, "attempt %d is within the burst", i+1)
 	}
-	retry, ok := k.Take("a")
+	retry, ok := k.Take(context.Background(), "a")
 
 	assert.False(t, ok)
 	assert.Equal(t, 3*time.Minute, retry, "one token comes back every 15m/5")
@@ -32,9 +32,9 @@ func TestKeyed_BurstThenBlocked(t *testing.T) {
 
 func TestKeyed_KeysAreIndependent(t *testing.T) {
 	k, _ := newTestLimiter(1, time.Minute)
-	k.Take("a")
+	k.Take(context.Background(), "a")
 
-	_, ok := k.Take("b")
+	_, ok := k.Take(context.Background(), "b")
 
 	assert.True(t, ok)
 }
@@ -42,45 +42,45 @@ func TestKeyed_KeysAreIndependent(t *testing.T) {
 func TestKeyed_TokensComeBack(t *testing.T) {
 	k, clock := newTestLimiter(5, 15*time.Minute)
 	for range 5 {
-		k.Take("a")
+		k.Take(context.Background(), "a")
 	}
 
 	*clock = clock.Add(3 * time.Minute)
-	_, ok := k.Take("a")
+	_, ok := k.Take(context.Background(), "a")
 	assert.True(t, ok, "one token after 3 minutes")
 
-	_, ok = k.Take("a")
+	_, ok = k.Take(context.Background(), "a")
 	assert.False(t, ok, "but only one")
 }
 
 func TestKeyed_RefusedAttemptsDoNotExtendTheWait(t *testing.T) {
 	k, clock := newTestLimiter(1, time.Minute)
-	k.Take("a")
+	k.Take(context.Background(), "a")
 	for range 10 {
-		k.Take("a") // hammering while blocked
+		k.Take(context.Background(), "a") // hammering while blocked
 	}
 
 	*clock = clock.Add(time.Minute)
-	_, ok := k.Take("a")
+	_, ok := k.Take(context.Background(), "a")
 
 	assert.True(t, ok, "refused attempts were cancelled, not queued")
 }
 
 func TestKeyed_Reset(t *testing.T) {
 	k, _ := newTestLimiter(1, time.Hour)
-	k.Take("a")
+	k.Take(context.Background(), "a")
 
-	k.Reset("a")
-	_, ok := k.Take("a")
+	k.Reset(context.Background(), "a")
+	_, ok := k.Take(context.Background(), "a")
 
 	assert.True(t, ok)
 }
 
 func TestKeyed_SweepRemovesOnlyIdleKeys(t *testing.T) {
 	k, clock := newTestLimiter(5, time.Minute)
-	k.Take("old")
+	k.Take(context.Background(), "old")
 	*clock = clock.Add(50 * time.Second)
-	k.Take("recent")
+	k.Take(context.Background(), "recent")
 
 	*clock = clock.Add(20 * time.Second) // "old" idle 70s, "recent" 20s
 	k.sweep()
@@ -120,46 +120,46 @@ func TestKeyed_SetLimitAppliesToNewKeys(t *testing.T) {
 	assert.Equal(t, 2, limit)
 	assert.Equal(t, time.Minute, window)
 
-	k.Take("a")
-	k.Take("a")
-	retry, ok := k.Take("a")
+	k.Take(context.Background(), "a")
+	k.Take(context.Background(), "a")
+	retry, ok := k.Take(context.Background(), "a")
 	assert.False(t, ok, "the new limit (2) is used")
 	assert.Equal(t, 30*time.Second, retry, "one token comes back every 1m/2")
 }
 
 func TestKeyed_SetLimitCapsRemainingTokens(t *testing.T) {
 	k, _ := newTestLimiter(5, 15*time.Minute)
-	k.Take("a") // 4 of 5 left
+	k.Take(context.Background(), "a") // 4 of 5 left
 
 	require.NoError(t, k.SetLimit(2, 15*time.Minute))
 
 	for i := range 2 {
-		_, ok := k.Take("a")
+		_, ok := k.Take(context.Background(), "a")
 		assert.True(t, ok, "attempt %d: 4 left, capped at the new limit 2", i+1)
 	}
-	_, ok := k.Take("a")
+	_, ok := k.Take(context.Background(), "a")
 	assert.False(t, ok)
 }
 
 func TestKeyed_SetLimitDoesNotRefillExhaustedKeys(t *testing.T) {
 	k, _ := newTestLimiter(5, 15*time.Minute)
 	for range 5 {
-		k.Take("a") // exhausted
+		k.Take(context.Background(), "a") // exhausted
 	}
 
 	require.NoError(t, k.SetLimit(10, 15*time.Minute))
-	_, ok := k.Take("a")
+	_, ok := k.Take(context.Background(), "a")
 
 	assert.False(t, ok, "saving settings must not give attackers fresh attempts")
 }
 
 func TestKeyed_SetLimitLooseningRefillsAtNewRate(t *testing.T) {
 	k, clock := newTestLimiter(1, time.Hour)
-	k.Take("a") // blocked for an hour at the old rate
+	k.Take(context.Background(), "a") // blocked for an hour at the old rate
 
 	require.NoError(t, k.SetLimit(60, time.Hour)) // one token per minute
 	*clock = clock.Add(time.Minute)
-	_, ok := k.Take("a")
+	_, ok := k.Take(context.Background(), "a")
 
 	assert.True(t, ok, "tokens come back at the new rate")
 }
@@ -176,7 +176,7 @@ func TestKeyed_SetLimitRejectsInvalidValues(t *testing.T) {
 
 func TestKeyed_SweepUsesCurrentWindow(t *testing.T) {
 	k, clock := newTestLimiter(5, time.Hour)
-	k.Take("a")
+	k.Take(context.Background(), "a")
 	require.NoError(t, k.SetLimit(5, time.Minute))
 
 	*clock = clock.Add(2 * time.Minute)

@@ -322,7 +322,10 @@ func TestRouter_TrustedProxies(t *testing.T) {
 // recordingLimiter allows everything and reports each key it sees.
 type recordingLimiter func(key string)
 
-func (f recordingLimiter) Take(key string) (time.Duration, bool) { f(key); return 0, true }
+func (f recordingLimiter) Take(_ context.Context, key string) (time.Duration, bool) {
+	f(key)
+	return 0, true
+}
 
 // Read access must not imply write access to security settings.
 func TestRouter_RateLimitUpdateNeedsUpdatePermission(t *testing.T) {

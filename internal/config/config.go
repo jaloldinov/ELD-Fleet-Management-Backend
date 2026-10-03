@@ -26,6 +26,11 @@ type Config struct {
 	LogLevel    string // debug, info, warn, error
 	DatabaseURL string // postgres://user:pass@host:port/db?sslmode=disable
 
+	// RedisURL (redis://host:port/db) makes the rate limiters count in Redis,
+	// shared by every API instance. Optional: empty = count in memory, which
+	// is only correct with a single instance. Set it in production.
+	RedisURL string
+
 	JWTSecret       string        // HMAC key for signing access tokens
 	AccessTokenTTL  time.Duration // how long an access token is valid
 	RefreshTokenTTL time.Duration // how long a refresh token (session) is valid
@@ -56,6 +61,7 @@ func Load() (*Config, error) {
 		// No defaults for secrets/connections: a wrong database or a
 		// well-known secret must never be used by accident.
 		DatabaseURL:     getEnv("DATABASE_URL", ""),
+		RedisURL:        getEnv("REDIS_URL", ""),
 		JWTSecret:       getEnv("JWT_SECRET", ""),
 		AccessTokenTTL:  ttl,
 		RefreshTokenTTL: refreshTTL,

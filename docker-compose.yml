@@ -19,6 +19,22 @@ services:
       timeout: 3s
       retries: 15
 
+  # Shared rate-limit counters for every API instance (see ratelimit.Redis).
+  # Only short-lived counters live here, so persistence is switched off: after
+  # a restart every client simply starts with a full bucket.
+  redis:
+    image: redis:8-alpine
+    container_name: eld-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      # 6380 on the host, because a local Redis may already use 6379.
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
   # The services below only start with the "app" profile, so `make db-up`
   # still starts just Postgres for local development:
   #   docker compose --profile app up --build
@@ -41,6 +57,7 @@ services:
     environment:
       # Inside the compose network Postgres is "postgres:5432", not localhost:5433.
       DATABASE_URL: postgres://eld:eld@postgres:5432/eld?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
       HTTP_PORT: "8080"
     ports:
       - "8080:8080"
@@ -48,6 +65,8 @@ services:
       migrate:
         # Start the API only after migrations finished successfully.
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
 volumes:
   pgdata:

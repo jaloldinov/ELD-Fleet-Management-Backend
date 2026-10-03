@@ -50,7 +50,7 @@ type fakeLimiter struct {
 	resetKey string
 }
 
-func (f *fakeLimiter) Take(key string) (time.Duration, bool) {
+func (f *fakeLimiter) Take(_ context.Context, key string) (time.Duration, bool) {
 	f.taken = append(f.taken, key)
 	if f.blocked {
 		return 90*time.Second + time.Millisecond, false
@@ -58,7 +58,7 @@ func (f *fakeLimiter) Take(key string) (time.Duration, bool) {
 	return 0, true
 }
 
-func (f *fakeLimiter) Reset(key string) { f.resetKey = key }
+func (f *fakeLimiter) Reset(_ context.Context, key string) { f.resetKey = key }
 
 func newAuthRouter(svc AuthService) *gin.Engine {
 	return newAuthRouterWithLimiter(svc, &fakeLimiter{})

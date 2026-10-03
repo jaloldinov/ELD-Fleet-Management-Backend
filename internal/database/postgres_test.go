@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -43,4 +44,23 @@ func TestNewPool_RealDatabase(t *testing.T) {
 	var one int
 	require.NoError(t, pool.QueryRow(context.Background(), "SELECT 1").Scan(&one))
 	assert.Equal(t, 1, one)
+}
+
+func TestNewRedis_InvalidURL(t *testing.T) {
+	client, err := NewRedis("http://not-redis", slog.New(slog.DiscardHandler))
+
+	assert.ErrorContains(t, err, "parse redis url")
+	assert.Nil(t, client)
+}
+
+func TestNewRedis_DoesNotConnect(t *testing.T) {
+	// Nothing listens on port 1: creating the client must still succeed
+	// (the rate limiters fall back to memory), and fail fast when used.
+	client, err := NewRedis("redis://127.0.0.1:1/0", slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	defer client.Close()
+
+	start := time.Now()
+	assert.Error(t, client.Ping(context.Background()).Err())
+	assert.Less(t, time.Since(start), 2*time.Second, "fails fast")
 }

@@ -22,7 +22,9 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/jobs"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
+	"github.com/jaloldinov/ELD-learning/internal/middleware"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
@@ -97,23 +99,49 @@ func run() error {
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	defer stopJobs()
 
-	// Rate limits for the public auth routes (in memory, per instance). The
-	// numbers live in the rate_limits table and are changed through
-	// /api/v1/rate-limits by a platform admin:
+	// Rate limits for the public auth routes. The numbers live in the
+	// rate_limits table and are changed through /api/v1/rate-limits by a
+	// platform admin:
 	//   - auth_requests: per IP on /auth/*.
 	//   - login_attempts: per login+IP on /auth/login; a success resets it.
 	// Startup fails if they cannot be loaded: better than running unprotected.
 	rateLimitSvc := service.NewRateLimitService(repository.NewRateLimitRepository(pool))
-	authIPLimiter, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitAuthRequests)
+	authLocal, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitAuthRequests)
 	if err != nil {
 		return err
 	}
-	loginLimiter, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitLoginAttempts)
+	loginLocal, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitLoginAttempts)
 	if err != nil {
 		return err
 	}
-	go authIPLimiter.RunCleanup(jobsCtx)
-	go loginLimiter.RunCleanup(jobsCtx)
+	go authLocal.RunCleanup(jobsCtx)
+	go loginLocal.RunCleanup(jobsCtx)
+
+	// Where attempts are COUNTED:
+	//   - REDIS_URL set: in Redis, shared by all instances (3 servers still
+	//     allow 5 attempts in total). If Redis fails, each instance falls back
+	//     to its in-memory counter until Redis is back.
+	//   - REDIS_URL empty: in memory, per instance. Only correct with one
+	//     instance (local development).
+	var authIPLimiter middleware.RateLimiter = authLocal
+	var loginLimiter handler.LoginLimiter = loginLocal
+	if cfg.RedisURL != "" {
+		rdb, err := database.NewRedis(cfg.RedisURL, log)
+		if err != nil {
+			return err
+		}
+		defer rdb.Close()
+		// Not fatal: the limiters fall back to memory and log the outage.
+		if err := rdb.Ping(dbCtx).Err(); err != nil {
+			log.Warn("redis not reachable at startup; rate limits count in memory until it is", "error", err)
+		} else {
+			log.Info("redis connected; rate limits are shared by all instances")
+		}
+		authIPLimiter = ratelimit.NewRedis(rdb, model.RateLimitAuthRequests, authLocal, log)
+		loginLimiter = ratelimit.NewRedis(rdb, model.RateLimitLoginAttempts, loginLocal, log)
+	} else {
+		log.Warn("REDIS_URL not set; rate limits count in memory per instance (fine for a single instance only)")
+	}
 
 	// Every minute: re-read the rate limits, so a change saved through
 	// another instance arrives here too. One tiny query per minute, instead

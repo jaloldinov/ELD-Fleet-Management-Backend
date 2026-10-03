@@ -45,10 +45,11 @@ type TokenResponse struct {
 	RefreshExpiresIn int `json:"refresh_expires_in" example:"2592000"`
 }
 
-// LoginLimiter throttles login attempts per key (ratelimit.Keyed).
+// LoginLimiter throttles login attempts per key (ratelimit.Keyed or
+// ratelimit.Redis).
 type LoginLimiter interface {
-	Take(key string) (retryAfter time.Duration, ok bool)
-	Reset(key string)
+	Take(ctx context.Context, key string) (retryAfter time.Duration, ok bool)
+	Reset(ctx context.Context, key string)
 }
 
 type AuthHandler struct {
@@ -88,7 +89,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// The token is taken BEFORE the (slow) password check, so parallel
 	// requests cannot slip past the limit.
 	key := strings.ToLower(strings.TrimSpace(req.Login)) + "|" + c.ClientIP()
-	if retryAfter, ok := h.limiter.Take(key); !ok {
+	if retryAfter, ok := h.limiter.Take(c.Request.Context(), key); !ok {
 		apierror.RespondRateLimited(c, retryAfter)
 		return
 	}
@@ -98,7 +99,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	h.limiter.Reset(key) // success: earlier failures no longer count
+	h.limiter.Reset(c.Request.Context(), key) // success: earlier failures no longer count
 	h.respondTokens(c, pair)
 }
 

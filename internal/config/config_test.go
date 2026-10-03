@@ -29,6 +29,7 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("ACCESS_TOKEN_TTL", "")
 	t.Setenv("REFRESH_TOKEN_TTL", "")
 	t.Setenv("TRUSTED_PROXIES", "")
+	t.Setenv("REDIS_URL", "")
 	setRequired(t)
 
 	cfg, err := Load()
@@ -42,6 +43,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 15*time.Minute, cfg.AccessTokenTTL)
 	assert.Equal(t, 30*24*time.Hour, cfg.RefreshTokenTTL)
 	assert.Empty(t, cfg.TrustedProxies, "trust no proxy unless told to")
+	assert.Empty(t, cfg.RedisURL, "optional: rate limits count in memory without it")
 	assert.False(t, cfg.IsProduction())
 }
 
@@ -52,10 +54,12 @@ func TestLoad_FromEnv(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("ACCESS_TOKEN_TTL", "5m")
 	t.Setenv("TRUSTED_PROXIES", " 10.0.0.0/8, 192.168.1.5,, ")
+	t.Setenv("REDIS_URL", "redis://cache:6379/0")
 
 	cfg, err := Load()
 
 	require.NoError(t, err)
+	assert.Equal(t, "redis://cache:6379/0", cfg.RedisURL)
 	assert.Equal(t, EnvProduction, cfg.Env)
 	assert.Equal(t, "9000", cfg.HTTPPort)
 	assert.Equal(t, "debug", cfg.LogLevel)

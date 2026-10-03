@@ -55,11 +55,11 @@ func (m *memRateLimitRepo) Update(_ context.Context, rl model.RateLimit) (*model
 
 // takeAll counts how many attempts key gets before being refused.
 func takeAll(l interface {
-	Take(string) (time.Duration, bool)
+	Take(context.Context, string) (time.Duration, bool)
 }, key string) int {
 	n := 0
 	for ; n < 1000; n++ {
-		if _, ok := l.Take(key); !ok {
+		if _, ok := l.Take(context.Background(), key); !ok {
 			break
 		}
 	}

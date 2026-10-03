@@ -91,7 +91,7 @@ func (k *Keyed) Limit() (limit int, window time.Duration) {
 
 // Take uses one token for key. When none is left, ok is false and
 // retryAfter says when the next token arrives.
-func (k *Keyed) Take(key string) (retryAfter time.Duration, ok bool) {
+func (k *Keyed) Take(_ context.Context, key string) (retryAfter time.Duration, ok bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
@@ -113,7 +113,7 @@ func (k *Keyed) Take(key string) (retryAfter time.Duration, ok bool) {
 
 // Reset forgets key, giving it a full bucket again (e.g. after a successful
 // login, earlier failures no longer count).
-func (k *Keyed) Reset(key string) {
+func (k *Keyed) Reset(_ context.Context, key string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	delete(k.buckets, key)

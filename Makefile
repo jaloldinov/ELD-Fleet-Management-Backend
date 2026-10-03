@@ -13,12 +13,13 @@ MIGRATIONS_DIR := migrations
 run:
 	go run ./cmd/api
 
-# Fast unit tests only. TEST_DATABASE_URL is cleared (it is exported from .env),
-# so tests that need a database are skipped.
+# Fast unit tests only. TEST_DATABASE_URL and TEST_REDIS_URL are cleared (they
+# are exported from .env), so tests that need Postgres or Redis are skipped.
 test:
-	TEST_DATABASE_URL= go test ./... -race -cover
+	TEST_DATABASE_URL= TEST_REDIS_URL= go test ./... -race -cover
 
-# Also runs tests that need a real database (uses TEST_DATABASE_URL, never DATABASE_URL).
+# Also runs tests that need a real database and Redis (TEST_DATABASE_URL and
+# TEST_REDIS_URL, never DATABASE_URL/REDIS_URL).
 # -p 1 runs packages one at a time, because they share the same test database.
 test-integration: test-db
 	go test ./... -race -cover -p 1
