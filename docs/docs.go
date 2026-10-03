@@ -49,31 +49,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "invalid login or password",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "account is disabled",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "429": {
                         "description": "too many attempts (per IP, or 5 failed logins per 15 min); see Retry-After",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -107,19 +107,19 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "429": {
                         "description": "too many requests from this IP; see Retry-After",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -150,19 +150,19 @@ const docTemplate = `{
                     "401": {
                         "description": "missing/invalid token, or the user no longer exists",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "account is disabled",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -202,31 +202,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "invalid or expired refresh token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "account is disabled",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "429": {
                         "description": "too many requests from this IP; see Retry-After",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -276,25 +276,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission company:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -343,31 +343,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON or validation failed",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission company:create",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "DOT number already used",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -408,31 +408,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid id",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission company:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -465,31 +465,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission company:delete",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -540,37 +540,37 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission company:update",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "DOT number already used",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -627,25 +627,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission driver:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -688,37 +688,37 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON or validation failed",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission driver:create",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "company not found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "login or license already used",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -749,19 +749,19 @@ const docTemplate = `{
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "the caller is not a driver",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -802,31 +802,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid id",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission driver:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -859,31 +859,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission driver:delete",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -934,37 +934,37 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission driver:update",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "license already used",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1034,25 +1034,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission eld:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1095,37 +1095,37 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON or validation failed",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission eld:create",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "company not found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "serial number already registered",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1166,31 +1166,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid id",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission eld:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1223,31 +1223,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission eld:delete",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1298,31 +1298,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission eld:update",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1375,37 +1375,37 @@ const docTemplate = `{
                     "400": {
                         "description": "truck not found, out of service, or device inactive",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission eld:update",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "device not found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "the truck already has a device",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1444,31 +1444,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid id",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission eld:update",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1531,25 +1531,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission truck:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1592,37 +1592,37 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON or validation failed",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission truck:create",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "company not found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "VIN or unit number already used",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1663,31 +1663,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid id",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission truck:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1720,31 +1720,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission truck:delete",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1795,37 +1795,37 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission truck:update",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "unit number already used",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1882,25 +1882,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission user:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -1943,37 +1943,37 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid JSON or validation failed",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission user:create",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "company not found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "409": {
                         "description": "email or username already used",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -2014,31 +2014,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid id",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission user:read",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -2071,31 +2071,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission user:delete, or deleting yourself",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -2146,31 +2146,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "401": {
                         "description": "missing or invalid access token",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "403": {
                         "description": "missing permission user:update, or changing your own roles/status",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/handler.ErrorResponse"
+                            "$ref": "#/definitions/apierror.Response"
                         }
                     }
                 }
@@ -2222,6 +2222,33 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "apierror.Body": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "validation_failed"
+                },
+                "details": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "message": {
+                    "type": "string",
+                    "example": "request validation failed"
+                }
+            }
+        },
+        "apierror.Response": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/apierror.Body"
+                }
+            }
+        },
         "handler.AssignTruckRequest": {
             "type": "object",
             "properties": {
@@ -2526,33 +2553,6 @@ const docTemplate = `{
                 "updated_at": {
                     "type": "string",
                     "example": "2026-10-02T11:26:26Z"
-                }
-            }
-        },
-        "handler.ErrorBody": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string",
-                    "example": "validation_failed"
-                },
-                "details": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "message": {
-                    "type": "string",
-                    "example": "request validation failed"
-                }
-            }
-        },
-        "handler.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "$ref": "#/definitions/handler.ErrorBody"
                 }
             }
         },

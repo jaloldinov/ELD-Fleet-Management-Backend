@@ -24,7 +24,6 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/logger"
 	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
-	"github.com/jaloldinov/ELD-learning/internal/server"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
 
@@ -118,15 +117,15 @@ func run() error {
 		return err
 	})
 
-	router := server.NewRouter(log, server.Options{
+	router := handler.NewRouter(log, handler.RouterOptions{
 		EnableSwagger:  !cfg.IsProduction(),
 		TrustedProxies: cfg.TrustedProxies,
 		HSTS:           cfg.IsProduction(),
-	}, server.Security{
+	}, handler.RouterSecurity{
 		Tokens:      tokens,
 		Permissions: userSvc,
 		AuthLimiter: authIPLimiter,
-	}, server.Handlers{
+	}, handler.Handlers{
 		Health:    handler.NewHealthHandler(pool, log),
 		Auth:      handler.NewAuthHandler(authSvc, loginLimiter),
 		User:      handler.NewUserHandler(userSvc),

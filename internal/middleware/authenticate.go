@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/auth"
-	"github.com/jaloldinov/ELD-learning/internal/handler"
 )
 
 // TokenParser verifies an access token (auth.TokenManager).
@@ -28,7 +28,7 @@ func Authenticate(tokens TokenParser) gin.HandlerFunc {
 		if !ok {
 			// RFC 6750: a 401 must say which auth scheme the API expects.
 			c.Header("WWW-Authenticate", `Bearer realm="eld-api"`)
-			handler.RespondError(c, http.StatusUnauthorized, handler.CodeUnauthorized,
+			apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized,
 				"missing or malformed Authorization header", nil)
 			return
 		}
@@ -39,7 +39,7 @@ func Authenticate(tokens TokenParser) gin.HandlerFunc {
 			// "invalid"; the exact reason goes to the request log.
 			_ = c.Error(err)
 			c.Header("WWW-Authenticate", `Bearer realm="eld-api", error="invalid_token"`)
-			handler.RespondError(c, http.StatusUnauthorized, handler.CodeUnauthorized,
+			apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized,
 				"invalid or expired access token", nil)
 			return
 		}

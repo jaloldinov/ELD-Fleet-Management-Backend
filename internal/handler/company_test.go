@@ -15,9 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // fakeCompanyService is a hand-written stub (same idea as the fake repository
@@ -101,9 +103,9 @@ func do(r http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func decodeError(t *testing.T, rec *httptest.ResponseRecorder) ErrorBody {
+func decodeError(t *testing.T, rec *httptest.ResponseRecorder) apierror.Body {
 	t.Helper()
-	var resp ErrorResponse
+	var resp apierror.Response
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "body: %s", rec.Body.String())
 	return resp.Error
 }
@@ -155,7 +157,7 @@ func TestCompanyHandler_Create_InvalidJSON(t *testing.T) {
 	rec := do(newCompanyRouter(svc), http.MethodPost, "/api/v1/companies", `{"name": `)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Equal(t, CodeBadRequest, decodeError(t, rec).Code)
+	assert.Equal(t, apierror.CodeBadRequest, decodeError(t, rec).Code)
 }
 
 func TestCompanyHandler_Create_ErrorMapping(t *testing.T) {
@@ -167,12 +169,12 @@ func TestCompanyHandler_Create_ErrorMapping(t *testing.T) {
 	}{
 		{
 			name:       "validation error",
-			svcErr:     &model.ValidationError{Fields: map[string]string{"dot_number": "must be 1 to 8 digits"}},
+			svcErr:     &validation.ValidationError{Fields: map[string]string{"dot_number": "must be 1 to 8 digits"}},
 			wantStatus: http.StatusBadRequest,
-			wantCode:   CodeValidation,
+			wantCode:   apierror.CodeValidation,
 		},
-		{name: "duplicate DOT", svcErr: model.ErrDOTNumberTaken, wantStatus: http.StatusConflict, wantCode: CodeConflict},
-		{name: "unexpected error", svcErr: errors.New("db exploded: secret details"), wantStatus: http.StatusInternalServerError, wantCode: CodeInternal},
+		{name: "duplicate DOT", svcErr: model.ErrDOTNumberTaken, wantStatus: http.StatusConflict, wantCode: apierror.CodeConflict},
+		{name: "unexpected error", svcErr: errors.New("db exploded: secret details"), wantStatus: http.StatusInternalServerError, wantCode: apierror.CodeInternal},
 	}
 
 	for _, tt := range tests {
@@ -192,7 +194,7 @@ func TestCompanyHandler_Create_ErrorMapping(t *testing.T) {
 
 func TestCompanyHandler_Create_ValidationDetails(t *testing.T) {
 	svc := &fakeCompanyService{t: t, createFn: func(service.CreateCompanyInput) (*model.Company, error) {
-		return nil, &model.ValidationError{Fields: map[string]string{"dot_number": "must be 1 to 8 digits"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"dot_number": "must be 1 to 8 digits"}}
 	}}
 
 	rec := do(newCompanyRouter(svc), http.MethodPost, "/api/v1/companies", `{}`)
@@ -225,7 +227,7 @@ func TestCompanyHandler_Get(t *testing.T) {
 		rec := do(newCompanyRouter(svc), http.MethodGet, "/api/v1/companies/"+uuid.NewString(), "")
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
-		assert.Equal(t, CodeNotFound, decodeError(t, rec).Code)
+		assert.Equal(t, apierror.CodeNotFound, decodeError(t, rec).Code)
 	})
 
 	t.Run("invalid uuid", func(t *testing.T) {
@@ -341,5 +343,5 @@ func TestCompanyHandler_ForbiddenFromService(t *testing.T) {
 	rec := do(newCompanyRouter(svc), http.MethodPatch, "/api/v1/companies/"+uuid.NewString(), `{"is_active":false}`)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Equal(t, CodeForbidden, decodeError(t, rec).Code)
+	assert.Equal(t, apierror.CodeForbidden, decodeError(t, rec).Code)
 }

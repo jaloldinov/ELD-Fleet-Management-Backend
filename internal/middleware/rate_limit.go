@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/jaloldinov/ELD-learning/internal/handler"
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 )
 
 // RateLimiter is a per-key limiter (ratelimit.Keyed).
@@ -20,7 +20,7 @@ type RateLimiter interface {
 func RateLimitByIP(l RateLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if retryAfter, ok := l.Take(c.ClientIP()); !ok {
-			handler.RespondRateLimited(c, retryAfter)
+			apierror.RespondRateLimited(c, retryAfter)
 			return
 		}
 		c.Next()

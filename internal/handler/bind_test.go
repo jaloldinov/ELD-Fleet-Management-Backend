@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 )
 
 type bindTarget struct {
@@ -47,25 +49,25 @@ func TestBindJSON(t *testing.T) {
 		wantMessage string
 	}{
 		{name: "valid", body: `{"name":"a","year":2022,"truck_id":"` + testUserID.String() + `"}`, wantStatus: 200},
-		{name: "unknown field (typo)", body: `{"nmae":"a"}`, wantStatus: 400, wantCode: CodeValidation,
+		{name: "unknown field (typo)", body: `{"nmae":"a"}`, wantStatus: 400, wantCode: apierror.CodeValidation,
 			wantDetails: map[string]string{"nmae": "unknown field"}},
-		{name: "number sent as string", body: `{"year":"2022"}`, wantStatus: 400, wantCode: CodeValidation,
+		{name: "number sent as string", body: `{"year":"2022"}`, wantStatus: 400, wantCode: apierror.CodeValidation,
 			wantDetails: map[string]string{"year": "must be an integer"}},
-		{name: "string sent as number", body: `{"name":5}`, wantStatus: 400, wantCode: CodeValidation,
+		{name: "string sent as number", body: `{"name":5}`, wantStatus: 400, wantCode: apierror.CodeValidation,
 			wantDetails: map[string]string{"name": "must be a string"}},
-		{name: "bool", body: `{"active":"yes"}`, wantStatus: 400, wantCode: CodeValidation,
+		{name: "bool", body: `{"active":"yes"}`, wantStatus: 400, wantCode: apierror.CodeValidation,
 			wantDetails: map[string]string{"active": "must be true or false"}},
 		{name: "uuid sent as number is described as a string", body: `{"truck_id":5}`, wantStatus: 400,
-			wantCode: CodeValidation, wantDetails: map[string]string{"truck_id": "must be a string"}},
-		{name: "array", body: `{"roles":"admin"}`, wantStatus: 400, wantCode: CodeValidation,
+			wantCode: apierror.CodeValidation, wantDetails: map[string]string{"truck_id": "must be a string"}},
+		{name: "array", body: `{"roles":"admin"}`, wantStatus: 400, wantCode: apierror.CodeValidation,
 			wantDetails: map[string]string{"roles": "must be an array"}},
-		{name: "invalid uuid", body: `{"truck_id":"abc"}`, wantStatus: 400, wantCode: CodeBadRequest,
+		{name: "invalid uuid", body: `{"truck_id":"abc"}`, wantStatus: 400, wantCode: apierror.CodeBadRequest,
 			wantMessage: "invalid request body: invalid UUID length: 3"},
-		{name: "empty body", body: ``, wantStatus: 400, wantCode: CodeBadRequest, wantMessage: "request body must not be empty"},
-		{name: "broken JSON", body: `{"name":`, wantStatus: 400, wantCode: CodeBadRequest, wantMessage: "request body must be valid JSON"},
-		{name: "syntax error", body: `{name:1}`, wantStatus: 400, wantCode: CodeBadRequest, wantMessage: "request body must be valid JSON"},
-		{name: "two JSON values", body: `{"name":"a"}{"name":"b"}`, wantStatus: 400, wantCode: CodeBadRequest},
-		{name: "trailing garbage", body: `{"name":"a"} x`, wantStatus: 400, wantCode: CodeBadRequest},
+		{name: "empty body", body: ``, wantStatus: 400, wantCode: apierror.CodeBadRequest, wantMessage: "request body must not be empty"},
+		{name: "broken JSON", body: `{"name":`, wantStatus: 400, wantCode: apierror.CodeBadRequest, wantMessage: "request body must be valid JSON"},
+		{name: "syntax error", body: `{name:1}`, wantStatus: 400, wantCode: apierror.CodeBadRequest, wantMessage: "request body must be valid JSON"},
+		{name: "two JSON values", body: `{"name":"a"}{"name":"b"}`, wantStatus: 400, wantCode: apierror.CodeBadRequest},
+		{name: "trailing garbage", body: `{"name":"a"} x`, wantStatus: 400, wantCode: apierror.CodeBadRequest},
 		{name: "trailing whitespace is fine", body: "{\"name\":\"a\"}\n  ", wantStatus: 200},
 	}
 	for _, tt := range tests {
@@ -97,6 +99,6 @@ func TestBindJSON_TooLarge(t *testing.T) {
 
 	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 	e := decodeError(t, rec)
-	assert.Equal(t, CodeTooLarge, e.Code)
+	assert.Equal(t, apierror.CodeTooLarge, e.Code)
 	assert.Equal(t, "request body must be at most 50 bytes", e.Message)
 }

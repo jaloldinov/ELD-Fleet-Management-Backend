@@ -11,6 +11,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // ELDDeviceRepository is what ELDDeviceService needs from the data layer.
@@ -86,7 +87,7 @@ func (s *ELDDeviceService) Create(ctx context.Context, p auth.Principal, in Crea
 		FirmwareVersion: strings.TrimSpace(in.FirmwareVersion),
 	}
 
-	var v model.Validator
+	var v validation.Validator
 	v.Check(serialNumberRe.MatchString(d.SerialNumber), "serial_number",
 		"must be 4-32 characters: letters, digits or hyphen")
 	validateELDText(&v, d)
@@ -118,7 +119,7 @@ func (s *ELDDeviceService) List(ctx context.Context, p auth.Principal, params EL
 
 func (s *ELDDeviceService) Update(ctx context.Context, p auth.Principal, id uuid.UUID, in UpdateELDDeviceInput) (*model.ELDDevice, error) {
 	if in == (UpdateELDDeviceInput{}) {
-		return nil, &model.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
 	}
 
 	d, err := s.getInScope(ctx, p, id)
@@ -136,7 +137,7 @@ func (s *ELDDeviceService) Update(ctx context.Context, p auth.Principal, id uuid
 		d.IsActive = *in.IsActive
 	}
 
-	var v model.Validator
+	var v validation.Validator
 	validateELDText(&v, *d)
 	// An inactive device in a truck would leave the truck "with an ELD" that
 	// records nothing. Make the user take it out first, explicitly.
@@ -155,7 +156,7 @@ func (s *ELDDeviceService) AssignTruck(ctx context.Context, p auth.Principal, id
 		return nil, err
 	}
 	if !d.IsActive {
-		return nil, &model.ValidationError{Fields: map[string]string{"is_active": "an inactive device cannot be installed"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"is_active": "an inactive device cannot be installed"}}
 	}
 
 	t, err := s.trucks.GetByID(ctx, truckID)
@@ -163,12 +164,12 @@ func (s *ELDDeviceService) AssignTruck(ctx context.Context, p auth.Principal, id
 	// truck IDs of other tenants cannot be probed. Also checked by the
 	// composite foreign key in the database.
 	if errors.Is(err, model.ErrNotFound) || (err == nil && t.CompanyID != d.CompanyID) {
-		return nil, &model.ValidationError{Fields: map[string]string{"truck_id": "truck not found"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"truck_id": "truck not found"}}
 	} else if err != nil {
 		return nil, err
 	}
 	if !t.IsActive {
-		return nil, &model.ValidationError{Fields: map[string]string{"truck_id": "truck is out of service"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"truck_id": "truck is out of service"}}
 	}
 
 	return s.repo.SetTruck(ctx, id, &truckID) // ErrTruckHasELD if the truck is taken
@@ -201,7 +202,7 @@ func (s *ELDDeviceService) getInScope(ctx context.Context, p auth.Principal, id 
 	return d, nil
 }
 
-func validateELDText(v *model.Validator, d model.ELDDevice) {
+func validateELDText(v *validation.Validator, d model.ELDDevice) {
 	v.Check(utf8.RuneCountInString(d.Model) <= eldTextMaxLen, "model", "must be at most 50 characters")
 	v.Check(utf8.RuneCountInString(d.FirmwareVersion) <= eldTextMaxLen, "firmware_version", "must be at most 50 characters")
 }

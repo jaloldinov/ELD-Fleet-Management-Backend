@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/mail"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -13,12 +12,12 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 const (
-	passwordMinLen  = 8 // characters (NIST SP 800-63B minimum)
-	userNameMaxLen  = 100
-	userEmailMaxLen = 254 // practical maximum length of an email address
+	passwordMinLen = 8 // characters (NIST SP 800-63B minimum)
+	userNameMaxLen = 100
 )
 
 // Same rule as the users_username_format CHECK constraint (after lowercasing).
@@ -147,7 +146,7 @@ func (s *UserService) Create(ctx context.Context, p auth.Principal, in CreateUse
 	// A user must belong to a company that exists (and is not soft-deleted).
 	if companyID != nil {
 		if _, err := s.companies.GetByID(ctx, *companyID); errors.Is(err, model.ErrNotFound) {
-			return nil, &model.ValidationError{Fields: map[string]string{"company_id": "company does not exist"}}
+			return nil, &validation.ValidationError{Fields: map[string]string{"company_id": "company does not exist"}}
 		} else if err != nil {
 			return nil, err
 		}
@@ -224,7 +223,7 @@ func (s *UserService) List(ctx context.Context, p auth.Principal, params UserLis
 // tenant. Nobody can change their own roles or active status.
 func (s *UserService) Update(ctx context.Context, p auth.Principal, id uuid.UUID, in UpdateUserInput) (*UserDetails, error) {
 	if in.FirstName == nil && in.LastName == nil && in.IsActive == nil && in.Roles == nil {
-		return nil, &model.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
 	}
 	// No self-escalation (granting yourself roles) and no self-lockout.
 	if id == p.UserID && (in.Roles != nil || in.IsActive != nil) {
@@ -237,7 +236,7 @@ func (s *UserService) Update(ctx context.Context, p auth.Principal, id uuid.UUID
 	}
 	wasActive := u.IsActive
 
-	var v model.Validator
+	var v validation.Validator
 	if in.FirstName != nil {
 		u.FirstName = strings.TrimSpace(*in.FirstName)
 		v.Check(u.FirstName != "", "first_name", "is required")
@@ -334,11 +333,11 @@ func (s *UserService) GetProfile(ctx context.Context, id uuid.UUID) (*UserProfil
 }
 
 func validateNewUser(companyID *uuid.UUID, email, username, password, firstName, lastName string, roles []string) error {
-	var v model.Validator
+	var v validation.Validator
 
 	v.Check(email != "" || username != "", "login", "email or username is required")
 	if email != "" {
-		v.Check(isValidEmail(email), "email", "must be a valid email address")
+		v.Check(validation.Email(email), "email", "must be a valid email address")
 	}
 	if username != "" {
 		v.Check(usernameRe.MatchString(username), "username",
@@ -360,7 +359,7 @@ func validateNewUser(companyID *uuid.UUID, email, username, password, firstName,
 
 // checkRoles: at least one role, and every role must fit the user's scope
 // (platform users: platform roles; company users: company roles).
-func checkRoles(v *model.Validator, companyID *uuid.UUID, roles []string) {
+func checkRoles(v *validation.Validator, companyID *uuid.UUID, roles []string) {
 	v.Check(len(roles) > 0, "roles", "at least one role is required")
 	allowed, kind := companyRoles, "company"
 	if companyID == nil {
@@ -369,22 +368,6 @@ func checkRoles(v *model.Validator, companyID *uuid.UUID, roles []string) {
 	for _, r := range roles {
 		v.Check(allowed[r], "roles", fmt.Sprintf("role %q cannot be given to a %s user", r, kind))
 	}
-}
-
-// isValidEmail accepts a plain address like "jane@acme.com". mail.ParseAddress
-// also accepts forms like "Jane <jane@acme.com>", so we require the parsed
-// address to equal the input. The domain must contain a dot (same as the DB
-// CHECK constraint).
-func isValidEmail(email string) bool {
-	if len(email) > userEmailMaxLen {
-		return false
-	}
-	addr, err := mail.ParseAddress(email)
-	if err != nil || addr.Address != email {
-		return false
-	}
-	at := strings.LastIndex(email, "@")
-	return strings.Contains(email[at+1:], ".")
 }
 
 func nilIfEmpty(s string) *string {

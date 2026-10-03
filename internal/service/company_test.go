@@ -13,6 +13,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // fakeCompanyRepo is a hand-written stub. Each test sets only the functions it
@@ -71,11 +72,11 @@ var (
 	companyAUser  = auth.Principal{UserID: uuid.New(), CompanyID: &companyA}
 )
 
-// requireValidationField asserts err is a *model.ValidationError containing field.
+// requireValidationField asserts err is a *validation.ValidationError containing field.
 func requireValidationField(t *testing.T, err error, field string) {
 	t.Helper()
-	var vErr *model.ValidationError
-	require.True(t, errors.As(err, &vErr), "expected *model.ValidationError, got %v", err)
+	var vErr *validation.ValidationError
+	require.True(t, errors.As(err, &vErr), "expected *validation.ValidationError, got %v", err)
 	assert.Contains(t, vErr.Fields, field)
 }
 
@@ -140,7 +141,7 @@ func TestCompanyService_Create_ReportsAllInvalidFields(t *testing.T) {
 
 	_, err := svc.Create(context.Background(), platformAdmin, CreateCompanyInput{})
 
-	var vErr *model.ValidationError
+	var vErr *validation.ValidationError
 	require.True(t, errors.As(err, &vErr))
 	assert.Len(t, vErr.Fields, 3)
 }

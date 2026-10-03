@@ -8,9 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // UserService is what UserHandler needs from the service layer.
@@ -42,12 +44,12 @@ func NewUserHandler(svc UserService) *UserHandler {
 //	@Security		BearerAuth
 //	@Param			body	body		CreateUserRequest	true	"User to create"
 //	@Success		201		{object}	UserResponse
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission user:create"
-//	@Failure		404		{object}	ErrorResponse	"company not found"
-//	@Failure		409		{object}	ErrorResponse	"email or username already used"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"invalid JSON or validation failed"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission user:create"
+//	@Failure		404		{object}	apierror.Response	"company not found"
+//	@Failure		409		{object}	apierror.Response	"email or username already used"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/users [post]
 func (h *UserHandler) Create(c *gin.Context) {
 	p, ok := principal(c)
@@ -81,10 +83,10 @@ func (h *UserHandler) Create(c *gin.Context) {
 //	@Param			page		query		int		false	"Page number (1-based)"						default(1)	minimum(1)
 //	@Param			page_size	query		int		false	"Items per page"							default(20)	minimum(1)	maximum(100)
 //	@Success		200			{object}	ListUsersResponse
-//	@Failure		400			{object}	ErrorResponse
-//	@Failure		401			{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403			{object}	ErrorResponse	"missing permission user:read"
-//	@Failure		500			{object}	ErrorResponse
+//	@Failure		400			{object}	apierror.Response
+//	@Failure		401			{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403			{object}	apierror.Response	"missing permission user:read"
+//	@Failure		500			{object}	apierror.Response
 //	@Router			/api/v1/users [get]
 func (h *UserHandler) List(c *gin.Context) {
 	p, ok := principal(c)
@@ -92,7 +94,7 @@ func (h *UserHandler) List(c *gin.Context) {
 		return
 	}
 
-	var v model.Validator
+	var v validation.Validator
 	page, ok := queryInt(c, "page")
 	v.Check(ok, "page", "must be an integer")
 	size, ok := queryInt(c, "page_size")
@@ -127,11 +129,11 @@ func (h *UserHandler) List(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path		string	true	"User ID"	format(uuid)
 //	@Success		200	{object}	UserResponse
-//	@Failure		400	{object}	ErrorResponse	"invalid id"
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission user:read"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission user:read"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
 	p, ok := principal(c)
@@ -164,11 +166,11 @@ func (h *UserHandler) Get(c *gin.Context) {
 //	@Param			id		path		string				true	"User ID"	format(uuid)
 //	@Param			body	body		UpdateUserRequest	true	"Fields to change"
 //	@Success		200		{object}	UserResponse
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission user:update, or changing your own roles/status"
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission user:update, or changing your own roles/status"
+//	@Failure		404		{object}	apierror.Response
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/users/{id} [patch]
 func (h *UserHandler) Update(c *gin.Context) {
 	p, ok := principal(c)
@@ -201,11 +203,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path	string	true	"User ID"	format(uuid)
 //	@Success		204	"No Content"
-//	@Failure		400	{object}	ErrorResponse
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission user:delete, or deleting yourself"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission user:delete, or deleting yourself"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
 	p, ok := principal(c)
@@ -232,9 +234,9 @@ func (h *UserHandler) Delete(c *gin.Context) {
 //	@Produce		json
 //	@Security		BearerAuth
 //	@Success		200	{object}	MeResponse
-//	@Failure		401	{object}	ErrorResponse	"missing/invalid token, or the user no longer exists"
-//	@Failure		403	{object}	ErrorResponse	"account is disabled"
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		401	{object}	apierror.Response	"missing/invalid token, or the user no longer exists"
+//	@Failure		403	{object}	apierror.Response	"account is disabled"
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/auth/me [get]
 func (h *UserHandler) Me(c *gin.Context) {
 	p, ok := principal(c)
@@ -245,7 +247,7 @@ func (h *UserHandler) Me(c *gin.Context) {
 	profile, err := h.svc.GetProfile(c.Request.Context(), p.UserID)
 	if errors.Is(err, model.ErrNotFound) {
 		// Valid token, but the user was deleted after it was issued.
-		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, "user no longer exists", nil)
+		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, "user no longer exists", nil)
 		return
 	}
 	if err != nil {
@@ -262,7 +264,7 @@ func (h *UserHandler) Me(c *gin.Context) {
 func principal(c *gin.Context) (auth.Principal, bool) {
 	p, ok := auth.PrincipalFromContext(c.Request.Context())
 	if !ok {
-		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, "authentication required", nil)
+		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, "authentication required", nil)
 	}
 	return p, ok
 }

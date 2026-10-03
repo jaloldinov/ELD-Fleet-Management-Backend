@@ -16,6 +16,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // fakeUserService records what the handler passed and returns canned results.
@@ -198,7 +199,7 @@ func TestUserHandler_ErrorMapping(t *testing.T) {
 		{"other tenant", http.MethodGet, "/api/v1/users/" + testUserID.String(), "", model.ErrNotFound, http.StatusNotFound},
 		{"self-escalation", http.MethodPatch, "/api/v1/users/" + testUserID.String(), `{"roles":["admin"]}`, model.ErrForbidden, http.StatusForbidden},
 		{"duplicate email", http.MethodPost, "/api/v1/users", `{}`, model.ErrEmailTaken, http.StatusConflict},
-		{"validation", http.MethodPost, "/api/v1/users", `{}`, &model.ValidationError{Fields: map[string]string{"roles": "x"}}, http.StatusBadRequest},
+		{"validation", http.MethodPost, "/api/v1/users", `{}`, &validation.ValidationError{Fields: map[string]string{"roles": "x"}}, http.StatusBadRequest},
 		{"bad id", http.MethodDelete, "/api/v1/users/not-a-uuid", "", nil, http.StatusBadRequest},
 	}
 	for _, tt := range tests {

@@ -30,6 +30,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 func main() {
@@ -84,7 +85,7 @@ func run() error {
 		Roles:     []string{model.RolePlatformAdmin},
 	})
 	if err != nil {
-		var vErr *model.ValidationError
+		var vErr *validation.ValidationError
 		if errors.As(err, &vErr) {
 			// Map iteration order is random in Go; sort for stable output.
 			for _, field := range slices.Sorted(maps.Keys(vErr.Fields)) {

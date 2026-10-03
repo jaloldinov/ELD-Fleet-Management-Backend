@@ -11,7 +11,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
-// Verified valid VINs (see internal/vin tests).
+// Verified valid VINs (see pkg/vin tests).
 const (
 	vin1 = "1M8GDM9AXKP042788"
 	vin2 = "1HGCM82633A004352"

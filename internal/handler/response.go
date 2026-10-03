@@ -8,71 +8,29 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
-
-// Stable, machine-readable error codes. Clients branch on these; the
-// human-readable message may change.
-const (
-	CodeBadRequest   = "bad_request"
-	CodeValidation   = "validation_failed"
-	CodeUnauthorized = "unauthorized" // not logged in / bad credentials / bad token
-	CodeForbidden    = "forbidden"    // logged in, but not allowed
-	CodeNotFound     = "not_found"
-	CodeConflict     = "conflict"
-	CodeTooLarge     = "payload_too_large"
-	CodeRateLimited  = "rate_limited"
-	CodeInternal     = "internal_error"
-)
-
-// ErrorResponse is the body of every error response in the API.
-type ErrorResponse struct {
-	Error ErrorBody `json:"error"`
-}
-
-type ErrorBody struct {
-	Code    string            `json:"code" example:"validation_failed"`
-	Message string            `json:"message" example:"request validation failed"`
-	Details map[string]string `json:"details,omitempty"`
-}
-
-// RespondError writes an error in the standard API format and aborts the
-// request. Exported so middleware returns errors in the same shape.
-func RespondError(c *gin.Context, status int, code, message string, details map[string]string) {
-	// Abort stops any remaining handlers in the chain from running.
-	c.AbortWithStatusJSON(status, ErrorResponse{
-		Error: ErrorBody{Code: code, Message: message, Details: details},
-	})
-}
-
-// RespondRateLimited writes a 429 with a Retry-After header (whole seconds,
-// rounded up), so well-behaved clients know when to try again.
-func RespondRateLimited(c *gin.Context, retryAfter time.Duration) {
-	secs := int64(math.Ceil(retryAfter.Seconds()))
-	c.Header("Retry-After", strconv.FormatInt(secs, 10))
-	RespondError(c, http.StatusTooManyRequests, CodeRateLimited, "too many requests, try again later", nil)
-}
 
 // handleError is the single place where service/domain errors become HTTP
 // responses. Every handler calls it, so the mapping is consistent everywhere.
 func handleError(c *gin.Context, err error) {
-	var vErr *model.ValidationError
+	var vErr *validation.ValidationError
 
 	switch {
 	case errors.As(err, &vErr):
-		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed", vErr.Fields)
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeValidation, "request validation failed", vErr.Fields)
 	case errors.Is(err, model.ErrNotFound):
-		RespondError(c, http.StatusNotFound, CodeNotFound, "resource not found", nil)
+		apierror.Respond(c, http.StatusNotFound, apierror.CodeNotFound, "resource not found", nil)
 	case errors.Is(err, model.ErrDOTNumberTaken),
 		errors.Is(err, model.ErrEmailTaken),
 		errors.Is(err, model.ErrUsernameTaken),
@@ -81,32 +39,32 @@ func handleError(c *gin.Context, err error) {
 		errors.Is(err, model.ErrUnitNumberTaken),
 		errors.Is(err, model.ErrSerialTaken),
 		errors.Is(err, model.ErrTruckHasELD):
-		RespondError(c, http.StatusConflict, CodeConflict, err.Error(), nil)
+		apierror.Respond(c, http.StatusConflict, apierror.CodeConflict, err.Error(), nil)
 	case errors.Is(err, model.ErrInvalidCredentials):
-		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
+		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, err.Error(), nil)
 	case errors.Is(err, model.ErrRefreshTokenReused):
 		// Security event: attach it so the request log records it, but the
 		// client gets exactly the same answer as for any invalid token.
 		_ = c.Error(err)
-		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, model.ErrRefreshTokenInvalid.Error(), nil)
+		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, model.ErrRefreshTokenInvalid.Error(), nil)
 	case errors.Is(err, model.ErrRefreshTokenInvalid):
-		RespondError(c, http.StatusUnauthorized, CodeUnauthorized, err.Error(), nil)
+		apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, err.Error(), nil)
 	case errors.Is(err, model.ErrForbidden):
-		RespondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
+		apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden, err.Error(), nil)
 	case errors.Is(err, model.ErrUserInactive):
-		RespondError(c, http.StatusForbidden, CodeForbidden, err.Error(), nil)
+		apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden, err.Error(), nil)
 	default:
 		// Unexpected error: a bug or an outage. Attach it to the context so the
 		// RequestLogger middleware logs it, and hide the details from the client.
 		_ = c.Error(err)
-		RespondError(c, http.StatusInternalServerError, CodeInternal, "internal server error", nil)
+		apierror.Respond(c, http.StatusInternalServerError, apierror.CodeInternal, "internal server error", nil)
 	}
 }
 
 // NotFound answers requests to routes that do not exist, in our error format
 // (Gin's default is a plain-text "404 page not found").
 func NotFound(c *gin.Context) {
-	RespondError(c, http.StatusNotFound, CodeNotFound, "route not found", nil)
+	apierror.Respond(c, http.StatusNotFound, apierror.CodeNotFound, "route not found", nil)
 }
 
 // bindJSON decodes the request body into dst, strictly:
@@ -135,25 +93,25 @@ func bindJSON(c *gin.Context, dst any) bool {
 	)
 	switch {
 	case errors.As(err, &tooLarge):
-		RespondError(c, http.StatusRequestEntityTooLarge, CodeTooLarge,
+		apierror.Respond(c, http.StatusRequestEntityTooLarge, apierror.CodeTooLarge,
 			"request body must be at most "+strconv.FormatInt(tooLarge.Limit, 10)+" bytes", nil)
 	case errors.Is(err, io.EOF):
-		RespondError(c, http.StatusBadRequest, CodeBadRequest, "request body must not be empty", nil)
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeBadRequest, "request body must not be empty", nil)
 	case errors.As(err, &typeErr) && typeErr.Field != "":
-		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed",
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeValidation, "request validation failed",
 			map[string]string{typeErr.Field: "must be " + jsonTypeName(typeErr.Type)})
 	case strings.HasPrefix(err.Error(), "json: unknown field "):
 		// encoding/json has no typed error for this; the message format is
 		// stable (and covered by a test).
 		field := strings.Trim(strings.TrimPrefix(err.Error(), "json: unknown field "), `"`)
-		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed",
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeValidation, "request validation failed",
 			map[string]string{field: "unknown field"})
 	case errors.As(err, &syntax), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, errTrailingData):
-		RespondError(c, http.StatusBadRequest, CodeBadRequest, "request body must be valid JSON", nil)
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeBadRequest, "request body must be valid JSON", nil)
 	default:
 		// A value the target type rejects, e.g. an invalid UUID string.
 		// These messages describe the client's input, so they are safe to show.
-		RespondError(c, http.StatusBadRequest, CodeBadRequest, "invalid request body: "+err.Error(), nil)
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeBadRequest, "invalid request body: "+err.Error(), nil)
 	}
 	return false
 }
@@ -194,7 +152,7 @@ func jsonTypeName(t reflect.Type) string {
 func parseUUIDParam(c *gin.Context, name string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param(name))
 	if err != nil {
-		RespondError(c, http.StatusBadRequest, CodeValidation, "request validation failed",
+		apierror.Respond(c, http.StatusBadRequest, apierror.CodeValidation, "request validation failed",
 			map[string]string{name: "must be a valid UUID"})
 		return uuid.Nil, false
 	}

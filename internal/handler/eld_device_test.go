@@ -14,6 +14,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 type fakeELDService struct {
@@ -181,7 +182,7 @@ func TestELDDeviceHandler_Errors(t *testing.T) {
 		{"truck has ELD", http.MethodPut, eldPath + id + "/truck", `{"truck_id":"` + id + `"}`, model.ErrTruckHasELD, http.StatusConflict},
 		{"other tenant", http.MethodGet, eldPath + id, "", model.ErrNotFound, http.StatusNotFound},
 		{"validation", http.MethodPatch, eldPath + id, `{"is_active":false}`,
-			&model.ValidationError{Fields: map[string]string{"is_active": "x"}}, http.StatusBadRequest},
+			&validation.ValidationError{Fields: map[string]string{"is_active": "x"}}, http.StatusBadRequest},
 		{"bad id", http.MethodDelete, eldPath + "xyz", "", nil, http.StatusBadRequest},
 		{"delete ok", http.MethodDelete, eldPath + id, "", nil, http.StatusNoContent},
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // TruckService is what TruckHandler needs from the service layer.
@@ -102,12 +103,12 @@ func NewTruckHandler(svc TruckService) *TruckHandler {
 //	@Security		BearerAuth
 //	@Param			body	body		CreateTruckRequest	true	"Truck to create"
 //	@Success		201		{object}	TruckResponse
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission truck:create"
-//	@Failure		404		{object}	ErrorResponse	"company not found"
-//	@Failure		409		{object}	ErrorResponse	"VIN or unit number already used"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"invalid JSON or validation failed"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission truck:create"
+//	@Failure		404		{object}	apierror.Response	"company not found"
+//	@Failure		409		{object}	apierror.Response	"VIN or unit number already used"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/trucks [post]
 func (h *TruckHandler) Create(c *gin.Context) {
 	p, ok := principal(c)
@@ -146,17 +147,17 @@ func (h *TruckHandler) Create(c *gin.Context) {
 //	@Param			page		query		int		false	"Page number (1-based)"	default(1)	minimum(1)
 //	@Param			page_size	query		int		false	"Items per page"		default(20)	minimum(1)	maximum(100)
 //	@Success		200			{object}	ListTrucksResponse
-//	@Failure		400			{object}	ErrorResponse
-//	@Failure		401			{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403			{object}	ErrorResponse	"missing permission truck:read"
-//	@Failure		500			{object}	ErrorResponse
+//	@Failure		400			{object}	apierror.Response
+//	@Failure		401			{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403			{object}	apierror.Response	"missing permission truck:read"
+//	@Failure		500			{object}	apierror.Response
 //	@Router			/api/v1/trucks [get]
 func (h *TruckHandler) List(c *gin.Context) {
 	p, ok := principal(c)
 	if !ok {
 		return
 	}
-	var v model.Validator
+	var v validation.Validator
 	page, ok := queryInt(c, "page")
 	v.Check(ok, "page", "must be an integer")
 	size, ok := queryInt(c, "page_size")
@@ -201,11 +202,11 @@ func (h *TruckHandler) List(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path		string	true	"Truck ID"	format(uuid)
 //	@Success		200	{object}	TruckResponse
-//	@Failure		400	{object}	ErrorResponse	"invalid id"
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission truck:read"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission truck:read"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/trucks/{id} [get]
 func (h *TruckHandler) Get(c *gin.Context) {
 	p, ok := principal(c)
@@ -236,12 +237,12 @@ func (h *TruckHandler) Get(c *gin.Context) {
 //	@Param			id		path		string				true	"Truck ID"	format(uuid)
 //	@Param			body	body		UpdateTruckRequest	true	"Fields to change"
 //	@Success		200		{object}	TruckResponse
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission truck:update"
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"unit number already used"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission truck:update"
+//	@Failure		404		{object}	apierror.Response
+//	@Failure		409		{object}	apierror.Response	"unit number already used"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/trucks/{id} [patch]
 func (h *TruckHandler) Update(c *gin.Context) {
 	p, ok := principal(c)
@@ -277,11 +278,11 @@ func (h *TruckHandler) Update(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path	string	true	"Truck ID"	format(uuid)
 //	@Success		204	"No Content"
-//	@Failure		400	{object}	ErrorResponse
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission truck:delete"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission truck:delete"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/trucks/{id} [delete]
 func (h *TruckHandler) Delete(c *gin.Context) {
 	p, ok := principal(c)

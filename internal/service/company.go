@@ -11,13 +11,13 @@ import (
 	"context"
 	"regexp"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 const (
@@ -144,7 +144,7 @@ func (s *CompanyService) Update(ctx context.Context, p auth.Principal, id uuid.U
 	}
 
 	if in.Name == nil && in.DOTNumber == nil && in.Timezone == nil && in.IsActive == nil {
-		return nil, &model.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
 	}
 
 	c, err := s.repo.GetByID(ctx, id)
@@ -192,27 +192,16 @@ func checkCompanyScope(p auth.Principal, companyID uuid.UUID) error {
 }
 
 func validateCompany(c model.Company) error {
-	var v model.Validator
+	var v validation.Validator
 
 	v.Check(c.Name != "", "name", "is required")
 	v.Check(utf8.RuneCountInString(c.Name) <= companyNameMaxLen, "name", "must be at most 200 characters")
 
 	v.Check(dotNumberRe.MatchString(c.DOTNumber), "dot_number", "must be 1 to 8 digits")
 
-	v.Check(isValidTimezone(c.Timezone), "timezone", "must be a valid IANA time zone, e.g. America/Chicago")
+	v.Check(validation.Timezone(c.Timezone), "timezone", "must be a valid IANA time zone, e.g. America/Chicago")
 
 	return v.Err()
-}
-
-// isValidTimezone accepts IANA names like "America/Chicago" or "UTC".
-// time.LoadLocation treats "" as UTC and "Local" as the server's zone, so both
-// are rejected explicitly: the zone must not depend on where the server runs.
-func isValidTimezone(tz string) bool {
-	if tz == "" || tz == "Local" {
-		return false
-	}
-	_, err := time.LoadLocation(tz)
-	return err == nil
 }
 
 // normalizePage applies defaults and limits so callers cannot request

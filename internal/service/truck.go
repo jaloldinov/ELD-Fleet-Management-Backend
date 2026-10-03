@@ -12,7 +12,8 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
-	"github.com/jaloldinov/ELD-learning/internal/vin"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
+	"github.com/jaloldinov/ELD-learning/pkg/vin"
 )
 
 // TruckRepository is what TruckService needs from the data layer.
@@ -95,7 +96,7 @@ func (s *TruckService) Create(ctx context.Context, p auth.Principal, in CreateTr
 	}
 	t.LicensePlate, t.PlateState = normalizePlate(in.LicensePlate, in.PlateState)
 
-	var v model.Validator
+	var v validation.Validator
 	v.Check(vin.Valid(t.VIN), "vin", "must be a valid 17-character VIN (check digit included)")
 	s.validateTruck(&v, t)
 	if err := v.Err(); err != nil {
@@ -126,7 +127,7 @@ func (s *TruckService) List(ctx context.Context, p auth.Principal, params TruckL
 
 func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUID, in UpdateTruckInput) (*model.Truck, error) {
 	if in == (UpdateTruckInput{}) {
-		return nil, &model.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
 	}
 
 	t, err := s.getInScope(ctx, p, id)
@@ -161,7 +162,7 @@ func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUI
 		t.IsActive = *in.IsActive
 	}
 
-	var v model.Validator
+	var v validation.Validator
 	s.validateTruck(&v, *t)
 	if err := v.Err(); err != nil {
 		return nil, err
@@ -187,10 +188,10 @@ func targetCompany(ctx context.Context, companies CompanyLookup, p auth.Principa
 		return *p.CompanyID, nil
 	}
 	if requested == nil {
-		return uuid.Nil, &model.ValidationError{Fields: map[string]string{"company_id": "is required"}}
+		return uuid.Nil, &validation.ValidationError{Fields: map[string]string{"company_id": "is required"}}
 	}
 	if _, err := companies.GetByID(ctx, *requested); errors.Is(err, model.ErrNotFound) {
-		return uuid.Nil, &model.ValidationError{Fields: map[string]string{"company_id": "company does not exist"}}
+		return uuid.Nil, &validation.ValidationError{Fields: map[string]string{"company_id": "company does not exist"}}
 	} else if err != nil {
 		return uuid.Nil, err
 	}
@@ -208,7 +209,7 @@ func (s *TruckService) getInScope(ctx context.Context, p auth.Principal, id uuid
 	return t, nil
 }
 
-func (s *TruckService) validateTruck(v *model.Validator, t model.Truck) {
+func (s *TruckService) validateTruck(v *validation.Validator, t model.Truck) {
 	v.Check(unitNumberRe.MatchString(t.UnitNumber), "unit_number",
 		"must be 1-20 characters: letters, digits or hyphen")
 	v.Check(utf8.RuneCountInString(t.Make) <= truckTextMaxLen, "make", "must be at most 50 characters")
@@ -223,7 +224,7 @@ func (s *TruckService) validateTruck(v *model.Validator, t model.Truck) {
 		v.Check(false, "license_plate", "license_plate and plate_state must be given together")
 	} else if t.LicensePlate != nil {
 		v.Check(licensePlateRe.MatchString(*t.LicensePlate), "license_plate", "must be 1-10 characters: letters, digits, space or hyphen")
-		v.Check(usStates[*t.PlateState], "plate_state", "must be a two-letter US state code, e.g. TX")
+		v.Check(validation.USState(*t.PlateState), "plate_state", "must be a two-letter US state code, e.g. TX")
 	}
 }
 

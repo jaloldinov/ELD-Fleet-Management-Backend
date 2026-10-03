@@ -1,4 +1,4 @@
-package server
+package handler_test
 
 import (
 	"bytes"
@@ -63,19 +63,19 @@ func (f fakePermissions) GetPermissions(context.Context, uuid.UUID) ([]model.Per
 }
 
 func newTestRouter(buf *bytes.Buffer) *gin.Engine {
-	return newTestRouterWith(buf, Options{}, model.AllPermissions())
+	return newTestRouterWith(buf, handler.RouterOptions{}, model.AllPermissions())
 }
 
-func newTestRouterWithOptions(buf *bytes.Buffer, opts Options) *gin.Engine {
+func newTestRouterWithOptions(buf *bytes.Buffer, opts handler.RouterOptions) *gin.Engine {
 	return newTestRouterWith(buf, opts, model.AllPermissions())
 }
 
 // newTestRouterWith builds the real router; every caller gets perms.
-func newTestRouterWith(buf *bytes.Buffer, opts Options, perms []model.Permission) *gin.Engine {
+func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []model.Permission) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(buf, true, "debug")
-	sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(perms), AuthLimiter: ratelimit.New(1000, time.Minute)}
-	return NewRouter(log, opts, sec, Handlers{
+	sec := handler.RouterSecurity{Tokens: fakeTokens{}, Permissions: fakePermissions(perms), AuthLimiter: ratelimit.New(1000, time.Minute)}
+	return handler.NewRouter(log, opts, sec, handler.Handlers{
 		Health:    handler.NewHealthHandler(okPinger{}, log),
 		Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
 		User:      handler.NewUserHandler(nil),
@@ -171,7 +171,7 @@ var authenticatedOnlyRoutes = map[string]bool{
 // public and login-only routes. A protected route that forgot its
 // perm.Require(...) fails here.
 func TestRouter_EveryProtectedRouteRequiresAPermission(t *testing.T) {
-	r := newTestRouterWith(&bytes.Buffer{}, Options{}, nil) // valid token, zero permissions
+	r := newTestRouterWith(&bytes.Buffer{}, handler.RouterOptions{}, nil) // valid token, zero permissions
 
 	checked := 0
 	for _, route := range r.Routes() {
@@ -218,7 +218,7 @@ func TestRouter_InternalErrorIsLoggedButHiddenFromClient(t *testing.T) {
 
 func TestRouter_Swagger(t *testing.T) {
 	t.Run("enabled serves UI and spec", func(t *testing.T) {
-		r := newTestRouterWithOptions(&bytes.Buffer{}, Options{EnableSwagger: true})
+		r := newTestRouterWithOptions(&bytes.Buffer{}, handler.RouterOptions{EnableSwagger: true})
 
 		assert.Equal(t, http.StatusOK, send(r, http.MethodGet, "/swagger/index.html", nil).Code)
 
@@ -229,7 +229,7 @@ func TestRouter_Swagger(t *testing.T) {
 	})
 
 	t.Run("disabled returns 404", func(t *testing.T) {
-		r := newTestRouterWithOptions(&bytes.Buffer{}, Options{EnableSwagger: false})
+		r := newTestRouterWithOptions(&bytes.Buffer{}, handler.RouterOptions{EnableSwagger: false})
 
 		assert.Equal(t, http.StatusNotFound, send(r, http.MethodGet, "/swagger/index.html", nil).Code)
 	})
@@ -246,8 +246,8 @@ func TestRouter_LoginRouteRegistered(t *testing.T) {
 func TestRouter_AuthRoutesAreRateLimitedByIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(&bytes.Buffer{}, true, "debug")
-	sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(nil), AuthLimiter: ratelimit.New(1, time.Minute)}
-	r := NewRouter(log, Options{}, sec, Handlers{
+	sec := handler.RouterSecurity{Tokens: fakeTokens{}, Permissions: fakePermissions(nil), AuthLimiter: ratelimit.New(1, time.Minute)}
+	r := handler.NewRouter(log, handler.RouterOptions{}, sec, handler.Handlers{
 		Health:    handler.NewHealthHandler(okPinger{}, log),
 		Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
 		User:      handler.NewUserHandler(nil),
@@ -265,7 +265,7 @@ func TestRouter_AuthRoutesAreRateLimitedByIP(t *testing.T) {
 }
 
 func TestRouter_SecurityHeadersOnAPIButNotSwagger(t *testing.T) {
-	r := newTestRouterWithOptions(&bytes.Buffer{}, Options{EnableSwagger: true})
+	r := newTestRouterWithOptions(&bytes.Buffer{}, handler.RouterOptions{EnableSwagger: true})
 
 	api := send(r, http.MethodGet, "/api/v1/companies", authHeader)
 	assert.Equal(t, "no-store", api.Header().Get("Cache-Control"))
@@ -295,8 +295,8 @@ func TestRouter_TrustedProxies(t *testing.T) {
 		{"load balancer trusted: the real client IP is used", []string{"10.0.0.0/8"}, "203.0.113.50"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sec := Security{Tokens: fakeTokens{}, Permissions: fakePermissions(nil), AuthLimiter: recordIP}
-			r := NewRouter(log, Options{TrustedProxies: tc.trusted}, sec, Handlers{
+			sec := handler.RouterSecurity{Tokens: fakeTokens{}, Permissions: fakePermissions(nil), AuthLimiter: recordIP}
+			r := handler.NewRouter(log, handler.RouterOptions{TrustedProxies: tc.trusted}, sec, handler.Handlers{
 				Health:    handler.NewHealthHandler(okPinger{}, log),
 				Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
 				User:      handler.NewUserHandler(nil),

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
@@ -70,11 +71,11 @@ func NewAuthHandler(svc AuthService, limiter LoginLimiter) *AuthHandler {
 //	@Produce		json
 //	@Param			body	body		LoginRequest	true	"Credentials"
 //	@Success		200		{object}	TokenResponse
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON"
-//	@Failure		401		{object}	ErrorResponse	"invalid login or password"
-//	@Failure		403		{object}	ErrorResponse	"account is disabled"
-//	@Failure		429		{object}	ErrorResponse	"too many attempts (per IP, or 5 failed logins per 15 min); see Retry-After"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"invalid JSON"
+//	@Failure		401		{object}	apierror.Response	"invalid login or password"
+//	@Failure		403		{object}	apierror.Response	"account is disabled"
+//	@Failure		429		{object}	apierror.Response	"too many attempts (per IP, or 5 failed logins per 15 min); see Retry-After"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
@@ -88,7 +89,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// requests cannot slip past the limit.
 	key := strings.ToLower(strings.TrimSpace(req.Login)) + "|" + c.ClientIP()
 	if retryAfter, ok := h.limiter.Take(key); !ok {
-		RespondRateLimited(c, retryAfter)
+		apierror.RespondRateLimited(c, retryAfter)
 		return
 	}
 
@@ -111,11 +112,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 //	@Produce		json
 //	@Param			body	body		RefreshRequest	true	"Refresh token"
 //	@Success		200		{object}	TokenResponse
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON"
-//	@Failure		401		{object}	ErrorResponse	"invalid or expired refresh token"
-//	@Failure		403		{object}	ErrorResponse	"account is disabled"
-//	@Failure		429		{object}	ErrorResponse	"too many requests from this IP; see Retry-After"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"invalid JSON"
+//	@Failure		401		{object}	apierror.Response	"invalid or expired refresh token"
+//	@Failure		403		{object}	apierror.Response	"account is disabled"
+//	@Failure		429		{object}	apierror.Response	"too many requests from this IP; see Retry-After"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req RefreshRequest
@@ -140,9 +141,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 //	@Accept			json
 //	@Param			body	body	RefreshRequest	true	"Refresh token of the session to end"
 //	@Success		204		"No Content"
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON"
-//	@Failure		429		{object}	ErrorResponse	"too many requests from this IP; see Retry-After"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"invalid JSON"
+//	@Failure		429		{object}	apierror.Response	"too many requests from this IP; see Retry-After"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	var req RefreshRequest

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 )
@@ -131,13 +132,13 @@ func TestAuthHandler_Errors(t *testing.T) {
 		wantStatus int
 		wantCode   string
 	}{
-		{"login: invalid JSON", "/api/v1/auth/login", `{"login":`, nil, http.StatusBadRequest, CodeBadRequest},
-		{"login: bad credentials", "/api/v1/auth/login", `{}`, model.ErrInvalidCredentials, http.StatusUnauthorized, CodeUnauthorized},
-		{"login: disabled account", "/api/v1/auth/login", `{}`, model.ErrUserInactive, http.StatusForbidden, CodeForbidden},
-		{"login: unexpected", "/api/v1/auth/login", `{}`, errors.New("db down"), http.StatusInternalServerError, CodeInternal},
-		{"refresh: invalid token", "/api/v1/auth/refresh", `{}`, model.ErrRefreshTokenInvalid, http.StatusUnauthorized, CodeUnauthorized},
-		{"refresh: reused token", "/api/v1/auth/refresh", `{}`, model.ErrRefreshTokenReused, http.StatusUnauthorized, CodeUnauthorized},
-		{"logout: invalid JSON", "/api/v1/auth/logout", `nope`, nil, http.StatusBadRequest, CodeBadRequest},
+		{"login: invalid JSON", "/api/v1/auth/login", `{"login":`, nil, http.StatusBadRequest, apierror.CodeBadRequest},
+		{"login: bad credentials", "/api/v1/auth/login", `{}`, model.ErrInvalidCredentials, http.StatusUnauthorized, apierror.CodeUnauthorized},
+		{"login: disabled account", "/api/v1/auth/login", `{}`, model.ErrUserInactive, http.StatusForbidden, apierror.CodeForbidden},
+		{"login: unexpected", "/api/v1/auth/login", `{}`, errors.New("db down"), http.StatusInternalServerError, apierror.CodeInternal},
+		{"refresh: invalid token", "/api/v1/auth/refresh", `{}`, model.ErrRefreshTokenInvalid, http.StatusUnauthorized, apierror.CodeUnauthorized},
+		{"refresh: reused token", "/api/v1/auth/refresh", `{}`, model.ErrRefreshTokenReused, http.StatusUnauthorized, apierror.CodeUnauthorized},
+		{"logout: invalid JSON", "/api/v1/auth/logout", `nope`, nil, http.StatusBadRequest, apierror.CodeBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -223,6 +224,6 @@ func TestAuthHandler_Login_Blocked(t *testing.T) {
 
 	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
 	assert.Equal(t, "91", rec.Header().Get("Retry-After"), "seconds, rounded up")
-	assert.Equal(t, CodeRateLimited, decodeError(t, rec).Code)
+	assert.Equal(t, apierror.CodeRateLimited, decodeError(t, rec).Code)
 	assert.Empty(t, svc.gotLogin, "the password is not even checked")
 }

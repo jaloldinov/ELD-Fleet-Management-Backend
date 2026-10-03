@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/jaloldinov/ELD-learning/internal/handler"
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 )
 
 // MaxBodyBytes is the largest request body the API accepts. Our biggest
@@ -20,7 +20,7 @@ func BodyLimit(max int64) gin.HandlerFunc {
 		// Fast path: the client announced a too-large body. Refuse before
 		// reading any of it.
 		if c.Request.ContentLength > max {
-			handler.RespondError(c, http.StatusRequestEntityTooLarge, handler.CodeTooLarge,
+			apierror.Respond(c, http.StatusRequestEntityTooLarge, apierror.CodeTooLarge,
 				"request body must be at most "+strconv.FormatInt(max, 10)+" bytes", nil)
 			return
 		}

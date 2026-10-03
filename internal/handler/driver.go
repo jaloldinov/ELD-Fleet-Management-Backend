@@ -11,6 +11,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // DriverService is what DriverHandler needs from the service layer.
@@ -86,7 +87,7 @@ type ListDriversResponse struct {
 }
 
 // parseDate parses an optional YYYY-MM-DD field into v's errors.
-func parseDate(v *model.Validator, field, s string) time.Time {
+func parseDate(v *validation.Validator, field, s string) time.Time {
 	if s == "" {
 		return time.Time{} // missing: the service reports "is required"
 	}
@@ -116,12 +117,12 @@ func NewDriverHandler(svc DriverService) *DriverHandler {
 //	@Security		BearerAuth
 //	@Param			body	body		CreateDriverRequest	true	"Driver to create"
 //	@Success		201		{object}	DriverResponse
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission driver:create"
-//	@Failure		404		{object}	ErrorResponse	"company not found"
-//	@Failure		409		{object}	ErrorResponse	"login or license already used"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"invalid JSON or validation failed"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission driver:create"
+//	@Failure		404		{object}	apierror.Response	"company not found"
+//	@Failure		409		{object}	apierror.Response	"login or license already used"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/drivers [post]
 func (h *DriverHandler) Create(c *gin.Context) {
 	p, ok := principal(c)
@@ -132,7 +133,7 @@ func (h *DriverHandler) Create(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	var v model.Validator
+	var v validation.Validator
 	expires := parseDate(&v, "license_expires_at", req.LicenseExpiresAt)
 	if err := v.Err(); err != nil {
 		handleError(c, err)
@@ -165,17 +166,17 @@ func (h *DriverHandler) Create(c *gin.Context) {
 //	@Param			page		query		int		false	"Page number (1-based)"						default(1)	minimum(1)
 //	@Param			page_size	query		int		false	"Items per page"							default(20)	minimum(1)	maximum(100)
 //	@Success		200			{object}	ListDriversResponse
-//	@Failure		400			{object}	ErrorResponse
-//	@Failure		401			{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403			{object}	ErrorResponse	"missing permission driver:read"
-//	@Failure		500			{object}	ErrorResponse
+//	@Failure		400			{object}	apierror.Response
+//	@Failure		401			{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403			{object}	apierror.Response	"missing permission driver:read"
+//	@Failure		500			{object}	apierror.Response
 //	@Router			/api/v1/drivers [get]
 func (h *DriverHandler) List(c *gin.Context) {
 	p, ok := principal(c)
 	if !ok {
 		return
 	}
-	var v model.Validator
+	var v validation.Validator
 	page, ok := queryInt(c, "page")
 	v.Check(ok, "page", "must be an integer")
 	size, ok := queryInt(c, "page_size")
@@ -211,9 +212,9 @@ func (h *DriverHandler) List(c *gin.Context) {
 //	@Produce		json
 //	@Security		BearerAuth
 //	@Success		200	{object}	DriverResponse
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		404	{object}	ErrorResponse	"the caller is not a driver"
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		404	{object}	apierror.Response	"the caller is not a driver"
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/drivers/me [get]
 func (h *DriverHandler) Me(c *gin.Context) {
 	p, ok := principal(c)
@@ -237,11 +238,11 @@ func (h *DriverHandler) Me(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path		string	true	"Driver ID"	format(uuid)
 //	@Success		200	{object}	DriverResponse
-//	@Failure		400	{object}	ErrorResponse	"invalid id"
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission driver:read"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission driver:read"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/drivers/{id} [get]
 func (h *DriverHandler) Get(c *gin.Context) {
 	p, ok := principal(c)
@@ -272,12 +273,12 @@ func (h *DriverHandler) Get(c *gin.Context) {
 //	@Param			id		path		string				true	"Driver ID"	format(uuid)
 //	@Param			body	body		UpdateDriverRequest	true	"Fields to change"
 //	@Success		200		{object}	DriverResponse
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission driver:update"
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"license already used"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission driver:update"
+//	@Failure		404		{object}	apierror.Response
+//	@Failure		409		{object}	apierror.Response	"license already used"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/drivers/{id} [patch]
 func (h *DriverHandler) Update(c *gin.Context) {
 	p, ok := principal(c)
@@ -293,7 +294,7 @@ func (h *DriverHandler) Update(c *gin.Context) {
 		return
 	}
 	in := service.UpdateDriverInput{LicenseNumber: req.LicenseNumber, LicenseState: req.LicenseState}
-	var v model.Validator
+	var v validation.Validator
 	if req.LicenseExpiresAt != nil {
 		t := parseDate(&v, "license_expires_at", *req.LicenseExpiresAt)
 		in.LicenseExpiresAt = &t
@@ -320,11 +321,11 @@ func (h *DriverHandler) Update(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path	string	true	"Driver ID"	format(uuid)
 //	@Success		204	"No Content"
-//	@Failure		400	{object}	ErrorResponse
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission driver:delete"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission driver:delete"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/drivers/{id} [delete]
 func (h *DriverHandler) Delete(c *gin.Context) {
 	p, ok := principal(c)

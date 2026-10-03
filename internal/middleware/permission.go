@@ -8,8 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/jaloldinov/ELD-learning/internal/apierror"
 	"github.com/jaloldinov/ELD-learning/internal/auth"
-	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
@@ -38,21 +38,21 @@ func (pc *PermissionChecker) Require(perm model.Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p, ok := auth.PrincipalFromContext(c.Request.Context())
 		if !ok {
-			handler.RespondError(c, http.StatusUnauthorized, handler.CodeUnauthorized, "authentication required", nil)
+			apierror.Respond(c, http.StatusUnauthorized, apierror.CodeUnauthorized, "authentication required", nil)
 			return
 		}
 
 		perms, err := pc.permissions(c, p.UserID)
 		if err != nil {
 			_ = c.Error(err)
-			handler.RespondError(c, http.StatusInternalServerError, handler.CodeInternal, "internal server error", nil)
+			apierror.Respond(c, http.StatusInternalServerError, apierror.CodeInternal, "internal server error", nil)
 			return
 		}
 
 		if !perms.Has(perm) {
 			// Recorded for the request log: who was denied what.
 			_ = c.Error(fmt.Errorf("permission denied: %s", perm))
-			handler.RespondError(c, http.StatusForbidden, handler.CodeForbidden,
+			apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden,
 				"you do not have permission to perform this action",
 				map[string]string{"permission": string(perm)})
 			return

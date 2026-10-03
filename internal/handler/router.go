@@ -1,5 +1,4 @@
-// Package server wires HTTP routes to handlers and middleware.
-package server
+package handler
 
 import (
 	"fmt"
@@ -12,13 +11,12 @@ import (
 	// Blank import: its init() registers the generated spec with swag, so
 	// the Swagger UI handler can serve it.
 	_ "github.com/jaloldinov/ELD-learning/docs"
-	"github.com/jaloldinov/ELD-learning/internal/handler"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
-// Options turns optional router features on or off.
-type Options struct {
+// RouterOptions turns optional router features on or off.
+type RouterOptions struct {
 	// EnableSwagger serves Swagger UI at /swagger/index.html.
 	// Off in production: it would show the whole API surface to anyone.
 	EnableSwagger bool
@@ -36,24 +34,27 @@ type Options struct {
 // Handlers groups every HTTP handler the router needs.
 // New handlers (company, user, truck, ...) are added here as we build them.
 type Handlers struct {
-	Health    *handler.HealthHandler
-	Auth      *handler.AuthHandler
-	User      *handler.UserHandler
-	Company   *handler.CompanyHandler
-	Driver    *handler.DriverHandler
-	Truck     *handler.TruckHandler
-	ELDDevice *handler.ELDDeviceHandler
+	Health    *HealthHandler
+	Auth      *AuthHandler
+	User      *UserHandler
+	Company   *CompanyHandler
+	Driver    *DriverHandler
+	Truck     *TruckHandler
+	ELDDevice *ELDDeviceHandler
 }
 
-// Security holds what the router needs to protect routes.
-type Security struct {
+// RouterSecurity holds what the router needs to protect routes.
+type RouterSecurity struct {
 	Tokens      middleware.TokenParser      // authentication: who is calling?
 	Permissions middleware.PermissionLoader // authorization: what may they do?
 	AuthLimiter middleware.RateLimiter      // per-IP limit on the public /auth routes
 }
 
 // NewRouter builds the Gin engine and registers all routes.
-func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.Engine {
+//
+// It only connects URLs to middleware and handlers: no business rules and no
+// database access belong here (those live in service and repository).
+func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handlers) *gin.Engine {
 	r := gin.New()
 
 	// c.ClientIP() believes X-Forwarded-For only when the request comes from
@@ -80,7 +81,7 @@ func NewRouter(log *slog.Logger, opts Options, sec Security, h Handlers) *gin.En
 	)
 
 	// Unknown routes return our JSON error format instead of Gin's plain text.
-	r.NoRoute(handler.NotFound)
+	r.NoRoute(NotFound)
 
 	// Infrastructure endpoints: not versioned, never require auth.
 	secHeaders := middleware.SecurityHeaders(opts.HSTS)

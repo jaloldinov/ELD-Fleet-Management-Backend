@@ -10,6 +10,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // Transactor runs fn in one database transaction (repository.TxManager).
@@ -38,18 +39,6 @@ type DriverRepository interface {
 
 // Same rule as the drivers_license_number_format CHECK constraint.
 var licenseNumberRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,25}$`)
-
-// usStates: the 50 states + DC. (Canadian/Mexican licenses can be added when
-// cross-border carriers become a requirement.)
-var usStates = map[string]bool{
-	"AL": true, "AK": true, "AZ": true, "AR": true, "CA": true, "CO": true, "CT": true, "DE": true,
-	"DC": true, "FL": true, "GA": true, "HI": true, "ID": true, "IL": true, "IN": true, "IA": true,
-	"KS": true, "KY": true, "LA": true, "ME": true, "MD": true, "MA": true, "MI": true, "MN": true,
-	"MS": true, "MO": true, "MT": true, "NE": true, "NV": true, "NH": true, "NJ": true, "NM": true,
-	"NY": true, "NC": true, "ND": true, "OH": true, "OK": true, "OR": true, "PA": true, "RI": true,
-	"SC": true, "SD": true, "TN": true, "TX": true, "UT": true, "VT": true, "VA": true, "WA": true,
-	"WV": true, "WI": true, "WY": true,
-}
 
 type CreateDriverInput struct {
 	CompanyID *uuid.UUID // platform users: required; company users: nil or own
@@ -102,7 +91,7 @@ func (s *DriverService) Create(ctx context.Context, p auth.Principal, in CreateD
 	// would get the confusing error "role driver cannot be given to a
 	// platform user".
 	if p.IsPlatformUser() && in.CompanyID == nil {
-		return nil, &model.ValidationError{Fields: map[string]string{"company_id": "is required"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"company_id": "is required"}}
 	}
 
 	// Validate the driver part BEFORE opening the transaction: no point
@@ -170,7 +159,7 @@ func (s *DriverService) List(ctx context.Context, p auth.Principal, params Drive
 
 func (s *DriverService) Update(ctx context.Context, p auth.Principal, id uuid.UUID, in UpdateDriverInput) (*model.DriverDetails, error) {
 	if in.LicenseNumber == nil && in.LicenseState == nil && in.LicenseExpiresAt == nil {
-		return nil, &model.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
+		return nil, &validation.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
 	}
 
 	dd, err := s.getInScope(ctx, p, id)
@@ -225,10 +214,10 @@ func (s *DriverService) getInScope(ctx context.Context, p auth.Principal, id uui
 }
 
 func validateLicense(d model.Driver) error {
-	var v model.Validator
+	var v validation.Validator
 	v.Check(licenseNumberRe.MatchString(d.LicenseNumber), "license_number",
 		"must be 1-25 characters: letters, digits or hyphen")
-	v.Check(usStates[d.LicenseState], "license_state", "must be a two-letter US state code, e.g. TX")
+	v.Check(validation.USState(d.LicenseState), "license_state", "must be a two-letter US state code, e.g. TX")
 	v.Check(!d.LicenseExpiresAt.IsZero(), "license_expires_at", "is required")
 	return v.Err()
 }

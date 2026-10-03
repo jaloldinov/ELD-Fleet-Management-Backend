@@ -12,6 +12,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // ELDDeviceService is what ELDDeviceHandler needs from the service layer.
@@ -96,12 +97,12 @@ func NewELDDeviceHandler(svc ELDDeviceService) *ELDDeviceHandler {
 //	@Security		BearerAuth
 //	@Param			body	body		CreateELDDeviceRequest	true	"Device to register"
 //	@Success		201		{object}	ELDDeviceResponse
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission eld:create"
-//	@Failure		404		{object}	ErrorResponse	"company not found"
-//	@Failure		409		{object}	ErrorResponse	"serial number already registered"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"invalid JSON or validation failed"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission eld:create"
+//	@Failure		404		{object}	apierror.Response	"company not found"
+//	@Failure		409		{object}	apierror.Response	"serial number already registered"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/eld-devices [post]
 func (h *ELDDeviceHandler) Create(c *gin.Context) {
 	p, ok := principal(c)
@@ -140,17 +141,17 @@ func (h *ELDDeviceHandler) Create(c *gin.Context) {
 //	@Param			page		query		int		false	"Page number (1-based)"					default(1)	minimum(1)
 //	@Param			page_size	query		int		false	"Items per page"						default(20)	minimum(1)	maximum(100)
 //	@Success		200			{object}	ListELDDevicesResponse
-//	@Failure		400			{object}	ErrorResponse
-//	@Failure		401			{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403			{object}	ErrorResponse	"missing permission eld:read"
-//	@Failure		500			{object}	ErrorResponse
+//	@Failure		400			{object}	apierror.Response
+//	@Failure		401			{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403			{object}	apierror.Response	"missing permission eld:read"
+//	@Failure		500			{object}	apierror.Response
 //	@Router			/api/v1/eld-devices [get]
 func (h *ELDDeviceHandler) List(c *gin.Context) {
 	p, ok := principal(c)
 	if !ok {
 		return
 	}
-	var v model.Validator
+	var v validation.Validator
 	page, ok := queryInt(c, "page")
 	v.Check(ok, "page", "must be an integer")
 	size, ok := queryInt(c, "page_size")
@@ -193,11 +194,11 @@ func (h *ELDDeviceHandler) List(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path		string	true	"Device ID"	format(uuid)
 //	@Success		200	{object}	ELDDeviceResponse
-//	@Failure		400	{object}	ErrorResponse	"invalid id"
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission eld:read"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission eld:read"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/eld-devices/{id} [get]
 func (h *ELDDeviceHandler) Get(c *gin.Context) {
 	p, ok := principal(c)
@@ -228,11 +229,11 @@ func (h *ELDDeviceHandler) Get(c *gin.Context) {
 //	@Param			id		path		string					true	"Device ID"	format(uuid)
 //	@Param			body	body		UpdateELDDeviceRequest	true	"Fields to change"
 //	@Success		200		{object}	ELDDeviceResponse
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission eld:update"
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission eld:update"
+//	@Failure		404		{object}	apierror.Response
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/eld-devices/{id} [patch]
 func (h *ELDDeviceHandler) Update(c *gin.Context) {
 	p, ok := principal(c)
@@ -270,12 +271,12 @@ func (h *ELDDeviceHandler) Update(c *gin.Context) {
 //	@Param			id		path		string				true	"Device ID"	format(uuid)
 //	@Param			body	body		AssignTruckRequest	true	"Truck to install the device in"
 //	@Success		200		{object}	ELDDeviceResponse
-//	@Failure		400		{object}	ErrorResponse	"truck not found, out of service, or device inactive"
-//	@Failure		401		{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403		{object}	ErrorResponse	"missing permission eld:update"
-//	@Failure		404		{object}	ErrorResponse	"device not found"
-//	@Failure		409		{object}	ErrorResponse	"the truck already has a device"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response	"truck not found, out of service, or device inactive"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission eld:update"
+//	@Failure		404		{object}	apierror.Response	"device not found"
+//	@Failure		409		{object}	apierror.Response	"the truck already has a device"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/eld-devices/{id}/truck [put]
 func (h *ELDDeviceHandler) AssignTruck(c *gin.Context) {
 	p, ok := principal(c)
@@ -291,7 +292,7 @@ func (h *ELDDeviceHandler) AssignTruck(c *gin.Context) {
 		return
 	}
 	if req.TruckID == nil {
-		handleError(c, &model.ValidationError{Fields: map[string]string{"truck_id": "is required"}})
+		handleError(c, &validation.ValidationError{Fields: map[string]string{"truck_id": "is required"}})
 		return
 	}
 
@@ -313,11 +314,11 @@ func (h *ELDDeviceHandler) AssignTruck(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path		string	true	"Device ID"	format(uuid)
 //	@Success		200	{object}	ELDDeviceResponse
-//	@Failure		400	{object}	ErrorResponse	"invalid id"
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission eld:update"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission eld:update"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/eld-devices/{id}/truck [delete]
 func (h *ELDDeviceHandler) UnassignTruck(c *gin.Context) {
 	p, ok := principal(c)
@@ -345,11 +346,11 @@ func (h *ELDDeviceHandler) UnassignTruck(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			id	path	string	true	"Device ID"	format(uuid)
 //	@Success		204	"No Content"
-//	@Failure		400	{object}	ErrorResponse
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission eld:delete"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission eld:delete"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/eld-devices/{id} [delete]
 func (h *ELDDeviceHandler) Delete(c *gin.Context) {
 	p, ok := principal(c)

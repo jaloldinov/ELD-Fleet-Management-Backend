@@ -10,6 +10,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // CompanyService is what CompanyHandler needs from the service layer.
@@ -37,16 +38,16 @@ func NewCompanyHandler(svc CompanyService) *CompanyHandler {
 //	@Tags			companies
 //	@Security		BearerAuth
 //	@Description	Requires permission: company:create
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission company:create"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission company:create"
 //	@Accept			json
 //	@Produce		json
 //	@Param			body	body		CreateCompanyRequest	true	"Company to create"
 //	@Success		201		{object}	CompanyResponse
-//	@Header			201		{string}	Location		"URL of the created company"
-//	@Failure		400		{object}	ErrorResponse	"invalid JSON or validation failed"
-//	@Failure		409		{object}	ErrorResponse	"DOT number already used"
-//	@Failure		500		{object}	ErrorResponse
+//	@Header			201		{string}	Location			"URL of the created company"
+//	@Failure		400		{object}	apierror.Response	"invalid JSON or validation failed"
+//	@Failure		409		{object}	apierror.Response	"DOT number already used"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/companies [post]
 func (h *CompanyHandler) Create(c *gin.Context) {
 	p, ok := principal(c)
@@ -78,14 +79,14 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 //	@Tags			companies
 //	@Security		BearerAuth
 //	@Description	Requires permission: company:read
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission company:read"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission company:read"
 //	@Produce		json
 //	@Param			id	path		string	true	"Company ID"	format(uuid)
 //	@Success		200	{object}	CompanyResponse
-//	@Failure		400	{object}	ErrorResponse	"invalid id"
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/companies/{id} [get]
 func (h *CompanyHandler) Get(c *gin.Context) {
 	p, ok := principal(c)
@@ -114,21 +115,21 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 //	@Tags			companies
 //	@Security		BearerAuth
 //	@Description	Requires permission: company:read
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission company:read"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission company:read"
 //	@Produce		json
 //	@Param			page		query		int	false	"Page number (1-based)"	default(1)	minimum(1)
 //	@Param			page_size	query		int	false	"Items per page"		default(20)	minimum(1)	maximum(100)
 //	@Success		200			{object}	ListCompaniesResponse
-//	@Failure		400			{object}	ErrorResponse
-//	@Failure		500			{object}	ErrorResponse
+//	@Failure		400			{object}	apierror.Response
+//	@Failure		500			{object}	apierror.Response
 //	@Router			/api/v1/companies [get]
 func (h *CompanyHandler) List(c *gin.Context) {
 	p, ok := principal(c)
 	if !ok {
 		return
 	}
-	var v model.Validator
+	var v validation.Validator
 	page, ok := queryInt(c, "page")
 	v.Check(ok, "page", "must be an integer")
 	size, ok := queryInt(c, "page_size")
@@ -154,17 +155,17 @@ func (h *CompanyHandler) List(c *gin.Context) {
 //	@Tags			companies
 //	@Security		BearerAuth
 //	@Description	Requires permission: company:update
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission company:update"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission company:update"
 //	@Accept			json
 //	@Produce		json
 //	@Param			id		path		string					true	"Company ID"	format(uuid)
 //	@Param			body	body		UpdateCompanyRequest	true	"Fields to change"
 //	@Success		200		{object}	CompanyResponse
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"DOT number already used"
-//	@Failure		500		{object}	ErrorResponse
+//	@Failure		400		{object}	apierror.Response
+//	@Failure		404		{object}	apierror.Response
+//	@Failure		409		{object}	apierror.Response	"DOT number already used"
+//	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/companies/{id} [patch]
 func (h *CompanyHandler) Update(c *gin.Context) {
 	p, ok := principal(c)
@@ -196,13 +197,13 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 //	@Tags			companies
 //	@Security		BearerAuth
 //	@Description	Requires permission: company:delete
-//	@Failure		401	{object}	ErrorResponse	"missing or invalid access token"
-//	@Failure		403	{object}	ErrorResponse	"missing permission company:delete"
-//	@Param			id	path		string			true	"Company ID"	format(uuid)
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission company:delete"
+//	@Param			id	path		string				true	"Company ID"	format(uuid)
 //	@Success		204	"No Content"
-//	@Failure		400	{object}	ErrorResponse
-//	@Failure		404	{object}	ErrorResponse
-//	@Failure		500	{object}	ErrorResponse
+//	@Failure		400	{object}	apierror.Response
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
 //	@Router			/api/v1/companies/{id} [delete]
 func (h *CompanyHandler) Delete(c *gin.Context) {
 	p, ok := principal(c)
