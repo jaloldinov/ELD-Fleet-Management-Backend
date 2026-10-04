@@ -134,6 +134,7 @@ type resetFixture struct {
 	revoker *fakeRevoker
 	tx      *fakeTx
 	mailer  *recordingMailer
+	audit   *memAuditStore
 	log     *bytes.Buffer
 	jane    *model.User
 }
@@ -148,11 +149,12 @@ func newResetFixture(t *testing.T) *resetFixture {
 		revoker: &fakeRevoker{},
 		tx:      &fakeTx{},
 		mailer:  &recordingMailer{},
+		audit:   &memAuditStore{},
 		log:     &bytes.Buffer{},
 		jane:    jane,
 	}
 	f.svc = NewPasswordResetService(f.resets, f.users, f.revoker, f.tx,
-		auth.NewResetCodeHasher("test-secret-test-secret-test-1234"), fakeHasher{}, f.mailer,
+		auth.NewResetCodeHasher("test-secret-test-secret-test-1234"), fakeHasher{}, f.mailer, NewAuditor(f.tx, f.audit),
 		slog.New(slog.NewTextHandler(f.log, nil)))
 	return f
 }
@@ -383,4 +385,19 @@ func TestResetPassword_UnexpectedErrorIsReturned(t *testing.T) {
 	err = f.svc.ResetPassword(context.Background(), token, "new-strong-password")
 
 	assert.EqualError(t, err, "db down", "a real failure is a 500, not 'invalid token'")
+}
+
+func TestResetPassword_Audited(t *testing.T) {
+	f := newResetFixture(t)
+	token, _, err := f.svc.VerifyCode(context.Background(), "jane@acme.com", f.requestCode(t))
+	require.NoError(t, err)
+
+	require.NoError(t, f.svc.ResetPassword(context.Background(), token, "new-strong-password"))
+
+	e := f.audit.last(t)
+	assert.Equal(t, "user.password_reset", e.Action)
+	require.NotNil(t, e.ActorID)
+	assert.Equal(t, f.jane.ID, *e.ActorID, "the user did it themselves")
+	assert.Nil(t, e.Changes, "never the password")
+	f.audit.requireAllInTx(t)
 }

@@ -68,11 +68,14 @@ type eldSvcFixture struct {
 	svc    *ELDDeviceService
 	repo   *memELDRepo
 	trucks *memTruckRepo
+	audit  *memAuditStore
 }
 
 func newELDSvcFixture() *eldSvcFixture {
 	f := &eldSvcFixture{repo: newMemELDRepo(), trucks: newMemTruckRepo()}
-	f.svc = NewELDDeviceService(f.repo, f.trucks, fakeCompanies{})
+	var audit *Auditor
+	audit, f.audit = newTestAuditor()
+	f.svc = NewELDDeviceService(f.repo, f.trucks, fakeCompanies{}, audit)
 	return f
 }
 
@@ -246,4 +249,51 @@ func TestELDDeviceService_Update(t *testing.T) {
 		requireValidationField(t, err, "is_active")
 		assert.True(t, f.repo.devices[d.ID].IsActive, "not saved")
 	})
+}
+
+// ---------- audit ----------
+
+func TestELDDeviceService_AuditTruckAssignment(t *testing.T) {
+	f := newELDSvcFixture()
+	d := f.repo.add(companyA)
+	first, second := f.trucks.add(companyA), f.trucks.add(companyA)
+
+	_, err := f.svc.AssignTruck(context.Background(), companyAUser, d.ID, first.ID)
+	require.NoError(t, err)
+	_, err = f.svc.AssignTruck(context.Background(), companyAUser, d.ID, second.ID)
+	require.NoError(t, err)
+	_, err = f.svc.UnassignTruck(context.Background(), companyAUser, d.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"eld_device.assign_truck", "eld_device.assign_truck", "eld_device.unassign_truck"}, f.audit.actions())
+	assert.Equal(t, model.AuditChange{Old: nil, New: first.ID}, f.audit.entries[0].Changes["truck_id"])
+	assert.Equal(t, model.AuditChange{Old: first.ID, New: second.ID}, f.audit.entries[1].Changes["truck_id"], "moved between trucks")
+	assert.Equal(t, model.AuditChange{Old: second.ID, New: nil}, f.audit.entries[2].Changes["truck_id"])
+	assert.Equal(t, &companyA, f.audit.entries[0].CompanyID)
+	f.audit.requireAllInTx(t)
+}
+
+func TestELDDeviceService_AuditSkipsNoOpUnassign(t *testing.T) {
+	f := newELDSvcFixture()
+	d := f.repo.add(companyA) // not installed
+
+	_, err := f.svc.UnassignTruck(context.Background(), companyAUser, d.ID)
+
+	require.NoError(t, err)
+	assert.Empty(t, f.audit.entries)
+}
+
+func TestELDDeviceService_AuditCreateUpdateDelete(t *testing.T) {
+	f := newELDSvcFixture()
+
+	d, err := f.svc.Create(context.Background(), companyAUser, CreateELDDeviceInput{SerialNumber: "pt30-0002", Model: "PT30"})
+	require.NoError(t, err)
+	_, err = f.svc.Update(context.Background(), companyAUser, d.ID, UpdateELDDeviceInput{FirmwareVersion: ptr("2.1")})
+	require.NoError(t, err)
+	require.NoError(t, f.svc.Delete(context.Background(), companyAUser, d.ID))
+
+	assert.Equal(t, []string{"eld_device.create", "eld_device.update", "eld_device.delete"}, f.audit.actions())
+	assert.Equal(t, "PT30-0002", f.audit.entries[0].Changes["serial_number"].New)
+	assert.Equal(t, model.AuditChanges{"firmware_version": {Old: "", New: "2.1"}}, f.audit.entries[1].Changes)
+	f.audit.requireAllInTx(t)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -110,10 +111,11 @@ type UserService struct {
 	companies CompanyLookup
 	sessions  SessionRevoker
 	hasher    PasswordHasher
+	audit     *Auditor
 }
 
-func NewUserService(repo UserRepository, companies CompanyLookup, sessions SessionRevoker, hasher PasswordHasher) *UserService {
-	return &UserService{repo: repo, companies: companies, sessions: sessions, hasher: hasher}
+func NewUserService(repo UserRepository, companies CompanyLookup, sessions SessionRevoker, hasher PasswordHasher, audit *Auditor) *UserService {
+	return &UserService{repo: repo, companies: companies, sessions: sessions, hasher: hasher, audit: audit}
 }
 
 // Create adds a user. Company users can only create users in their own
@@ -157,14 +159,21 @@ func (s *UserService) Create(ctx context.Context, p auth.Principal, in CreateUse
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	u, err := s.repo.Create(ctx, model.User{
-		CompanyID:    companyID,
-		Email:        nilIfEmpty(email),
-		Username:     nilIfEmpty(username),
-		PasswordHash: hash,
-		FirstName:    firstName,
-		LastName:     lastName,
-	}, roles)
+	var u *model.User
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		u, err = s.repo.Create(ctx, model.User{
+			CompanyID:    companyID,
+			Email:        nilIfEmpty(email),
+			Username:     nilIfEmpty(username),
+			PasswordHash: hash,
+			FirstName:    firstName,
+			LastName:     lastName,
+		}, roles)
+		if err != nil {
+			return err
+		}
+		return s.record(ctx, p, "user.create", u, userChanges(model.User{}, *u, nil, roles))
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +242,7 @@ func (s *UserService) Update(ctx context.Context, p auth.Principal, id uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	wasActive := u.IsActive
+	before := *u
 
 	var v validation.Validator
 	if in.FirstName != nil {
@@ -258,17 +267,34 @@ func (s *UserService) Update(ctx context.Context, p auth.Principal, id uuid.UUID
 		return nil, err
 	}
 
-	updated, err := s.repo.Update(ctx, *u, roles)
-	if err != nil {
-		return nil, err
-	}
-
-	// Deactivation already removes all permissions immediately (see
-	// GetPermissions); revoking sessions also kills their refresh tokens.
-	if wasActive && !updated.IsActive {
-		if err := s.sessions.RevokeAllForUser(ctx, id); err != nil {
+	var oldRoles []string
+	if roles != nil {
+		current, err := s.repo.GetRoles(ctx, []uuid.UUID{id})
+		if err != nil {
 			return nil, err
 		}
+		oldRoles = current[id]
+	}
+
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		updated, err := s.repo.Update(ctx, *u, roles)
+		if err != nil {
+			return err
+		}
+		// Deactivation already removes all permissions immediately (see
+		// GetPermissions); revoking sessions also kills their refresh tokens.
+		if before.IsActive && !updated.IsActive {
+			if err := s.sessions.RevokeAllForUser(ctx, id); err != nil {
+				return err
+			}
+		}
+		if ch := userChanges(before, *updated, oldRoles, roles); len(ch) > 0 {
+			return s.record(ctx, p, "user.update", updated, ch)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return s.Get(ctx, p, id)
 }
@@ -278,13 +304,19 @@ func (s *UserService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID
 	if id == p.UserID {
 		return model.ErrForbidden // nobody deletes themselves
 	}
-	if _, err := s.getInScope(ctx, p, id); err != nil {
+	u, err := s.getInScope(ctx, p, id)
+	if err != nil {
 		return err
 	}
-	if err := s.repo.SoftDelete(ctx, id); err != nil {
-		return err
-	}
-	return s.sessions.RevokeAllForUser(ctx, id)
+	return s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.SoftDelete(ctx, id); err != nil {
+			return err
+		}
+		if err := s.sessions.RevokeAllForUser(ctx, id); err != nil {
+			return err
+		}
+		return s.record(ctx, p, "user.delete", u, nil)
+	})
 }
 
 // SetPassword sets another user's password: for users who cannot use
@@ -314,12 +346,44 @@ func (s *UserService) SetPassword(ctx context.Context, p auth.Principal, id uuid
 	if err != nil {
 		return err
 	}
-	if err := s.repo.UpdatePassword(ctx, id, hash); err != nil {
-		return err
+	return s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.UpdatePassword(ctx, id, hash); err != nil {
+			return err
+		}
+		if err := s.sessions.RevokeAllForUser(ctx, id); err != nil {
+			return err
+		}
+		// The action alone: never the password or its hash.
+		return s.record(ctx, p, "user.set_password", u, nil)
+	})
+}
+
+func (s *UserService) record(ctx context.Context, p auth.Principal, action string, u *model.User, ch model.AuditChanges) error {
+	return s.audit.Record(ctx, p, model.AuditEntry{
+		Action: action, Entity: model.AuditUser, EntityID: u.ID.String(), CompanyID: u.CompanyID, Changes: ch,
+	})
+}
+
+// userChanges lists the audited fields that differ (API field names).
+// Roles are compared as sorted lists; nil newRoles = roles unchanged.
+// Never the password hash.
+func userChanges(old, new model.User, oldRoles, newRoles []string) model.AuditChanges {
+	c := model.AuditChanges{}
+	c.Set("email", old.Email, new.Email)
+	c.Set("username", old.Username, new.Username)
+	c.Set("first_name", old.FirstName, new.FirstName)
+	c.Set("last_name", old.LastName, new.LastName)
+	c.Set("is_active", old.IsActive, new.IsActive)
+	if newRoles != nil {
+		c.Set("roles", sortedCopy(oldRoles), sortedCopy(newRoles))
 	}
-	// After the change: a failure here returns an error and can simply be
-	// retried (setting the same password again is harmless).
-	return s.sessions.RevokeAllForUser(ctx, id)
+	return c
+}
+
+func sortedCopy(s []string) []string {
+	out := append([]string{}, s...) // never nil: [] and nil compare equal
+	slices.Sort(out)
+	return out
 }
 
 // getInScope loads a user the caller is allowed to see. For company users,

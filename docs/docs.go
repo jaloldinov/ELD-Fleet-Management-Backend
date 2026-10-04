@@ -15,6 +15,128 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/audit-logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: audit:read\nWho changed what and when, newest first. Company users see only their own company's records (company_id is ignored).\nFor one record's history (e.g. a timeline in the UI), filter by entity and entity_id.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "audit"
+                ],
+                "summary": "List audit log entries",
+                "parameters": [
+                    {
+                        "enum": [
+                            "company",
+                            "user",
+                            "driver",
+                            "truck",
+                            "eld_device",
+                            "rate_limit"
+                        ],
+                        "type": "string",
+                        "description": "Entity type",
+                        "name": "entity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ID of one record (with entity)",
+                        "name": "entity_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Exact action, e.g. truck.update",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Who made the change",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Platform users only",
+                        "name": "company_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Changes at or after (RFC 3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Changes before (RFC 3339)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListAuditLogsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission audit:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/login": {
             "post": {
                 "description": "Exchanges a login (email or username) and password for an access token and a refresh token.\nUnknown user and wrong password return the same 401 on purpose.",
@@ -2662,6 +2784,74 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.AuditActor": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Jane Smith"
+                }
+            }
+        },
+        "handler.AuditChangeResponse": {
+            "type": "object",
+            "properties": {
+                "new": {},
+                "old": {}
+            }
+        },
+        "handler.AuditLogResponse": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "truck.update"
+                },
+                "actor": {
+                    "description": "null = the system itself (e.g. the createadmin CLI).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.AuditActor"
+                        }
+                    ]
+                },
+                "changes": {
+                    "description": "Only the fields that changed: {\"unit_number\": {\"old\": \"101\", \"new\": \"101A\"}}.\nnull for actions without values (delete, password changes).",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/handler.AuditChangeResponse"
+                    }
+                },
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "entity": {
+                    "type": "string",
+                    "example": "truck"
+                },
+                "entity_id": {
+                    "type": "string",
+                    "example": "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "example": "2026-10-03T11:26:26Z"
+                },
+                "request_id": {
+                    "type": "string",
+                    "example": "9c1a1ea6-d4cb-4085-a373-493ea2077a6c"
+                }
+            }
+        },
         "handler.CompanyResponse": {
             "type": "object",
             "properties": {
@@ -2984,6 +3174,29 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "example": "ok"
+                }
+            }
+        },
+        "handler.ListAuditLogsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.AuditLogResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 3
                 }
             }
         },

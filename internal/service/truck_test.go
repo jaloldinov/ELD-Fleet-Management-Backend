@@ -64,10 +64,16 @@ func (m *memTruckRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
 }
 
 func newTruckSvc() (*TruckService, *memTruckRepo) {
-	repo := newMemTruckRepo()
-	svc := NewTruckService(repo, fakeCompanies{})
-	svc.now = func() time.Time { return time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC) }
+	svc, repo, _ := newAuditedTruckSvc()
 	return svc, repo
+}
+
+func newAuditedTruckSvc() (*TruckService, *memTruckRepo, *memAuditStore) {
+	repo := newMemTruckRepo()
+	audit, store := newTestAuditor()
+	svc := NewTruckService(repo, fakeCompanies{}, audit)
+	svc.now = func() time.Time { return time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC) }
+	return svc, repo, store
 }
 
 func validTruckInput() CreateTruckInput {
@@ -223,4 +229,49 @@ func TestTruckService_Update(t *testing.T) {
 		_, err := svc.Update(context.Background(), companyAUser, tr.ID, UpdateTruckInput{})
 		requireValidationField(t, err, "body")
 	})
+}
+
+// ---------- audit ----------
+
+func TestTruckService_AuditCreateUpdateDelete(t *testing.T) {
+	svc, _, store := newAuditedTruckSvc()
+	p := auth.Principal{UserID: uuid.New(), CompanyID: &companyA}
+
+	created, err := svc.Create(context.Background(), p, validTruckInput())
+	require.NoError(t, err)
+	e := store.last(t)
+	assert.Equal(t, "truck.create", e.Action)
+	assert.Equal(t, model.AuditTruck, e.Entity)
+	assert.Equal(t, created.ID.String(), e.EntityID)
+	assert.Equal(t, &companyA, e.CompanyID)
+	assert.Equal(t, model.AuditChange{Old: "", New: "101"}, e.Changes["unit_number"])
+
+	_, err = svc.Update(context.Background(), p, created.ID, UpdateTruckInput{UnitNumber: ptr("101A"), Make: ptr(created.Make)})
+	require.NoError(t, err)
+	assert.Equal(t, model.AuditChanges{"unit_number": {Old: "101", New: "101A"}}, store.last(t).Changes,
+		"only what really changed (make was sent unchanged)")
+
+	require.NoError(t, svc.Delete(context.Background(), p, created.ID))
+	assert.Equal(t, []string{"truck.create", "truck.update", "truck.delete"}, store.actions())
+	store.requireAllInTx(t)
+}
+
+func TestTruckService_AuditSkipsNoOpUpdate(t *testing.T) {
+	svc, repo, store := newAuditedTruckSvc()
+	tr := repo.add(companyA)
+
+	_, err := svc.Update(context.Background(), platformAdmin, tr.ID, UpdateTruckInput{UnitNumber: ptr(tr.UnitNumber)})
+
+	require.NoError(t, err)
+	assert.Empty(t, store.entries, "nothing changed, nothing recorded")
+}
+
+func TestTruckService_NoAuditWhenRefused(t *testing.T) {
+	svc, repo, store := newAuditedTruckSvc()
+	tr := repo.add(uuid.New()) // another company
+
+	_, err := svc.Update(context.Background(), companyAUser, tr.ID, UpdateTruckInput{UnitNumber: ptr("X")})
+
+	require.Error(t, err)
+	assert.Empty(t, store.entries)
 }

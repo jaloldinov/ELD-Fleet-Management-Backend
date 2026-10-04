@@ -82,8 +82,16 @@ func run() error {
 	// Wire the 3 layers, bottom-up: repository → service → handler.
 	// Each layer receives the one below it through a constructor (dependency
 	// injection), so nothing reaches for globals and every layer is testable.
+
+	// Transactions spanning several repositories (e.g. user + driver profile).
+	txManager := repository.NewTxManager(pool)
+	// Every service records its changes in the audit log, in the same
+	// transaction as the change.
+	auditRepo := repository.NewAuditRepository(pool)
+	auditor := service.NewAuditor(txManager, auditRepo)
+
 	companyRepo := repository.NewCompanyRepository(pool)
-	companySvc := service.NewCompanyService(companyRepo)
+	companySvc := service.NewCompanyService(companyRepo, auditor)
 
 	userRepo := repository.NewUserRepository(pool)
 	hasher := auth.NewBcryptHasher(auth.DefaultBcryptCost)
@@ -94,11 +102,8 @@ func run() error {
 		return err
 	}
 
-	userSvc := service.NewUserService(userRepo, companyRepo, sessionRepo, hasher)
-
-	// Transactions spanning several repositories (e.g. user + driver profile).
-	txManager := repository.NewTxManager(pool)
-	driverSvc := service.NewDriverService(txManager, userSvc, repository.NewDriverRepository(pool))
+	userSvc := service.NewUserService(userRepo, companyRepo, sessionRepo, hasher, auditor)
+	driverSvc := service.NewDriverService(txManager, userSvc, repository.NewDriverRepository(pool), auditor)
 
 	// Shared: TruckService manages trucks; ELDDeviceService looks them up.
 	truckRepo := repository.NewTruckRepository(pool)
@@ -113,7 +118,7 @@ func run() error {
 	//   - auth_requests: per IP on /auth/*.
 	//   - login_attempts: per login+IP on /auth/login; a success resets it.
 	// Startup fails if they cannot be loaded: better than running unprotected.
-	rateLimitSvc := service.NewRateLimitService(repository.NewRateLimitRepository(pool))
+	rateLimitSvc := service.NewRateLimitService(repository.NewRateLimitRepository(pool), auditor)
 	authLocal, err := rateLimitSvc.Limiter(dbCtx, model.RateLimitAuthRequests)
 	if err != nil {
 		return err
@@ -188,7 +193,7 @@ func run() error {
 
 	resetRepo := repository.NewPasswordResetRepository(pool)
 	passwordResetSvc := service.NewPasswordResetService(resetRepo, userRepo, sessionRepo, txManager,
-		auth.NewResetCodeHasher(cfg.JWTSecret), hasher, mailer, log)
+		auth.NewResetCodeHasher(cfg.JWTSecret), hasher, mailer, auditor, log)
 
 	// Hourly: delete password resets older than a day (they expire after
 	// 10 minutes; a day keeps recent ones for investigating abuse).
@@ -220,10 +225,11 @@ func run() error {
 		User:      handler.NewUserHandler(userSvc),
 		Company:   handler.NewCompanyHandler(companySvc),
 		Driver:    handler.NewDriverHandler(driverSvc),
-		Truck:     handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo)),
-		ELDDevice: handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo)),
+		Truck:     handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo, auditor)),
+		ELDDevice: handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo, auditor)),
 		RateLimit: handler.NewRateLimitHandler(rateLimitSvc),
 		Password:  handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
+		AuditLog:  handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),
 	})
 
 	srv := &http.Server{

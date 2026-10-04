@@ -41,14 +41,15 @@ type UpdateRateLimitInput struct {
 //   - Refresh (every minute): re-reads all rows, so changes made through
 //     another instance (or directly in the database) arrive here too.
 type RateLimitService struct {
-	repo RateLimitRepository
+	repo  RateLimitRepository
+	audit *Auditor
 
 	mu       sync.Mutex
 	limiters map[string]*ratelimit.Keyed // by rule name
 }
 
-func NewRateLimitService(repo RateLimitRepository) *RateLimitService {
-	return &RateLimitService{repo: repo, limiters: make(map[string]*ratelimit.Keyed)}
+func NewRateLimitService(repo RateLimitRepository, audit *Auditor) *RateLimitService {
+	return &RateLimitService{repo: repo, audit: audit, limiters: make(map[string]*ratelimit.Keyed)}
 }
 
 // Limiter returns the limiter for rule name, built from its stored settings.
@@ -134,6 +135,7 @@ func (s *RateLimitService) Update(ctx context.Context, p auth.Principal, name st
 	if err != nil {
 		return nil, err
 	}
+	before := *rl
 	if in.Limit != nil {
 		rl.Limit = *in.Limit
 	}
@@ -142,7 +144,23 @@ func (s *RateLimitService) Update(ctx context.Context, p auth.Principal, name st
 	}
 	rl.UpdatedBy = &p.UserID
 
-	saved, err := s.repo.Update(ctx, *rl)
+	var saved *model.RateLimit
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if saved, err = s.repo.Update(ctx, *rl); err != nil {
+			return err
+		}
+		ch := model.AuditChanges{}
+		ch.Set("limit", before.Limit, saved.Limit)
+		ch.Set("window_seconds", int(before.Window/time.Second), int(saved.Window/time.Second))
+		if len(ch) == 0 {
+			return nil
+		}
+		// A platform setting: no company.
+		return s.audit.Record(ctx, p, model.AuditEntry{
+			Action: "rate_limit.update", Entity: model.AuditRateLimit, EntityID: name, Changes: ch,
+		})
+	})
 	if err != nil {
 		return nil, err
 	}

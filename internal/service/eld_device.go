@@ -68,10 +68,11 @@ type ELDDeviceService struct {
 	repo      ELDDeviceRepository
 	trucks    TruckLookup
 	companies CompanyLookup
+	audit     *Auditor
 }
 
-func NewELDDeviceService(repo ELDDeviceRepository, trucks TruckLookup, companies CompanyLookup) *ELDDeviceService {
-	return &ELDDeviceService{repo: repo, trucks: trucks, companies: companies}
+func NewELDDeviceService(repo ELDDeviceRepository, trucks TruckLookup, companies CompanyLookup, audit *Auditor) *ELDDeviceService {
+	return &ELDDeviceService{repo: repo, trucks: trucks, companies: companies, audit: audit}
 }
 
 func (s *ELDDeviceService) Create(ctx context.Context, p auth.Principal, in CreateELDDeviceInput) (*model.ELDDevice, error) {
@@ -95,7 +96,9 @@ func (s *ELDDeviceService) Create(ctx context.Context, p auth.Principal, in Crea
 		return nil, err
 	}
 
-	return s.repo.Create(ctx, d)
+	return s.write(ctx, p, "eld_device.create", model.ELDDevice{}, func(ctx context.Context) (*model.ELDDevice, error) {
+		return s.repo.Create(ctx, d)
+	})
 }
 
 func (s *ELDDeviceService) Get(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error) {
@@ -126,6 +129,7 @@ func (s *ELDDeviceService) Update(ctx context.Context, p auth.Principal, id uuid
 	if err != nil {
 		return nil, err
 	}
+	before := *d
 
 	if in.Model != nil {
 		d.Model = strings.TrimSpace(*in.Model)
@@ -145,7 +149,9 @@ func (s *ELDDeviceService) Update(ctx context.Context, p auth.Principal, id uuid
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
-	return s.repo.Update(ctx, *d)
+	return s.write(ctx, p, "eld_device.update", before, func(ctx context.Context) (*model.ELDDevice, error) {
+		return s.repo.Update(ctx, *d)
+	})
 }
 
 // AssignTruck installs the device in a truck of the same company, or moves it
@@ -172,23 +178,69 @@ func (s *ELDDeviceService) AssignTruck(ctx context.Context, p auth.Principal, id
 		return nil, &validation.ValidationError{Fields: map[string]string{"truck_id": "truck is out of service"}}
 	}
 
-	return s.repo.SetTruck(ctx, id, &truckID) // ErrTruckHasELD if the truck is taken
+	return s.write(ctx, p, "eld_device.assign_truck", *d, func(ctx context.Context) (*model.ELDDevice, error) {
+		return s.repo.SetTruck(ctx, id, &truckID) // ErrTruckHasELD if the truck is taken
+	})
 }
 
 // UnassignTruck removes the device from its truck. Removing a device that is
 // not installed is not an error: the result is the same.
 func (s *ELDDeviceService) UnassignTruck(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error) {
-	if _, err := s.getInScope(ctx, p, id); err != nil {
+	d, err := s.getInScope(ctx, p, id)
+	if err != nil {
 		return nil, err
 	}
-	return s.repo.SetTruck(ctx, id, nil)
+	return s.write(ctx, p, "eld_device.unassign_truck", *d, func(ctx context.Context) (*model.ELDDevice, error) {
+		return s.repo.SetTruck(ctx, id, nil)
+	})
 }
 
 func (s *ELDDeviceService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error {
-	if _, err := s.getInScope(ctx, p, id); err != nil {
+	d, err := s.getInScope(ctx, p, id)
+	if err != nil {
 		return err
 	}
-	return s.repo.SoftDelete(ctx, id)
+	return s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.SoftDelete(ctx, id); err != nil {
+			return err
+		}
+		return s.audit.Record(ctx, p, model.AuditEntry{
+			Action: "eld_device.delete", Entity: model.AuditELDDevice, EntityID: id.String(), CompanyID: &d.CompanyID,
+		})
+	})
+}
+
+// write runs change and records what it changed compared with before, in
+// one transaction. Nothing is recorded if nothing changed (e.g. removing a
+// device that was not installed).
+func (s *ELDDeviceService) write(ctx context.Context, p auth.Principal, action string, before model.ELDDevice,
+	change func(ctx context.Context) (*model.ELDDevice, error)) (*model.ELDDevice, error) {
+	var after *model.ELDDevice
+	err := s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if after, err = change(ctx); err != nil {
+			return err
+		}
+		ch := eldDeviceChanges(before, *after)
+		if len(ch) == 0 {
+			return nil
+		}
+		return s.audit.Record(ctx, p, model.AuditEntry{
+			Action: action, Entity: model.AuditELDDevice, EntityID: after.ID.String(), CompanyID: &after.CompanyID, Changes: ch,
+		})
+	})
+	return after, err
+}
+
+// eldDeviceChanges lists the audited fields that differ (API field names).
+func eldDeviceChanges(old, new model.ELDDevice) model.AuditChanges {
+	c := model.AuditChanges{}
+	c.Set("serial_number", old.SerialNumber, new.SerialNumber)
+	c.Set("model", old.Model, new.Model)
+	c.Set("firmware_version", old.FirmwareVersion, new.FirmwareVersion)
+	c.Set("truck_id", old.TruckID, new.TruckID)
+	c.Set("is_active", old.IsActive, new.IsActive)
+	return c
 }
 
 func (s *ELDDeviceService) getInScope(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error) {

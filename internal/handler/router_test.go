@@ -86,6 +86,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		Company:   handler.NewCompanyHandler(failingCompanyService{}),
 		RateLimit: handler.NewRateLimitHandler(nil),
 		Password:  handler.NewPasswordResetHandler(nil, nil),
+		AuditLog:  handler.NewAuditLogHandler(nil),
 	})
 }
 

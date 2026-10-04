@@ -67,7 +67,7 @@ func takeAll(l interface {
 }
 
 func TestRateLimitService_LimiterUsesStoredValues(t *testing.T) {
-	svc := NewRateLimitService(newMemRateLimitRepo())
+	svc := NewRateLimitService(newMemRateLimitRepo(), noAudit())
 
 	l, err := svc.Limiter(context.Background(), model.RateLimitLoginAttempts)
 
@@ -79,7 +79,7 @@ func TestRateLimitService_LimiterUsesStoredValues(t *testing.T) {
 }
 
 func TestRateLimitService_LimiterIsShared(t *testing.T) {
-	svc := NewRateLimitService(newMemRateLimitRepo())
+	svc := NewRateLimitService(newMemRateLimitRepo(), noAudit())
 
 	a, err := svc.Limiter(context.Background(), model.RateLimitAuthRequests)
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestRateLimitService_LimiterIsShared(t *testing.T) {
 }
 
 func TestRateLimitService_LimiterUnknownRule(t *testing.T) {
-	svc := NewRateLimitService(newMemRateLimitRepo())
+	svc := NewRateLimitService(newMemRateLimitRepo(), noAudit())
 
 	_, err := svc.Limiter(context.Background(), "nope")
 
@@ -98,7 +98,7 @@ func TestRateLimitService_LimiterUnknownRule(t *testing.T) {
 }
 
 func TestRateLimitService_ListAndGet(t *testing.T) {
-	svc := NewRateLimitService(newMemRateLimitRepo())
+	svc := NewRateLimitService(newMemRateLimitRepo(), noAudit())
 
 	list, err := svc.List(context.Background(), platformAdmin)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestRateLimitService_ListAndGet(t *testing.T) {
 
 func TestRateLimitService_CompanyUsersAreForbidden(t *testing.T) {
 	repo := newMemRateLimitRepo()
-	svc := NewRateLimitService(repo)
+	svc := NewRateLimitService(repo, noAudit())
 
 	_, err := svc.List(context.Background(), companyAUser)
 	assert.ErrorIs(t, err, model.ErrForbidden)
@@ -129,7 +129,7 @@ func TestRateLimitService_CompanyUsersAreForbidden(t *testing.T) {
 
 func TestRateLimitService_UpdateSavesAndAppliesAtOnce(t *testing.T) {
 	repo := newMemRateLimitRepo()
-	svc := NewRateLimitService(repo)
+	svc := NewRateLimitService(repo, noAudit())
 	l, err := svc.Limiter(context.Background(), model.RateLimitLoginAttempts)
 	require.NoError(t, err)
 
@@ -151,7 +151,7 @@ func TestRateLimitService_UpdateSavesAndAppliesAtOnce(t *testing.T) {
 
 func TestRateLimitService_UpdatePartial(t *testing.T) {
 	repo := newMemRateLimitRepo()
-	svc := NewRateLimitService(repo)
+	svc := NewRateLimitService(repo, noAudit())
 
 	rl, err := svc.Update(context.Background(), platformAdmin, model.RateLimitAuthRequests,
 		UpdateRateLimitInput{Limit: ptr(50)})
@@ -162,7 +162,7 @@ func TestRateLimitService_UpdatePartial(t *testing.T) {
 }
 
 func TestRateLimitService_RulesAreIndependent(t *testing.T) {
-	svc := NewRateLimitService(newMemRateLimitRepo())
+	svc := NewRateLimitService(newMemRateLimitRepo(), noAudit())
 	authL, err := svc.Limiter(context.Background(), model.RateLimitAuthRequests)
 	require.NoError(t, err)
 	loginL, err := svc.Limiter(context.Background(), model.RateLimitLoginAttempts)
@@ -196,7 +196,7 @@ func TestRateLimitService_UpdateValidation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMemRateLimitRepo()
-			svc := NewRateLimitService(repo)
+			svc := NewRateLimitService(repo, noAudit())
 
 			_, err := svc.Update(context.Background(), platformAdmin, model.RateLimitLoginAttempts, tc.in)
 
@@ -207,7 +207,7 @@ func TestRateLimitService_UpdateValidation(t *testing.T) {
 }
 
 func TestRateLimitService_UpdateBoundaries(t *testing.T) {
-	svc := NewRateLimitService(newMemRateLimitRepo())
+	svc := NewRateLimitService(newMemRateLimitRepo(), noAudit())
 
 	_, err := svc.Update(context.Background(), platformAdmin, model.RateLimitLoginAttempts,
 		UpdateRateLimitInput{Limit: ptr(1), WindowSeconds: ptr(1)})
@@ -219,7 +219,7 @@ func TestRateLimitService_UpdateBoundaries(t *testing.T) {
 }
 
 func TestRateLimitService_UpdateUnknownRule(t *testing.T) {
-	svc := NewRateLimitService(newMemRateLimitRepo())
+	svc := NewRateLimitService(newMemRateLimitRepo(), noAudit())
 
 	_, err := svc.Update(context.Background(), platformAdmin, "nope", UpdateRateLimitInput{Limit: ptr(5)})
 
@@ -229,7 +229,7 @@ func TestRateLimitService_UpdateUnknownRule(t *testing.T) {
 // Another instance (or someone in psql) changed the row: Refresh picks it up.
 func TestRateLimitService_RefreshAppliesStoredChanges(t *testing.T) {
 	repo := newMemRateLimitRepo()
-	svc := NewRateLimitService(repo)
+	svc := NewRateLimitService(repo, noAudit())
 	l, err := svc.Limiter(context.Background(), model.RateLimitAuthRequests)
 	require.NoError(t, err)
 
@@ -243,7 +243,7 @@ func TestRateLimitService_RefreshAppliesStoredChanges(t *testing.T) {
 
 func TestRateLimitService_RefreshKeepsValuesOnError(t *testing.T) {
 	repo := newMemRateLimitRepo()
-	svc := NewRateLimitService(repo)
+	svc := NewRateLimitService(repo, noAudit())
 	l, err := svc.Limiter(context.Background(), model.RateLimitAuthRequests)
 	require.NoError(t, err)
 
@@ -252,4 +252,20 @@ func TestRateLimitService_RefreshKeepsValuesOnError(t *testing.T) {
 
 	limit, _ := l.Limit()
 	assert.Equal(t, 20, limit, "a database outage must not change or disable the limits")
+}
+
+func TestRateLimitService_AuditUpdate(t *testing.T) {
+	audit, store := newTestAuditor()
+	svc := NewRateLimitService(newMemRateLimitRepo(), audit)
+
+	_, err := svc.Update(context.Background(), platformAdmin, model.RateLimitLoginAttempts,
+		UpdateRateLimitInput{Limit: ptr(3), WindowSeconds: ptr(900)})
+	require.NoError(t, err)
+
+	e := store.last(t)
+	assert.Equal(t, "rate_limit.update", e.Action)
+	assert.Equal(t, model.RateLimitLoginAttempts, e.EntityID, "rules are identified by name")
+	assert.Nil(t, e.CompanyID, "a platform setting")
+	assert.Equal(t, model.AuditChanges{"limit": {Old: 5, New: 3}}, e.Changes, "window_seconds was sent unchanged")
+	store.requireAllInTx(t)
 }

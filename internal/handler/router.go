@@ -43,6 +43,7 @@ type Handlers struct {
 	ELDDevice *ELDDeviceHandler
 	RateLimit *RateLimitHandler
 	Password  *PasswordResetHandler
+	AuditLog  *AuditLogHandler
 }
 
 // RouterSecurity holds what the router needs to protect routes.
@@ -162,6 +163,9 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	elds.DELETE("/:id", perm.Require(model.PermELDDelete), h.ELDDevice.Delete)
 	elds.PUT("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.AssignTruck)
 	elds.DELETE("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.UnassignTruck)
+
+	// History of changes; tenant scope applied by the service.
+	protected.GET("/audit-logs", perm.Require(model.PermAuditRead), h.AuditLog.List)
 
 	// Platform settings: permissions seeded for platform_admin only.
 	rateLimits := protected.Group("/rate-limits")

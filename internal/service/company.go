@@ -71,11 +71,12 @@ type CompanyPage struct {
 }
 
 type CompanyService struct {
-	repo CompanyRepository
+	repo  CompanyRepository
+	audit *Auditor
 }
 
-func NewCompanyService(repo CompanyRepository) *CompanyService {
-	return &CompanyService{repo: repo}
+func NewCompanyService(repo CompanyRepository, audit *Auditor) *CompanyService {
+	return &CompanyService{repo: repo, audit: audit}
 }
 
 // Every method takes the acting Principal explicitly: the compiler forces each
@@ -103,7 +104,15 @@ func (s *CompanyService) Create(ctx context.Context, p auth.Principal, in Create
 		return nil, err
 	}
 
-	return s.repo.Create(ctx, c)
+	var created *model.Company
+	err := s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if created, err = s.repo.Create(ctx, c); err != nil {
+			return err
+		}
+		return s.record(ctx, p, "company.create", created.ID, companyChanges(model.Company{}, *created))
+	})
+	return created, err
 }
 
 func (s *CompanyService) GetByID(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.Company, error) {
@@ -151,6 +160,7 @@ func (s *CompanyService) Update(ctx context.Context, p auth.Principal, id uuid.U
 	if err != nil {
 		return nil, err // includes model.ErrNotFound
 	}
+	before := *c
 
 	if in.Name != nil {
 		c.Name = strings.TrimSpace(*in.Name)
@@ -170,7 +180,18 @@ func (s *CompanyService) Update(ctx context.Context, p auth.Principal, id uuid.U
 		return nil, err
 	}
 
-	return s.repo.Update(ctx, *c)
+	var updated *model.Company
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if updated, err = s.repo.Update(ctx, *c); err != nil {
+			return err
+		}
+		if ch := companyChanges(before, *updated); len(ch) > 0 {
+			return s.record(ctx, p, "company.update", id, ch)
+		}
+		return nil
+	})
+	return updated, err
 }
 
 // Delete is for platform users only (same reasoning as Create).
@@ -178,7 +199,29 @@ func (s *CompanyService) Delete(ctx context.Context, p auth.Principal, id uuid.U
 	if !p.IsPlatformUser() {
 		return model.ErrForbidden
 	}
-	return s.repo.SoftDelete(ctx, id)
+	return s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.SoftDelete(ctx, id); err != nil {
+			return err
+		}
+		return s.record(ctx, p, "company.delete", id, nil)
+	})
+}
+
+// record: a company's own history belongs to that company (its admins see it).
+func (s *CompanyService) record(ctx context.Context, p auth.Principal, action string, id uuid.UUID, ch model.AuditChanges) error {
+	return s.audit.Record(ctx, p, model.AuditEntry{
+		Action: action, Entity: model.AuditCompany, EntityID: id.String(), CompanyID: &id, Changes: ch,
+	})
+}
+
+// companyChanges lists the audited fields that differ (API field names).
+func companyChanges(old, new model.Company) model.AuditChanges {
+	c := model.AuditChanges{}
+	c.Set("name", old.Name, new.Name)
+	c.Set("dot_number", old.DOTNumber, new.DOTNumber)
+	c.Set("timezone", old.Timezone, new.Timezone)
+	c.Set("is_active", old.IsActive, new.IsActive)
+	return c
 }
 
 // checkCompanyScope enforces "a company user only sees their own company".

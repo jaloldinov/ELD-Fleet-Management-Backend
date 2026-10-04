@@ -78,10 +78,11 @@ type DriverService struct {
 	tx      Transactor
 	users   DriverUsers
 	drivers DriverRepository
+	audit   *Auditor
 }
 
-func NewDriverService(tx Transactor, users DriverUsers, drivers DriverRepository) *DriverService {
-	return &DriverService{tx: tx, users: users, drivers: drivers}
+func NewDriverService(tx Transactor, users DriverUsers, drivers DriverRepository, audit *Auditor) *DriverService {
+	return &DriverService{tx: tx, users: users, drivers: drivers, audit: audit}
 }
 
 // Create makes a user with the driver role AND their driver profile, in one
@@ -123,8 +124,14 @@ func (s *DriverService) Create(ctx context.Context, p auth.Principal, in CreateD
 
 		lic.UserID = u.User.ID
 		lic.CompanyID = *u.User.CompanyID
-		driverID, err = s.drivers.Create(ctx, lic)
-		return err // an error here also rolls back the user insert
+		if driverID, err = s.drivers.Create(ctx, lic); err != nil {
+			return err // an error here also rolls back the user insert
+		}
+		// users.Create recorded "user.create"; this adds the license part.
+		lic.ID = driverID
+		ch := driverChanges(model.Driver{}, lic)
+		ch.Set("user_id", nil, lic.UserID)
+		return s.record(ctx, p, "driver.create", lic, ch)
 	})
 	if err != nil {
 		return nil, err
@@ -166,6 +173,7 @@ func (s *DriverService) Update(ctx context.Context, p auth.Principal, id uuid.UU
 	if err != nil {
 		return nil, err
 	}
+	before := dd.Driver
 	d := dd.Driver
 	if in.LicenseNumber != nil {
 		d.LicenseNumber = strings.TrimSpace(*in.LicenseNumber)
@@ -180,7 +188,16 @@ func (s *DriverService) Update(ctx context.Context, p auth.Principal, id uuid.UU
 		return nil, err
 	}
 
-	if err := s.drivers.UpdateLicense(ctx, d); err != nil {
+	err = s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.drivers.UpdateLicense(ctx, d); err != nil {
+			return err
+		}
+		if ch := driverChanges(before, d); len(ch) > 0 {
+			return s.record(ctx, p, "driver.update", d, ch)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return s.drivers.GetByID(ctx, id)
@@ -197,8 +214,34 @@ func (s *DriverService) Delete(ctx context.Context, p auth.Principal, id uuid.UU
 		if err := s.drivers.SoftDelete(ctx, id); err != nil {
 			return err
 		}
-		return s.users.Delete(ctx, p, dd.Driver.UserID)
+		if err := s.record(ctx, p, "driver.delete", dd.Driver, nil); err != nil {
+			return err
+		}
+		return s.users.Delete(ctx, p, dd.Driver.UserID) // records "user.delete"
 	})
+}
+
+func (s *DriverService) record(ctx context.Context, p auth.Principal, action string, d model.Driver, ch model.AuditChanges) error {
+	return s.audit.Record(ctx, p, model.AuditEntry{
+		Action: action, Entity: model.AuditDriver, EntityID: d.ID.String(), CompanyID: &d.CompanyID, Changes: ch,
+	})
+}
+
+// driverChanges lists the audited license fields that differ (API names).
+func driverChanges(old, new model.Driver) model.AuditChanges {
+	c := model.AuditChanges{}
+	c.Set("license_number", old.LicenseNumber, new.LicenseNumber)
+	c.Set("license_state", old.LicenseState, new.LicenseState)
+	c.Set("license_expires_at", dateOrNil(old.LicenseExpiresAt), dateOrNil(new.LicenseExpiresAt))
+	return c
+}
+
+// dateOrNil formats a calendar day as "2006-01-02" (the API format).
+func dateOrNil(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.Format(time.DateOnly)
 }
 
 // getInScope: drivers of other companies "do not exist" for company users.

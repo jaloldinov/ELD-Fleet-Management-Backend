@@ -66,6 +66,9 @@ var (
 	PermELDUpdate = define("eld:update", "Edit ELD devices", RoleAdmin, RoleManager)
 	PermELDDelete = define("eld:delete", "Delete ELD devices", RoleAdmin, RoleManager)
 
+	// History of changes. Company admins see their own company's.
+	PermAuditRead = define("audit:read", "View the audit log", RoleAdmin)
+
 	// Platform settings: platform_admin only.
 	PermRateLimitRead   = define("ratelimit:read", "View rate-limit settings")
 	PermRateLimitUpdate = define("ratelimit:update", "Change rate-limit settings")

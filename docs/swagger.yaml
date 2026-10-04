@@ -24,6 +24,55 @@ definitions:
         format: uuid
         type: string
     type: object
+  handler.AuditActor:
+    properties:
+      id:
+        format: uuid
+        type: string
+      name:
+        example: Jane Smith
+        type: string
+    type: object
+  handler.AuditChangeResponse:
+    properties:
+      new: {}
+      old: {}
+    type: object
+  handler.AuditLogResponse:
+    properties:
+      action:
+        example: truck.update
+        type: string
+      actor:
+        allOf:
+        - $ref: '#/definitions/handler.AuditActor'
+        description: null = the system itself (e.g. the createadmin CLI).
+      changes:
+        additionalProperties:
+          $ref: '#/definitions/handler.AuditChangeResponse'
+        description: |-
+          Only the fields that changed: {"unit_number": {"old": "101", "new": "101A"}}.
+          null for actions without values (delete, password changes).
+        type: object
+      company_id:
+        format: uuid
+        type: string
+      entity:
+        example: truck
+        type: string
+      entity_id:
+        example: 0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b
+        type: string
+      id:
+        format: uuid
+        type: string
+      occurred_at:
+        example: "2026-10-03T11:26:26Z"
+        type: string
+      request_id:
+        example: 9c1a1ea6-d4cb-4085-a373-493ea2077a6c
+        type: string
+    type: object
   handler.CompanyResponse:
     properties:
       created_at:
@@ -270,6 +319,22 @@ definitions:
       status:
         example: ok
         type: string
+    type: object
+  handler.ListAuditLogsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.AuditLogResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 3
+        type: integer
     type: object
   handler.ListCompaniesResponse:
     properties:
@@ -691,6 +756,93 @@ info:
   title: ELD Fleet Management API
   version: "1.0"
 paths:
+  /api/v1/audit-logs:
+    get:
+      description: |-
+        Requires permission: audit:read
+        Who changed what and when, newest first. Company users see only their own company's records (company_id is ignored).
+        For one record's history (e.g. a timeline in the UI), filter by entity and entity_id.
+      parameters:
+      - description: Entity type
+        enum:
+        - company
+        - user
+        - driver
+        - truck
+        - eld_device
+        - rate_limit
+        in: query
+        name: entity
+        type: string
+      - description: ID of one record (with entity)
+        in: query
+        name: entity_id
+        type: string
+      - description: Exact action, e.g. truck.update
+        in: query
+        name: action
+        type: string
+      - description: Who made the change
+        format: uuid
+        in: query
+        name: actor_id
+        type: string
+      - description: Platform users only
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - description: Changes at or after (RFC 3339)
+        format: date-time
+        in: query
+        name: from
+        type: string
+      - description: Changes before (RFC 3339)
+        format: date-time
+        in: query
+        name: to
+        type: string
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListAuditLogsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission audit:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: List audit log entries
+      tags:
+      - audit
   /api/v1/auth/login:
     post:
       consumes:

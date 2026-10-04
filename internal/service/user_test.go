@@ -51,6 +51,7 @@ func (m *memUserRepo) add(companyID *uuid.UUID, roles ...string) *model.User {
 func (m *memUserRepo) Create(_ context.Context, u model.User, roles []string) (*model.User, error) {
 	m.created = append(m.created, u)
 	u.ID = uuid.New()
+	u.IsActive = true // the database default
 	m.users[u.ID] = &u
 	m.roles[u.ID] = roles
 	return &u, nil
@@ -136,11 +137,14 @@ type userFixture struct {
 	svc     *UserService
 	repo    *memUserRepo
 	revoker *fakeRevoker
+	audit   *memAuditStore
 }
 
 func newUserFixture() *userFixture {
 	f := &userFixture{repo: newMemUserRepo(), revoker: &fakeRevoker{}}
-	f.svc = NewUserService(f.repo, fakeCompanies{}, f.revoker, fakeHasher{})
+	var audit *Auditor
+	audit, f.audit = newTestAuditor()
+	f.svc = NewUserService(f.repo, fakeCompanies{}, f.revoker, fakeHasher{}, audit)
 	return f
 }
 
@@ -602,4 +606,69 @@ func TestUserService_SetPassword_Validation(t *testing.T) {
 
 		requireValidationField(t, err, "new_password")
 	}
+}
+
+// ---------- audit ----------
+
+func TestUserService_AuditLifecycle(t *testing.T) {
+	f := newUserFixture()
+	companyID := uuid.New()
+	admin := f.companyAdminOf(companyID)
+	ctx := context.Background()
+
+	d, err := f.svc.Create(ctx, admin, CreateUserInput{
+		Username: "dan", Password: "long-enough-pw", FirstName: "Dan", LastName: "Driver",
+		Roles: []string{model.RoleDispatcher},
+	})
+	require.NoError(t, err)
+	created := f.audit.last(t)
+	assert.Equal(t, "user.create", created.Action)
+	assert.Equal(t, &companyID, created.CompanyID)
+	assert.Equal(t, []string{"dispatcher"}, created.Changes["roles"].New)
+	for field := range created.Changes {
+		assert.NotContains(t, field, "password", "never the password or its hash")
+	}
+
+	_, err = f.svc.Update(ctx, admin, d.User.ID, UpdateUserInput{
+		Roles: &[]string{model.RoleManager, model.RoleDispatcher}, IsActive: ptr(false),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.AuditChanges{
+		"roles":     {Old: []string{"dispatcher"}, New: []string{"dispatcher", "manager"}},
+		"is_active": {Old: true, New: false},
+	}, f.audit.last(t).Changes)
+
+	require.NoError(t, f.svc.Delete(ctx, admin, d.User.ID))
+
+	assert.Equal(t, []string{"user.create", "user.update", "user.delete"}, f.audit.actions())
+	f.audit.requireAllInTx(t)
+}
+
+func TestUserService_AuditSameRolesInOtherOrderIsNoChange(t *testing.T) {
+	f := newUserFixture()
+	companyID := uuid.New()
+	admin := f.companyAdminOf(companyID)
+	u := f.repo.add(&companyID, model.RoleManager, model.RoleDispatcher)
+
+	_, err := f.svc.Update(context.Background(), admin, u.ID, UpdateUserInput{
+		Roles: &[]string{model.RoleDispatcher, model.RoleManager},
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, f.audit.entries)
+}
+
+func TestUserService_AuditSetPasswordWithoutSecrets(t *testing.T) {
+	f := newUserFixture()
+	companyID := uuid.New()
+	admin := f.companyAdminOf(companyID)
+	driver := f.repo.add(&companyID, model.RoleDriver)
+
+	require.NoError(t, f.svc.SetPassword(context.Background(), admin, driver.ID, "temporary-pass-1"))
+
+	e := f.audit.last(t)
+	assert.Equal(t, "user.set_password", e.Action)
+	assert.Equal(t, driver.ID.String(), e.EntityID)
+	assert.Nil(t, e.Changes, "the action alone, no values")
+	f.audit.requireAllInTx(t)
 }

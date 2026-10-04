@@ -73,11 +73,12 @@ type TruckPage struct {
 type TruckService struct {
 	repo      TruckRepository
 	companies CompanyLookup
+	audit     *Auditor
 	now       func() time.Time // for the model-year rule; replaceable in tests
 }
 
-func NewTruckService(repo TruckRepository, companies CompanyLookup) *TruckService {
-	return &TruckService{repo: repo, companies: companies, now: time.Now}
+func NewTruckService(repo TruckRepository, companies CompanyLookup, audit *Auditor) *TruckService {
+	return &TruckService{repo: repo, companies: companies, audit: audit, now: time.Now}
 }
 
 func (s *TruckService) Create(ctx context.Context, p auth.Principal, in CreateTruckInput) (*model.Truck, error) {
@@ -103,7 +104,15 @@ func (s *TruckService) Create(ctx context.Context, p auth.Principal, in CreateTr
 		return nil, err
 	}
 
-	return s.repo.Create(ctx, t)
+	var created *model.Truck
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if created, err = s.repo.Create(ctx, t); err != nil {
+			return err
+		}
+		return s.record(ctx, p, "truck.create", created, truckChanges(model.Truck{}, *created))
+	})
+	return created, err
 }
 
 func (s *TruckService) Get(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.Truck, error) {
@@ -134,6 +143,7 @@ func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	before := *t
 
 	if in.UnitNumber != nil {
 		t.UnitNumber = strings.TrimSpace(*in.UnitNumber)
@@ -167,14 +177,53 @@ func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUI
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
-	return s.repo.Update(ctx, *t)
+
+	var updated *model.Truck
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if updated, err = s.repo.Update(ctx, *t); err != nil {
+			return err
+		}
+		if ch := truckChanges(before, *updated); len(ch) > 0 {
+			return s.record(ctx, p, "truck.update", updated, ch)
+		}
+		return nil // nothing really changed: nothing to record
+	})
+	return updated, err
 }
 
 func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error {
-	if _, err := s.getInScope(ctx, p, id); err != nil {
+	t, err := s.getInScope(ctx, p, id)
+	if err != nil {
 		return err
 	}
-	return s.repo.SoftDelete(ctx, id)
+	return s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.repo.SoftDelete(ctx, id); err != nil {
+			return err
+		}
+		return s.record(ctx, p, "truck.delete", t, nil)
+	})
+}
+
+func (s *TruckService) record(ctx context.Context, p auth.Principal, action string, t *model.Truck, ch model.AuditChanges) error {
+	return s.audit.Record(ctx, p, model.AuditEntry{
+		Action: action, Entity: model.AuditTruck, EntityID: t.ID.String(), CompanyID: &t.CompanyID, Changes: ch,
+	})
+}
+
+// truckChanges lists the audited fields that differ (API field names).
+// For a create, old is the zero Truck.
+func truckChanges(old, new model.Truck) model.AuditChanges {
+	c := model.AuditChanges{}
+	c.Set("unit_number", old.UnitNumber, new.UnitNumber)
+	c.Set("vin", old.VIN, new.VIN)
+	c.Set("make", old.Make, new.Make)
+	c.Set("model", old.Model, new.Model)
+	c.Set("year", old.Year, new.Year)
+	c.Set("license_plate", old.LicensePlate, new.LicensePlate)
+	c.Set("plate_state", old.PlateState, new.PlateState)
+	c.Set("is_active", old.IsActive, new.IsActive)
+	return c
 }
 
 // targetCompany decides which company a new fleet record (truck, ELD

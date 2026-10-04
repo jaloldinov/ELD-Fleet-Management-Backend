@@ -65,16 +65,17 @@ type PasswordResetService struct {
 	codes    *auth.ResetCodeHasher
 	hasher   PasswordHasher
 	mailer   Mailer
+	audit    *Auditor
 	log      *slog.Logger
 }
 
 func NewPasswordResetService(
 	resets PasswordResetRepository, users PasswordResetUsers, sessions SessionRevoker, tx Transactor,
-	codes *auth.ResetCodeHasher, hasher PasswordHasher, mailer Mailer, log *slog.Logger,
+	codes *auth.ResetCodeHasher, hasher PasswordHasher, mailer Mailer, audit *Auditor, log *slog.Logger,
 ) *PasswordResetService {
 	return &PasswordResetService{
 		resets: resets, users: users, sessions: sessions, tx: tx,
-		codes: codes, hasher: hasher, mailer: mailer, log: log,
+		codes: codes, hasher: hasher, mailer: mailer, audit: audit, log: log,
 	}
 }
 
@@ -168,7 +169,7 @@ func (s *PasswordResetService) ResetPassword(ctx context.Context, token, newPass
 		return err
 	}
 
-	var userID uuid.UUID
+	var u *model.User
 	err = s.tx.WithinTx(ctx, func(ctx context.Context) error {
 		id, err := s.resets.UseToken(ctx, auth.HashResetToken(strings.TrimSpace(token)))
 		if err != nil {
@@ -178,15 +179,24 @@ func (s *PasswordResetService) ResetPassword(ctx context.Context, token, newPass
 		if err := s.users.UpdatePassword(ctx, id, hash); err != nil {
 			return invalidIfNotFound(err, model.ErrResetTokenInvalid)
 		}
-		userID = id
-		return s.sessions.RevokeAllForUser(ctx, id)
+		if err := s.sessions.RevokeAllForUser(ctx, id); err != nil {
+			return err
+		}
+		if u, err = s.users.GetByID(ctx, id); err != nil {
+			return err
+		}
+		// The user did it themselves (proven by the emailed code). The
+		// action alone: never the password or its hash.
+		return s.audit.Record(ctx, auth.Principal{UserID: id, CompanyID: u.CompanyID}, model.AuditEntry{
+			Action: "user.password_reset", Entity: model.AuditUser, EntityID: id.String(), CompanyID: u.CompanyID,
+		})
 	})
 	if err != nil {
 		return err
 	}
 
 	// Tell the owner: if they did not do this, they know at once.
-	if u, err := s.users.GetByID(ctx, userID); err == nil && u.Email != nil {
+	if u.Email != nil {
 		s.send(ctx, mail.Message{
 			To:      *u.Email,
 			Subject: "Your ELD password was changed",

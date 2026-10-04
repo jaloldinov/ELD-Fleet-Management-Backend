@@ -49,6 +49,7 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 	// Exec without arguments uses Postgres' simple protocol, which allows
 	// several statements in one call.
 	_, err = pool.Exec(context.Background(), `
+		TRUNCATE audit_logs; -- append-only: DELETE is refused, TRUNCATE is allowed
 		DELETE FROM eld_devices;
 		DELETE FROM trucks;
 		DELETE FROM drivers;

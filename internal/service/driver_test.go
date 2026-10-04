@@ -132,11 +132,12 @@ type driverSvcFixture struct {
 	tx    *fakeTx
 	users *fakeDriverUsers
 	repo  *memDriverRepo
+	audit *memAuditStore
 }
 
 func newDriverSvcFixture() *driverSvcFixture {
-	f := &driverSvcFixture{tx: &fakeTx{}, users: &fakeDriverUsers{}, repo: newMemDriverRepo()}
-	f.svc = NewDriverService(f.tx, f.users, f.repo)
+	f := &driverSvcFixture{tx: &fakeTx{}, users: &fakeDriverUsers{}, repo: newMemDriverRepo(), audit: &memAuditStore{}}
+	f.svc = NewDriverService(f.tx, f.users, f.repo, NewAuditor(f.tx, f.audit))
 	return f
 }
 
@@ -283,3 +284,25 @@ func TestDriverService_Me(t *testing.T) {
 
 // Compile-time check: the real UserService can be used as DriverUsers.
 var _ DriverUsers = (*UserService)(nil)
+
+// ---------- audit ----------
+
+func TestDriverService_AuditLicenseChanges(t *testing.T) {
+	f := newDriverSvcFixture()
+	dd, err := f.svc.Create(context.Background(), companyAUser, validDriverInput())
+	require.NoError(t, err)
+
+	created := f.audit.last(t)
+	assert.Equal(t, "driver.create", created.Action)
+	assert.Equal(t, "2028-05-31", created.Changes["license_expires_at"].New, "a date, in the API format")
+	assert.Equal(t, dd.Driver.UserID, created.Changes["user_id"].New, "links the driver to its user")
+
+	_, err = f.svc.Update(context.Background(), companyAUser, dd.Driver.ID, UpdateDriverInput{LicenseState: ptr("ok")})
+	require.NoError(t, err)
+	assert.Equal(t, model.AuditChanges{"license_state": {Old: dd.Driver.LicenseState, New: "OK"}}, f.audit.last(t).Changes)
+
+	require.NoError(t, f.svc.Delete(context.Background(), companyAUser, dd.Driver.ID))
+	assert.Equal(t, []string{"driver.create", "driver.update", "driver.delete"}, f.audit.actions())
+	assert.Equal(t, &companyA, f.audit.last(t).CompanyID)
+	f.audit.requireAllInTx(t)
+}

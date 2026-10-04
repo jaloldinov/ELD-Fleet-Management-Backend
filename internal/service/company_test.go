@@ -90,7 +90,7 @@ func TestCompanyService_Create_Valid(t *testing.T) {
 		c.IsActive = true
 		return &c, nil
 	}}
-	svc := NewCompanyService(repo)
+	svc := NewCompanyService(repo, noAudit())
 
 	got, err := svc.Create(context.Background(), platformAdmin, CreateCompanyInput{
 		Name: "  Acme Freight  ", DOTNumber: " 1234567 ", Timezone: "America/Chicago",
@@ -126,7 +126,7 @@ func TestCompanyService_Create_Invalid(t *testing.T) {
 			in := valid
 			tt.modify(&in)
 			// No createFn: if validation fails to stop the call, the fake fails the test.
-			svc := NewCompanyService(&fakeCompanyRepo{t: t})
+			svc := NewCompanyService(&fakeCompanyRepo{t: t}, noAudit())
 
 			got, err := svc.Create(context.Background(), platformAdmin, in)
 
@@ -137,7 +137,7 @@ func TestCompanyService_Create_Invalid(t *testing.T) {
 }
 
 func TestCompanyService_Create_ReportsAllInvalidFields(t *testing.T) {
-	svc := NewCompanyService(&fakeCompanyRepo{t: t})
+	svc := NewCompanyService(&fakeCompanyRepo{t: t}, noAudit())
 
 	_, err := svc.Create(context.Background(), platformAdmin, CreateCompanyInput{})
 
@@ -150,7 +150,7 @@ func TestCompanyService_Create_RepositoryErrorIsReturned(t *testing.T) {
 	repo := &fakeCompanyRepo{t: t, createFn: func(model.Company) (*model.Company, error) {
 		return nil, model.ErrDOTNumberTaken
 	}}
-	svc := NewCompanyService(repo)
+	svc := NewCompanyService(repo, noAudit())
 
 	_, err := svc.Create(context.Background(), platformAdmin, CreateCompanyInput{
 		Name: "Acme", DOTNumber: "1", Timezone: "UTC",
@@ -166,7 +166,7 @@ func TestCompanyService_GetByID_NotFound(t *testing.T) {
 		return nil, model.ErrNotFound
 	}}
 
-	_, err := NewCompanyService(repo).GetByID(context.Background(), platformAdmin, uuid.New())
+	_, err := NewCompanyService(repo, noAudit()).GetByID(context.Background(), platformAdmin, uuid.New())
 
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
@@ -179,7 +179,7 @@ func TestCompanyService_Delete(t *testing.T) {
 		return nil
 	}}
 
-	err := NewCompanyService(repo).Delete(context.Background(), platformAdmin, id)
+	err := NewCompanyService(repo, noAudit()).Delete(context.Background(), platformAdmin, id)
 
 	require.NoError(t, err)
 	assert.Equal(t, id, deletedID)
@@ -208,7 +208,7 @@ func TestCompanyService_List_Pagination(t *testing.T) {
 				return []model.Company{{Name: "A"}}, 42, nil
 			}}
 
-			page, err := NewCompanyService(repo).List(context.Background(), platformAdmin, tt.in)
+			page, err := NewCompanyService(repo, noAudit()).List(context.Background(), platformAdmin, tt.in)
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantLimit, gotLimit)
@@ -245,7 +245,7 @@ func TestCompanyService_Update_OnlyChangesProvidedFields(t *testing.T) {
 		},
 	}
 
-	_, err := NewCompanyService(repo).Update(context.Background(), platformAdmin, current.ID, UpdateCompanyInput{
+	_, err := NewCompanyService(repo, noAudit()).Update(context.Background(), platformAdmin, current.ID, UpdateCompanyInput{
 		Name:     ptr(" Acme LLC "),
 		IsActive: ptr(false), // explicit false must be applied, not ignored
 	})
@@ -258,7 +258,7 @@ func TestCompanyService_Update_OnlyChangesProvidedFields(t *testing.T) {
 }
 
 func TestCompanyService_Update_EmptyInput(t *testing.T) {
-	svc := NewCompanyService(&fakeCompanyRepo{t: t}) // must not touch the repo
+	svc := NewCompanyService(&fakeCompanyRepo{t: t}, noAudit()) // must not touch the repo
 
 	_, err := svc.Update(context.Background(), platformAdmin, uuid.New(), UpdateCompanyInput{})
 
@@ -270,7 +270,7 @@ func TestCompanyService_Update_NotFound(t *testing.T) {
 		return nil, model.ErrNotFound
 	}} // no updateFn: Update must not be called
 
-	_, err := NewCompanyService(repo).Update(context.Background(), platformAdmin, uuid.New(), UpdateCompanyInput{
+	_, err := NewCompanyService(repo, noAudit()).Update(context.Background(), platformAdmin, uuid.New(), UpdateCompanyInput{
 		Name: ptr("New"),
 	})
 
@@ -284,7 +284,7 @@ func TestCompanyService_Update_InvalidValue(t *testing.T) {
 		return &c, nil
 	}} // no updateFn: invalid data must not be saved
 
-	_, err := NewCompanyService(repo).Update(context.Background(), platformAdmin, current.ID, UpdateCompanyInput{
+	_, err := NewCompanyService(repo, noAudit()).Update(context.Background(), platformAdmin, current.ID, UpdateCompanyInput{
 		Timezone: ptr("Not/AZone"),
 	})
 
@@ -311,7 +311,7 @@ func TestCompanyService_List_ScopedForCompanyUsers(t *testing.T) {
 				return nil, 0, nil
 			}}
 
-			_, err := NewCompanyService(repo).List(context.Background(), tt.principal, ListParams{})
+			_, err := NewCompanyService(repo, noAudit()).List(context.Background(), tt.principal, ListParams{})
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantOnlyID, got.OnlyID)
@@ -322,7 +322,7 @@ func TestCompanyService_List_ScopedForCompanyUsers(t *testing.T) {
 func TestCompanyService_OtherTenantIsNotFound(t *testing.T) {
 	otherCompany := uuid.New()
 	// No repo functions set: an out-of-scope request must never reach the database.
-	svc := NewCompanyService(&fakeCompanyRepo{t: t})
+	svc := NewCompanyService(&fakeCompanyRepo{t: t}, noAudit())
 
 	_, err := svc.GetByID(context.Background(), companyAUser, otherCompany)
 	assert.ErrorIs(t, err, model.ErrNotFound, "404, not 403: do not reveal that it exists")
@@ -338,7 +338,7 @@ func TestCompanyService_OwnCompany(t *testing.T) {
 		getByIDFn: func(uuid.UUID) (*model.Company, error) { c := *own; return &c, nil },
 		updateFn:  func(c model.Company) (*model.Company, error) { return &c, nil },
 	}
-	svc := NewCompanyService(repo)
+	svc := NewCompanyService(repo, noAudit())
 
 	t.Run("can read", func(t *testing.T) {
 		got, err := svc.GetByID(context.Background(), companyAUser, companyA)
@@ -361,11 +361,34 @@ func TestCompanyService_OwnCompany(t *testing.T) {
 func TestCompanyService_CreateAndDeleteArePlatformOnly(t *testing.T) {
 	// Defense in depth: even if a company role were wrongly granted
 	// company:create / company:delete, the service refuses.
-	svc := NewCompanyService(&fakeCompanyRepo{t: t}) // repo must not be called
+	svc := NewCompanyService(&fakeCompanyRepo{t: t}, noAudit()) // repo must not be called
 
 	_, err := svc.Create(context.Background(), companyAUser, CreateCompanyInput{Name: "X", DOTNumber: "1", Timezone: "UTC"})
 	assert.ErrorIs(t, err, model.ErrForbidden)
 
 	err = svc.Delete(context.Background(), companyAUser, companyA)
 	assert.ErrorIs(t, err, model.ErrForbidden, "not even their own company")
+}
+
+// noAudit returns an auditor whose entries nobody looks at.
+func noAudit() *Auditor {
+	a, _ := newTestAuditor()
+	return a
+}
+
+func TestCompanyService_Audit(t *testing.T) {
+	repo := &fakeCompanyRepo{t: t,
+		createFn: func(c model.Company) (*model.Company, error) { c.ID = uuid.New(); c.IsActive = true; return &c, nil },
+	}
+	audit, store := newTestAuditor()
+	svc := NewCompanyService(repo, audit)
+
+	c, err := svc.Create(context.Background(), platformAdmin, CreateCompanyInput{Name: "Acme", DOTNumber: "123", Timezone: "UTC"})
+	require.NoError(t, err)
+
+	e := store.last(t)
+	assert.Equal(t, "company.create", e.Action)
+	assert.Equal(t, &c.ID, e.CompanyID, "the company's own history belongs to it")
+	assert.Equal(t, "Acme", e.Changes["name"].New)
+	store.requireAllInTx(t)
 }

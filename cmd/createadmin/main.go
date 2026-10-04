@@ -72,6 +72,8 @@ func run() error {
 		repository.NewCompanyRepository(pool),
 		repository.NewSessionRepository(pool),
 		auth.NewBcryptHasher(auth.DefaultBcryptCost),
+		// Recorded like any change; the actor is the system (no user).
+		service.NewAuditor(repository.NewTxManager(pool), repository.NewAuditRepository(pool)),
 	)
 
 	// The CLI acts as the system itself: the explicit SystemPrincipal makes
