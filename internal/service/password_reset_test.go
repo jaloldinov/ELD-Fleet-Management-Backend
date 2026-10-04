@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
-	"github.com/jaloldinov/ELD-learning/internal/mail"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/mail"
 	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 

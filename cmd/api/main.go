@@ -20,14 +20,14 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/config"
 	"github.com/jaloldinov/ELD-learning/internal/database"
 	"github.com/jaloldinov/ELD-learning/internal/handler"
-	"github.com/jaloldinov/ELD-learning/internal/jobs"
 	"github.com/jaloldinov/ELD-learning/internal/logger"
-	"github.com/jaloldinov/ELD-learning/internal/mail"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
 	"github.com/jaloldinov/ELD-learning/internal/model"
-	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/jobs"
+	"github.com/jaloldinov/ELD-learning/pkg/mail"
+	"github.com/jaloldinov/ELD-learning/pkg/ratelimit"
 )
 
 // General API information for Swagger (read by `make swagger`).

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jaloldinov/ELD-learning/internal/logger"
-	"github.com/jaloldinov/ELD-learning/internal/requestid"
+	"github.com/jaloldinov/ELD-learning/pkg/requestid"
 )
 
 func init() {

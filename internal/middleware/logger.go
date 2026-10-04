@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
-	"github.com/jaloldinov/ELD-learning/internal/requestid"
+	"github.com/jaloldinov/ELD-learning/pkg/requestid"
 )
 
 // RequestLogger writes one structured log line per HTTP request.

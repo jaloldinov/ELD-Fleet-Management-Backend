@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/jaloldinov/ELD-learning/internal/requestid"
+	"github.com/jaloldinov/ELD-learning/pkg/requestid"
 )
 
 const RequestIDHeader = "X-Request-ID"

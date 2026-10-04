@@ -9,7 +9,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
-	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
+	"github.com/jaloldinov/ELD-learning/pkg/ratelimit"
 	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 

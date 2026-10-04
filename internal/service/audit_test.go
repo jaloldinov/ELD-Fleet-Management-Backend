@@ -10,7 +10,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
-	"github.com/jaloldinov/ELD-learning/internal/requestid"
+	"github.com/jaloldinov/ELD-learning/pkg/requestid"
 )
 
 // memAuditStore records entries, and whether each was written inside a

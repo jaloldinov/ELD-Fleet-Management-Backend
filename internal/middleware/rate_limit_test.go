@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jaloldinov/ELD-learning/internal/ratelimit"
+	"github.com/jaloldinov/ELD-learning/pkg/ratelimit"
 )
 
 func TestRateLimitByIP(t *testing.T) {

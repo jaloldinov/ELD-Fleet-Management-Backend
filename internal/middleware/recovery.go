@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/jaloldinov/ELD-learning/internal/requestid"
+	"github.com/jaloldinov/ELD-learning/pkg/requestid"
 )
 
 // Recovery catches a panic in any later middleware or handler, logs it with a
