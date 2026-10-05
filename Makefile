@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run test test-integration test-db test-db-reset build create-admin swagger swagger-check \
+.PHONY: run test test-integration test-e2e test-db test-db-reset build create-admin swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -23,6 +23,12 @@ test:
 # -p 1 runs packages one at a time, because they share the same test database.
 test-integration: test-db
 	go test ./... -race -cover -p 1
+
+# Only the end-to-end tests: builds and starts the real API against eld_test
+# and drives it over HTTP. -count=1: always rerun (the binary may have changed
+# even when no test file did, and Go's test cache would not notice).
+test-e2e: test-db
+	go test ./e2e/... -count=1 -v
 
 # Creates the eld_test database if missing and applies all migrations to it.
 test-db:
