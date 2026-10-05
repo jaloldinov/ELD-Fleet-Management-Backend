@@ -13,7 +13,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
-	"github.com/jaloldinov/ELD-learning/pkg/mail"
+	"github.com/jaloldinov/ELD-learning/internal/notify"
 	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
@@ -35,9 +35,11 @@ type PasswordResetUsers interface {
 	UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) error
 }
 
-// Mailer sends an email (mail.Async in production: returns at once).
-type Mailer interface {
-	Send(ctx context.Context, m mail.Message) error
+// Notifier tells users things over their channel (notify.Notifier): the
+// service says WHAT (a code, a notice), the channel decides HOW (email
+// today; Telegram or SMS later, without changes here).
+type Notifier interface {
+	Send(ctx context.Context, to notify.Recipient, m notify.Message) error
 }
 
 const (
@@ -64,18 +66,18 @@ type PasswordResetService struct {
 	tx       Transactor
 	codes    *auth.ResetCodeHasher
 	hasher   PasswordHasher
-	mailer   Mailer
+	notifier Notifier
 	audit    *Auditor
 	log      *slog.Logger
 }
 
 func NewPasswordResetService(
 	resets PasswordResetRepository, users PasswordResetUsers, sessions SessionRevoker, tx Transactor,
-	codes *auth.ResetCodeHasher, hasher PasswordHasher, mailer Mailer, audit *Auditor, log *slog.Logger,
+	codes *auth.ResetCodeHasher, hasher PasswordHasher, notifier Notifier, audit *Auditor, log *slog.Logger,
 ) *PasswordResetService {
 	return &PasswordResetService{
 		resets: resets, users: users, sessions: sessions, tx: tx,
-		codes: codes, hasher: hasher, mailer: mailer, audit: audit, log: log,
+		codes: codes, hasher: hasher, notifier: notifier, audit: audit, log: log,
 	}
 }
 
@@ -104,16 +106,8 @@ func (s *PasswordResetService) RequestReset(ctx context.Context, email string) e
 		return err
 	}
 
-	// The code is in the body only: subjects show up on lock screens and in
-	// our logs (mail.Async logs the subject of failed deliveries).
-	s.send(ctx, mail.Message{
-		To:      *u.Email,
-		Subject: "Your ELD password reset code",
-		Text: fmt.Sprintf("Hello %s,\n\n"+
-			"Your password reset code is: %s\n\n"+
-			"It expires in %d minutes. If you did not ask to reset your password, "+
-			"ignore this email: your password stays unchanged.\n\n— ELD",
-			u.FirstName, code, int(resetCodeTTL.Minutes())),
+	s.send(ctx, recipientOf(u), notify.OTPCode{
+		Purpose: notify.PurposePasswordReset, Code: code, ExpiresIn: resetCodeTTL,
 	})
 	return nil
 }
@@ -197,13 +191,7 @@ func (s *PasswordResetService) ResetPassword(ctx context.Context, token, newPass
 
 	// Tell the owner: if they did not do this, they know at once.
 	if u.Email != nil {
-		s.send(ctx, mail.Message{
-			To:      *u.Email,
-			Subject: "Your ELD password was changed",
-			Text: fmt.Sprintf("Hello %s,\n\n"+
-				"The password of your ELD account was just changed, and you were logged out everywhere.\n\n"+
-				"If this was not you, contact your administrator immediately.\n\n— ELD", u.FirstName),
-		})
+		s.send(ctx, recipientOf(u), notify.PasswordChanged{})
 	}
 	return nil
 }
@@ -221,12 +209,19 @@ func (s *PasswordResetService) activeUserByEmail(ctx context.Context, email stri
 	return u, nil
 }
 
-// send hands m to the mailer. A failure (queue full) is logged, not
-// returned: an error would only happen for existing accounts, so returning
-// it would tell the client the account exists.
-func (s *PasswordResetService) send(ctx context.Context, m mail.Message) {
-	if err := s.mailer.Send(ctx, m); err != nil {
-		s.log.Error("could not queue email", "to", m.To, "subject", m.Subject, "error", err)
+// recipientOf: where to reach u. Email for now (callers check u.Email);
+// this is the one place to prefer another channel (e.g. a linked Telegram
+// account) once users have one.
+func recipientOf(u *model.User) notify.Recipient {
+	return notify.Recipient{Channel: notify.ChannelEmail, Address: *u.Email, Name: u.FirstName}
+}
+
+// send hands m to the notifier. A failure (queue full, channel down) is
+// logged, not returned: an error would only happen for existing accounts,
+// so returning it would tell the client the account exists.
+func (s *PasswordResetService) send(ctx context.Context, to notify.Recipient, m notify.Message) {
+	if err := s.notifier.Send(ctx, to, m); err != nil {
+		s.log.Error("could not send notification", "channel", to.Channel, "message", fmt.Sprintf("%T", m), "error", err)
 	}
 }
 

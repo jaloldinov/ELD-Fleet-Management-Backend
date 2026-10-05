@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"regexp"
 	"testing"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
-	"github.com/jaloldinov/ELD-learning/pkg/mail"
+	"github.com/jaloldinov/ELD-learning/internal/notify"
 	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
@@ -114,29 +113,40 @@ func (f *fakeResetUsers) UpdatePassword(ctx context.Context, id uuid.UUID, hash 
 	return nil
 }
 
-type recordingMailer struct {
-	sent []mail.Message
+type sentNotification struct {
+	to notify.Recipient
+	m  notify.Message
+}
+
+type recordingNotifier struct {
+	sent []sentNotification
 	err  error
 }
 
-func (r *recordingMailer) Send(_ context.Context, m mail.Message) error {
+func (r *recordingNotifier) Send(_ context.Context, to notify.Recipient, m notify.Message) error {
 	if r.err != nil {
 		return r.err
 	}
-	r.sent = append(r.sent, m)
+	r.sent = append(r.sent, sentNotification{to, m})
 	return nil
 }
 
+func (r *recordingNotifier) last(t *testing.T) sentNotification {
+	t.Helper()
+	require.NotEmpty(t, r.sent, "a notification was sent")
+	return r.sent[len(r.sent)-1]
+}
+
 type resetFixture struct {
-	svc     *PasswordResetService
-	resets  *memResets
-	users   *fakeResetUsers
-	revoker *fakeRevoker
-	tx      *fakeTx
-	mailer  *recordingMailer
-	audit   *memAuditStore
-	log     *bytes.Buffer
-	jane    *model.User
+	svc      *PasswordResetService
+	resets   *memResets
+	users    *fakeResetUsers
+	revoker  *fakeRevoker
+	tx       *fakeTx
+	notifier *recordingNotifier
+	audit    *memAuditStore
+	log      *bytes.Buffer
+	jane     *model.User
 }
 
 func newResetFixture(t *testing.T) *resetFixture {
@@ -144,31 +154,28 @@ func newResetFixture(t *testing.T) *resetFixture {
 	email := "jane@acme.com"
 	jane := &model.User{ID: uuid.New(), Email: &email, FirstName: "Jane", IsActive: true}
 	f := &resetFixture{
-		resets:  &memResets{rows: map[uuid.UUID]*memReset{}},
-		users:   &fakeResetUsers{byID: map[uuid.UUID]*model.User{jane.ID: jane}, updated: map[uuid.UUID]string{}},
-		revoker: &fakeRevoker{},
-		tx:      &fakeTx{},
-		mailer:  &recordingMailer{},
-		audit:   &memAuditStore{},
-		log:     &bytes.Buffer{},
-		jane:    jane,
+		resets:   &memResets{rows: map[uuid.UUID]*memReset{}},
+		users:    &fakeResetUsers{byID: map[uuid.UUID]*model.User{jane.ID: jane}, updated: map[uuid.UUID]string{}},
+		revoker:  &fakeRevoker{},
+		tx:       &fakeTx{},
+		notifier: &recordingNotifier{},
+		audit:    &memAuditStore{},
+		log:      &bytes.Buffer{},
+		jane:     jane,
 	}
 	f.svc = NewPasswordResetService(f.resets, f.users, f.revoker, f.tx,
-		auth.NewResetCodeHasher("test-secret-test-secret-test-1234"), fakeHasher{}, f.mailer, NewAuditor(f.tx, f.audit),
+		auth.NewResetCodeHasher("test-secret-test-secret-test-1234"), fakeHasher{}, f.notifier, NewAuditor(f.tx, f.audit),
 		slog.New(slog.NewTextHandler(f.log, nil)))
 	return f
 }
 
-var codeInMail = regexp.MustCompile(`code is: ([0-9]{6})`)
-
-// requestCode runs step 1 and returns the code from the email.
+// requestCode runs step 1 and returns the code that was sent.
 func (f *resetFixture) requestCode(t *testing.T) string {
 	t.Helper()
 	require.NoError(t, f.svc.RequestReset(context.Background(), "jane@acme.com"))
-	require.NotEmpty(t, f.mailer.sent)
-	m := codeInMail.FindStringSubmatch(f.mailer.sent[len(f.mailer.sent)-1].Text)
-	require.Len(t, m, 2, "the email contains the code")
-	return m[1]
+	otp, ok := f.notifier.last(t).m.(notify.OTPCode)
+	require.True(t, ok, "an OTP code was sent")
+	return otp.Code
 }
 
 func wrongCode(code string) string {
@@ -185,11 +192,12 @@ func TestRequestReset_EmailsACode(t *testing.T) {
 
 	code := f.requestCode(t)
 
-	m := f.mailer.sent[0]
-	assert.Equal(t, "jane@acme.com", m.To)
-	assert.NotContains(t, m.Subject, code, "never in the subject (lock screens, logs)")
-	assert.Contains(t, m.Text, "Hello Jane")
-	assert.Contains(t, m.Text, "10 minutes")
+	// WHAT is sent and to whom; HOW it looks is the channel's job
+	// (tested in the notify package).
+	sent := f.notifier.sent[0]
+	assert.Equal(t, notify.Recipient{Channel: notify.ChannelEmail, Address: "jane@acme.com", Name: "Jane"}, sent.to)
+	assert.Equal(t, notify.OTPCode{Purpose: notify.PurposePasswordReset, Code: code, ExpiresIn: 10 * time.Minute}, sent.m)
+	assert.Regexp(t, `^[0-9]{6}$`, code)
 	pr, err := f.resets.GetPending(context.Background(), f.jane.ID)
 	require.NoError(t, err)
 	assert.NotContains(t, string(pr.CodeHash), code, "only the hash is stored")
@@ -214,7 +222,7 @@ func TestRequestReset_SilentWhenNoAccount(t *testing.T) {
 			}
 
 			assert.NoError(t, f.svc.RequestReset(context.Background(), email))
-			assert.Empty(t, f.mailer.sent)
+			assert.Empty(t, f.notifier.sent)
 		})
 	}
 
@@ -223,7 +231,7 @@ func TestRequestReset_SilentWhenNoAccount(t *testing.T) {
 		f.users.byID[uuid.New()] = &model.User{Username: &username, IsActive: true}
 
 		assert.NoError(t, f.svc.RequestReset(context.Background(), "driver1@acme.com"))
-		assert.Empty(t, f.mailer.sent)
+		assert.Empty(t, f.notifier.sent)
 	})
 }
 
@@ -239,12 +247,12 @@ func TestRequestReset_InvalidEmail(t *testing.T) {
 
 func TestRequestReset_MailerFailureIsLoggedNotReturned(t *testing.T) {
 	f := newResetFixture(t)
-	f.mailer.err = mail.ErrQueueFull
+	f.notifier.err = errors.New("queue full")
 
 	err := f.svc.RequestReset(context.Background(), "jane@acme.com")
 
 	assert.NoError(t, err, "an error only for existing accounts would reveal them")
-	assert.Contains(t, f.log.String(), "could not queue email")
+	assert.Contains(t, f.log.String(), "could not send notification")
 }
 
 func TestRequestReset_NewCodeReplacesOld(t *testing.T) {
@@ -335,8 +343,7 @@ func TestResetPassword_FullFlow(t *testing.T) {
 	assert.Equal(t, "hashed:new-strong-password", f.users.updated[f.jane.ID])
 	assert.True(t, f.users.updateInTx, "password change and logout are one transaction")
 	assert.Equal(t, []uuid.UUID{f.jane.ID}, f.revoker.revoked, "logged out everywhere")
-	last := f.mailer.sent[len(f.mailer.sent)-1]
-	assert.Equal(t, "Your ELD password was changed", last.Subject, "the owner is told")
+	assert.Equal(t, notify.PasswordChanged{}, f.notifier.last(t).m, "the owner is told")
 
 	err = f.svc.ResetPassword(context.Background(), token, "another-password")
 	assert.ErrorIs(t, err, model.ErrResetTokenInvalid, "a token works once")

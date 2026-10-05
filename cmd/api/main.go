@@ -23,6 +23,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/logger"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/internal/notify"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/service"
 	"github.com/jaloldinov/ELD-learning/pkg/jobs"
@@ -173,7 +174,7 @@ func run() error {
 	// Email (password reset codes). Sent in the background, so a request
 	// never waits for the mail server. Without SMTP_HOST, emails are only
 	// logged (without their body) and "forgot password" cannot work.
-	var mailer service.Mailer = mail.Disabled{Log: log}
+	var mailer mail.Sender = mail.Disabled{Log: log}
 	var mailQueue *mail.Async
 	if cfg.SMTPHost != "" {
 		smtpSender, err := mail.NewSMTP(mail.SMTPConfig{
@@ -191,9 +192,15 @@ func run() error {
 		log.Warn("SMTP_HOST not set; emails are not sent (password reset will not work)")
 	}
 
+	// Notifications (OTP codes, security notices), routed by channel. A new
+	// channel (e.g. Telegram) is one Transport registered here; services
+	// do not change.
+	notifier := notify.New().
+		Register(notify.ChannelEmail, notify.NewEmail(mailer))
+
 	resetRepo := repository.NewPasswordResetRepository(pool)
 	passwordResetSvc := service.NewPasswordResetService(resetRepo, userRepo, sessionRepo, txManager,
-		auth.NewResetCodeHasher(cfg.JWTSecret), hasher, mailer, auditor, log)
+		auth.NewResetCodeHasher(cfg.JWTSecret), hasher, notifier, auditor, log)
 
 	// Hourly: delete password resets older than a day (they expire after
 	// 10 minutes; a day keeps recent ones for investigating abuse).
