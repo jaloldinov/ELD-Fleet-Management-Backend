@@ -57,6 +57,12 @@ func handleError(c *gin.Context, err error) {
 		apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden, err.Error(), nil)
 	case errors.Is(err, model.ErrUserInactive):
 		apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden, err.Error(), nil)
+	case errors.Is(err, model.ErrPaymentProvider):
+		// 502 Bad Gateway: "a server we depend on failed", not our bug. The
+		// Stripe error is logged; the client gets no Stripe internals.
+		_ = c.Error(err)
+		apierror.Respond(c, http.StatusBadGateway, apierror.CodePaymentProvider,
+			"the payment provider could not complete the request; try again later", nil)
 	default:
 		// Unexpected error: a bug or an outage. Attach it to the context so the
 		// RequestLogger middleware logs it, and hide the details from the client.

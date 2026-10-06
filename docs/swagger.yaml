@@ -165,6 +165,41 @@ definitions:
         example: PT30-0001
         type: string
     type: object
+  handler.CreatePriceRequest:
+    properties:
+      billing_unit:
+        description: company = flat amount per company; truck = per active truck.
+          Never changes later.
+        enum:
+        - company
+        - truck
+        example: truck
+        type: string
+      interval:
+        description: month or year. Never changes later.
+        enum:
+        - month
+        - year
+        example: month
+        type: string
+      nickname:
+        example: Monthly
+        type: string
+      unit_amount:
+        description: 'Amount in cents: 2500 = $25.00. 0 to 99999999. Never changes
+          later.'
+        example: 2500
+        type: integer
+    type: object
+  handler.CreateProductRequest:
+    properties:
+      description:
+        example: Hours of service and DVIR for every truck
+        type: string
+      name:
+        example: ELD Fleet plan
+        type: string
+    type: object
   handler.CreateTruckRequest:
     properties:
       company_id:
@@ -384,6 +419,22 @@ definitions:
         example: 14
         type: integer
     type: object
+  handler.ListProductsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.ProductResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 3
+        type: integer
+    type: object
   handler.ListRateLimitsResponse:
     properties:
       items:
@@ -477,6 +528,68 @@ definitions:
         type: array
       username:
         example: jane.smith
+        type: string
+    type: object
+  handler.PriceResponse:
+    properties:
+      billing_unit:
+        example: truck
+        type: string
+      created_at:
+        example: "2026-10-06T11:26:26Z"
+        type: string
+      currency:
+        example: usd
+        type: string
+      id:
+        format: uuid
+        type: string
+      interval:
+        example: month
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      nickname:
+        example: Monthly
+        type: string
+      product_id:
+        format: uuid
+        type: string
+      stripe_price_id:
+        description: 'Stripe''s id: find the price in the Stripe Dashboard.'
+        example: price_1QabcDEFghiJKL
+        type: string
+      unit_amount:
+        example: 2500
+        type: integer
+    type: object
+  handler.ProductResponse:
+    properties:
+      created_at:
+        example: "2026-10-06T11:26:26Z"
+        type: string
+      description:
+        example: Hours of service and DVIR for every truck
+        type: string
+      id:
+        format: uuid
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      name:
+        example: ELD Fleet plan
+        type: string
+      prices:
+        items:
+          $ref: '#/definitions/handler.PriceResponse'
+        type: array
+      stripe_product_id:
+        example: prod_QabcDEFghiJKL
+        type: string
+      updated_at:
+        example: "2026-10-06T11:26:26Z"
         type: string
     type: object
   handler.RateLimitResponse:
@@ -635,6 +748,29 @@ definitions:
         example: PT30
         type: string
     type: object
+  handler.UpdatePriceRequest:
+    properties:
+      is_active:
+        description: false archives, true restores.
+        example: false
+        type: boolean
+      nickname:
+        example: Monthly (2026)
+        type: string
+    type: object
+  handler.UpdateProductRequest:
+    properties:
+      description:
+        example: Now with IFTA reports
+        type: string
+      is_active:
+        description: false archives, true restores.
+        example: true
+        type: boolean
+      name:
+        example: ELD Fleet plan
+        type: string
+    type: object
   handler.UpdateRateLimitRequest:
     properties:
       limit:
@@ -771,6 +907,8 @@ paths:
         - truck
         - eld_device
         - rate_limit
+        - product
+        - price
         in: query
         name: entity
         type: string
@@ -1936,6 +2074,354 @@ paths:
       summary: Install a device in a truck
       tags:
       - eld-devices
+  /api/v1/prices/{id}:
+    patch:
+      consumes:
+      - application/json
+      description: 'Requires permission: product:update (platform only). Only nickname
+        and is_active can change.'
+      parameters:
+      - description: Price ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdatePriceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.PriceResponse'
+        "400":
+          description: invalid JSON (unit_amount etc. are unknown fields here) or
+            validation failed
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission product:update, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Rename, archive or restore a price
+      tags:
+      - billing
+  /api/v1/products:
+    get:
+      description: |-
+        Requires permission: product:read
+        Company users get only active products with active prices (what they can subscribe to); is_active is ignored for them.
+      parameters:
+      - description: Only active (true) or archived (false) products (platform users
+          only)
+        in: query
+        name: is_active
+        type: boolean
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListProductsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission product:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: List products with their prices
+      tags:
+      - billing
+    post:
+      consumes:
+      - application/json
+      description: 'Requires permission: product:create (platform only). Created in
+        Stripe first, then saved here.'
+      parameters:
+      - description: Product to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.ProductResponse'
+        "400":
+          description: invalid JSON or validation failed
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission product:create, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Create a product
+      tags:
+      - billing
+  /api/v1/products/{id}:
+    delete:
+      description: |-
+        Requires permission: product:delete (platform only).
+        Nothing is deleted: existing subscriptions keep it, new ones cannot choose it. Restore with PATCH is_active=true.
+      parameters:
+      - description: Product ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission product:delete, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Archive a product
+      tags:
+      - billing
+    get:
+      description: 'Requires permission: product:read. Archived products are not found
+        for company users.'
+      parameters:
+      - description: Product ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ProductResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission product:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Get a product with its prices
+      tags:
+      - billing
+    patch:
+      consumes:
+      - application/json
+      description: 'Requires permission: product:update (platform only). is_active=false
+        archives, true restores.'
+      parameters:
+      - description: Product ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.UpdateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ProductResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission product:update, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Update a product
+      tags:
+      - billing
+  /api/v1/products/{id}/prices:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: product:create (platform only).
+        Amount, interval and billing unit can never change afterwards: to change a price, create a new one and archive the old one.
+      parameters:
+      - description: Product ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Price to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreatePriceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.PriceResponse'
+        "400":
+          description: invalid JSON, validation failed, or the product is archived
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission product:create, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: product not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Add a price to a product
+      tags:
+      - billing
   /api/v1/rate-limits:
     get:
       description: 'Requires permission: ratelimit:read (platform users only)'

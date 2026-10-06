@@ -28,6 +28,8 @@ const (
 	CodeTooLarge     = "payload_too_large"
 	CodeRateLimited  = "rate_limited"
 	CodeInternal     = "internal_error"
+	// Stripe refused a request or could not be reached (HTTP 502).
+	CodePaymentProvider = "payment_provider_error"
 
 	// Password reset: "wrong or expired code, try again" vs "the reset
 	// token is no longer valid, start over".

@@ -87,6 +87,8 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		RateLimit: handler.NewRateLimitHandler(nil),
 		Password:  handler.NewPasswordResetHandler(nil, nil),
 		AuditLog:  handler.NewAuditLogHandler(nil),
+		// Billing on, so the generic route checks below cover its routes too.
+		Product: handler.NewProductHandler(nil),
 	})
 }
 
@@ -356,4 +358,31 @@ func TestRouter_SetPasswordNeedsItsOwnPermission(t *testing.T) {
 	var body apierror.Response
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, string(model.PermUserSetPassword), body.Error.Details["permission"])
+}
+
+func TestRouter_BillingRoutesOnlyWhenEnabled(t *testing.T) {
+	// Billing on: an invalid UUID reaches the handler (400).
+	on := newTestRouter(&bytes.Buffer{})
+	assert.Equal(t, http.StatusBadRequest, send(on, http.MethodGet, "/api/v1/products/not-a-uuid", authHeader).Code)
+
+	// Billing off (no Stripe keys): the routes do not exist.
+	gin.SetMode(gin.TestMode)
+	log := logger.New(&bytes.Buffer{}, true, "debug")
+	sec := handler.RouterSecurity{Tokens: fakeTokens{}, Permissions: fakePermissions(model.AllPermissions()),
+		AuthLimiter: ratelimit.New(1000, time.Minute)}
+	off := handler.NewRouter(log, handler.RouterOptions{}, sec, handler.Handlers{
+		Health:    handler.NewHealthHandler(okPinger{}, log),
+		Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
+		User:      handler.NewUserHandler(nil),
+		Driver:    handler.NewDriverHandler(nil),
+		Truck:     handler.NewTruckHandler(nil),
+		ELDDevice: handler.NewELDDeviceHandler(nil),
+		Company:   handler.NewCompanyHandler(nil),
+		RateLimit: handler.NewRateLimitHandler(nil),
+		Password:  handler.NewPasswordResetHandler(nil, nil),
+		AuditLog:  handler.NewAuditLogHandler(nil),
+	})
+	for _, path := range []string{"/api/v1/products", "/api/v1/products/" + uuid.NewString()} {
+		assert.Equal(t, http.StatusNotFound, send(off, http.MethodGet, path, authHeader).Code, path)
+	}
 }

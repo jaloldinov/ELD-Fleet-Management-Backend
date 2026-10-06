@@ -41,4 +41,9 @@ var (
 	// "expired" and "too many attempts" all look the same to the client.
 	ErrResetCodeInvalid  = errors.New("invalid or expired code")
 	ErrResetTokenInvalid = errors.New("invalid or expired reset token")
+
+	// ErrPaymentProvider: Stripe refused a request or could not be reached.
+	// Wrapped around the Stripe error (errors.Is still finds this one), so
+	// the details are logged while clients get a short 502.
+	ErrPaymentProvider = errors.New("payment provider error")
 )

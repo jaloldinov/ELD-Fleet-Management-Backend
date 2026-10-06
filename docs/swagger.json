@@ -31,7 +31,9 @@
                             "driver",
                             "truck",
                             "eld_device",
-                            "rate_limit"
+                            "rate_limit",
+                            "product",
+                            "price"
                         ],
                         "type": "string",
                         "description": "Entity type",
@@ -1739,6 +1741,522 @@
                 }
             }
         },
+        "/api/v1/prices/{id}": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: product:update (platform only). Only nickname and is_active can change.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Rename, archive or restore a price",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Price ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.UpdatePriceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.PriceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON (unit_amount etc. are unknown fields here) or validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission product:update, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/products": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: product:read\nCompany users get only active products with active prices (what they can subscribe to); is_active is ignored for them.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "List products with their prices",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Only active (true) or archived (false) products (platform users only)",
+                        "name": "is_active",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListProductsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission product:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: product:create (platform only). Created in Stripe first, then saved here.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Create a product",
+                "parameters": [
+                    {
+                        "description": "Product to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreateProductRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ProductResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON or validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission product:create, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/products/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: product:read. Archived products are not found for company users.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Get a product with its prices",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Product ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ProductResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission product:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: product:delete (platform only).\nNothing is deleted: existing subscriptions keep it, new ones cannot choose it. Restore with PATCH is_active=true.",
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Archive a product",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Product ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission product:delete, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: product:update (platform only). is_active=false archives, true restores.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Update a product",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Product ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.UpdateProductRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ProductResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission product:update, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/products/{id}/prices": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: product:create (platform only).\nAmount, interval and billing unit can never change afterwards: to change a price, create a new one and archive the old one.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Add a price to a product",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Product ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Price to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreatePriceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.PriceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON, validation failed, or the product is archived",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission product:create, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "product not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/rate-limits": {
             "get": {
                 "security": [
@@ -2965,6 +3483,51 @@
                 }
             }
         },
+        "handler.CreatePriceRequest": {
+            "type": "object",
+            "properties": {
+                "billing_unit": {
+                    "description": "company = flat amount per company; truck = per active truck. Never changes later.",
+                    "type": "string",
+                    "enum": [
+                        "company",
+                        "truck"
+                    ],
+                    "example": "truck"
+                },
+                "interval": {
+                    "description": "month or year. Never changes later.",
+                    "type": "string",
+                    "enum": [
+                        "month",
+                        "year"
+                    ],
+                    "example": "month"
+                },
+                "nickname": {
+                    "type": "string",
+                    "example": "Monthly"
+                },
+                "unit_amount": {
+                    "description": "Amount in cents: 2500 = $25.00. 0 to 99999999. Never changes later.",
+                    "type": "integer",
+                    "example": 2500
+                }
+            }
+        },
+        "handler.CreateProductRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Hours of service and DVIR for every truck"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "ELD Fleet plan"
+                }
+            }
+        },
         "handler.CreateTruckRequest": {
             "type": "object",
             "properties": {
@@ -3262,6 +3825,29 @@
                 }
             }
         },
+        "handler.ListProductsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.ProductResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
         "handler.ListRateLimitsResponse": {
             "type": "object",
             "properties": {
@@ -3393,6 +3979,91 @@
                 "username": {
                     "type": "string",
                     "example": "jane.smith"
+                }
+            }
+        },
+        "handler.PriceResponse": {
+            "type": "object",
+            "properties": {
+                "billing_unit": {
+                    "type": "string",
+                    "example": "truck"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-06T11:26:26Z"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "usd"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "interval": {
+                    "type": "string",
+                    "example": "month"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "nickname": {
+                    "type": "string",
+                    "example": "Monthly"
+                },
+                "product_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "stripe_price_id": {
+                    "description": "Stripe's id: find the price in the Stripe Dashboard.",
+                    "type": "string",
+                    "example": "price_1QabcDEFghiJKL"
+                },
+                "unit_amount": {
+                    "type": "integer",
+                    "example": 2500
+                }
+            }
+        },
+        "handler.ProductResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-06T11:26:26Z"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Hours of service and DVIR for every truck"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "name": {
+                    "type": "string",
+                    "example": "ELD Fleet plan"
+                },
+                "prices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.PriceResponse"
+                    }
+                },
+                "stripe_product_id": {
+                    "type": "string",
+                    "example": "prod_QabcDEFghiJKL"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "example": "2026-10-06T11:26:26Z"
                 }
             }
         },
@@ -3605,6 +4276,38 @@
                 "model": {
                     "type": "string",
                     "example": "PT30"
+                }
+            }
+        },
+        "handler.UpdatePriceRequest": {
+            "type": "object",
+            "properties": {
+                "is_active": {
+                    "description": "false archives, true restores.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "nickname": {
+                    "type": "string",
+                    "example": "Monthly (2026)"
+                }
+            }
+        },
+        "handler.UpdateProductRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Now with IFTA reports"
+                },
+                "is_active": {
+                    "description": "false archives, true restores.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "name": {
+                    "type": "string",
+                    "example": "ELD Fleet plan"
                 }
             }
         },

@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS prices;
+DROP TABLE IF EXISTS products;

@@ -89,7 +89,7 @@ func NewAuditLogHandler(svc AuditLogService) *AuditLogHandler {
 //	@Tags			audit
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			entity		query		string	false	"Entity type"	Enums(company, user, driver, truck, eld_device, rate_limit)
+//	@Param			entity		query		string	false	"Entity type"	Enums(company, user, driver, truck, eld_device, rate_limit, product, price)
 //	@Param			entity_id	query		string	false	"ID of one record (with entity)"
 //	@Param			action		query		string	false	"Exact action, e.g. truck.update"
 //	@Param			actor_id	query		string	false	"Who made the change"				format(uuid)

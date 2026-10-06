@@ -44,6 +44,9 @@ type Handlers struct {
 	RateLimit *RateLimitHandler
 	Password  *PasswordResetHandler
 	AuditLog  *AuditLogHandler
+
+	// Billing (nil when Stripe is not configured: the routes do not exist).
+	Product *ProductHandler
 }
 
 // RouterSecurity holds what the router needs to protect routes.
@@ -172,6 +175,20 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	rateLimits.GET("", perm.Require(model.PermRateLimitRead), h.RateLimit.List)
 	rateLimits.GET("/:name", perm.Require(model.PermRateLimitRead), h.RateLimit.Get)
 	rateLimits.PATCH("/:name", perm.Require(model.PermRateLimitUpdate), h.RateLimit.Update)
+
+	// ---------- Billing (only when Stripe is configured) ----------
+	if h.Product != nil {
+		// The catalog. Reading is for company admins too (to choose a plan);
+		// every write is platform-only (permission AND service check).
+		products := protected.Group("/products")
+		products.POST("", perm.Require(model.PermProductCreate), h.Product.Create)
+		products.GET("", perm.Require(model.PermProductRead), h.Product.List)
+		products.GET("/:id", perm.Require(model.PermProductRead), h.Product.Get)
+		products.PATCH("/:id", perm.Require(model.PermProductUpdate), h.Product.Update)
+		products.DELETE("/:id", perm.Require(model.PermProductDelete), h.Product.Archive)
+		products.POST("/:id/prices", perm.Require(model.PermProductCreate), h.Product.CreatePrice)
+		protected.PATCH("/prices/:id", perm.Require(model.PermProductUpdate), h.Product.UpdatePrice)
+	}
 
 	return r
 }

@@ -15,6 +15,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stripe/stripe-go/v87"
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/config"
@@ -26,6 +27,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/notify"
 	"github.com/jaloldinov/ELD-learning/internal/repository"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/internal/stripegw"
 	"github.com/jaloldinov/ELD-learning/pkg/jobs"
 	"github.com/jaloldinov/ELD-learning/pkg/mail"
 	"github.com/jaloldinov/ELD-learning/pkg/ratelimit"
@@ -82,9 +84,10 @@ func run() error {
 	}
 
 	// Billing (Stripe) is optional, like email: without STRIPE_SECRET_KEY
-	// the rest of the API works as before.
+	// the rest of the API works as before and the billing routes do not exist.
+	var stripeClient *stripe.Client // nil = billing disabled
 	if cfg.BillingEnabled() {
-		stripeClient := stripeclient.New(stripeclient.Config{SecretKey: cfg.StripeSecretKey, Log: log})
+		stripeClient = stripeclient.New(stripeclient.Config{SecretKey: cfg.StripeSecretKey, Log: log})
 		// Its own 5s: Stripe answers over the internet, unlike the database.
 		stripeCtx, stripeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		acct, err := stripeclient.Check(stripeCtx, stripeClient)
@@ -243,6 +246,13 @@ func run() error {
 		return err
 	})
 
+	// Billing handlers stay nil without Stripe: the router skips their routes.
+	var productHandler *handler.ProductHandler
+	if stripeClient != nil {
+		productHandler = handler.NewProductHandler(service.NewCatalogService(
+			repository.NewProductRepository(pool), stripegw.NewCatalog(stripeClient), auditor))
+	}
+
 	router := handler.NewRouter(log, handler.RouterOptions{
 		EnableSwagger:  !cfg.IsProduction(),
 		TrustedProxies: cfg.TrustedProxies,
@@ -262,6 +272,7 @@ func run() error {
 		RateLimit: handler.NewRateLimitHandler(rateLimitSvc),
 		Password:  handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
 		AuditLog:  handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),
+		Product:   productHandler,
 	})
 
 	srv := &http.Server{

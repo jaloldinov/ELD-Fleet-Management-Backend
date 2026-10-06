@@ -15,6 +15,8 @@ const (
 	AuditTruck     = "truck"
 	AuditELDDevice = "eld_device"
 	AuditRateLimit = "rate_limit"
+	AuditProduct   = "product"
+	AuditPrice     = "price"
 )
 
 // AuditEntry is one change in the audit log.
