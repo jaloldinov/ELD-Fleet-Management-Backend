@@ -32,6 +32,7 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("REDIS_URL", "")
 	t.Setenv("SMTP_HOST", "")
 	t.Setenv("SMTP_PORT", "")
+	clearStripe(t)
 	setRequired(t)
 
 	cfg, err := Load()
@@ -48,6 +49,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Empty(t, cfg.RedisURL, "optional: rate limits count in memory without it")
 	assert.Empty(t, cfg.SMTPHost, "optional: emails are only logged without it")
 	assert.Equal(t, 587, cfg.SMTPPort)
+	assert.False(t, cfg.BillingEnabled(), "optional: billing is off without Stripe keys")
 	assert.False(t, cfg.IsProduction())
 }
 
@@ -170,4 +172,124 @@ func TestLoad_SMTPPasswordNeverInError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "super-secret-app-password")
+}
+
+// Fake keys with the right shape. Never real ones in tests.
+const (
+	testStripeSecret  = "sk_test_51Fake0000000000000000000"
+	testStripePublic  = "pk_test_51Fake0000000000000000000"
+	testStripeWebhook = "whsec_fake000000000000000000000"
+)
+
+// clearStripe unsets the Stripe variables, which `make test` exports from
+// .env (with the developer's real keys).
+func clearStripe(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY", "STRIPE_WEBHOOK_SECRET"} {
+		t.Setenv(k, "")
+	}
+}
+
+func TestLoad_Stripe(t *testing.T) {
+	setRequired(t)
+	clearStripe(t)
+	t.Setenv("STRIPE_SECRET_KEY", testStripeSecret)
+	t.Setenv("STRIPE_PUBLISHABLE_KEY", testStripePublic)
+	t.Setenv("STRIPE_WEBHOOK_SECRET", testStripeWebhook)
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.True(t, cfg.BillingEnabled())
+	assert.True(t, cfg.StripeTestMode())
+	assert.Equal(t, testStripeSecret, cfg.StripeSecretKey)
+	assert.Equal(t, testStripePublic, cfg.StripePublishableKey)
+	assert.Equal(t, testStripeWebhook, cfg.StripeWebhookSecret)
+}
+
+func TestLoad_StripeLiveKeys(t *testing.T) {
+	live := map[string]string{
+		"STRIPE_SECRET_KEY":      "sk_live_51Fake0000000000000000000",
+		"STRIPE_PUBLISHABLE_KEY": "pk_live_51Fake0000000000000000000",
+	}
+
+	t.Run("refused in development", func(t *testing.T) {
+		setRequired(t)
+		clearStripe(t)
+		t.Setenv("APP_ENV", "development")
+		for k, v := range live {
+			t.Setenv(k, v)
+		}
+		_, err := Load()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "live key")
+	})
+
+	t.Run("allowed in production", func(t *testing.T) {
+		setRequired(t)
+		clearStripe(t)
+		t.Setenv("APP_ENV", "production")
+		for k, v := range live {
+			t.Setenv(k, v)
+		}
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.False(t, cfg.StripeTestMode())
+	})
+}
+
+func TestLoad_StripeRestrictedKey(t *testing.T) {
+	setRequired(t)
+	clearStripe(t)
+	t.Setenv("STRIPE_SECRET_KEY", "rk_test_51Fake0000000000000000000")
+	t.Setenv("STRIPE_PUBLISHABLE_KEY", testStripePublic)
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.True(t, cfg.StripeTestMode())
+}
+
+func TestLoad_StripeInvalid(t *testing.T) {
+	tests := map[string]map[string]string{
+		"publishable key as secret": {"STRIPE_SECRET_KEY": testStripePublic, "STRIPE_PUBLISHABLE_KEY": testStripePublic},
+		"secret without mode":       {"STRIPE_SECRET_KEY": "sk_abc", "STRIPE_PUBLISHABLE_KEY": testStripePublic},
+		"secret with nothing after": {"STRIPE_SECRET_KEY": "sk_test_", "STRIPE_PUBLISHABLE_KEY": testStripePublic},
+		"missing publishable":       {"STRIPE_SECRET_KEY": testStripeSecret},
+		"secret key as publishable": {"STRIPE_SECRET_KEY": testStripeSecret, "STRIPE_PUBLISHABLE_KEY": testStripeSecret},
+		"test secret, live public": {
+			"STRIPE_SECRET_KEY": testStripeSecret, "STRIPE_PUBLISHABLE_KEY": "pk_live_51Fake0000000000000000000",
+		},
+		"bad webhook secret": {
+			"STRIPE_SECRET_KEY": testStripeSecret, "STRIPE_PUBLISHABLE_KEY": testStripePublic,
+			"STRIPE_WEBHOOK_SECRET": "abc",
+		},
+		"publishable without secret": {"STRIPE_PUBLISHABLE_KEY": testStripePublic},
+		"webhook without secret":     {"STRIPE_WEBHOOK_SECRET": testStripeWebhook},
+	}
+	for name, env := range tests {
+		t.Run(name, func(t *testing.T) {
+			setRequired(t)
+			clearStripe(t)
+			for k, v := range env {
+				t.Setenv(k, v)
+			}
+
+			_, err := Load()
+
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestLoad_StripeKeysNeverInError(t *testing.T) {
+	setRequired(t)
+	clearStripe(t)
+	t.Setenv("STRIPE_SECRET_KEY", "sk_live_super-secret-value")
+	t.Setenv("STRIPE_PUBLISHABLE_KEY", "pk_test_public-value")
+
+	_, err := Load()
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "super-secret-value")
 }

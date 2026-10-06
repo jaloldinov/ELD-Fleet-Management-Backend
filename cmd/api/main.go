@@ -29,6 +29,7 @@ import (
 	"github.com/jaloldinov/ELD-learning/pkg/jobs"
 	"github.com/jaloldinov/ELD-learning/pkg/mail"
 	"github.com/jaloldinov/ELD-learning/pkg/ratelimit"
+	"github.com/jaloldinov/ELD-learning/pkg/stripeclient"
 )
 
 // General API information for Swagger (read by `make swagger`).
@@ -78,6 +79,30 @@ func run() error {
 	// Only adds, never removes; see repository.RBACRepository.Sync.
 	if err := service.SyncRBAC(dbCtx, repository.NewRBACRepository(pool), log); err != nil {
 		return err
+	}
+
+	// Billing (Stripe) is optional, like email: without STRIPE_SECRET_KEY
+	// the rest of the API works as before.
+	if cfg.BillingEnabled() {
+		stripeClient := stripeclient.New(stripeclient.Config{SecretKey: cfg.StripeSecretKey, Log: log})
+		// Its own 5s: Stripe answers over the internet, unlike the database.
+		stripeCtx, stripeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		acct, err := stripeclient.Check(stripeCtx, stripeClient)
+		stripeCancel()
+		switch {
+		case errors.Is(err, stripeclient.ErrInvalidKey):
+			// A wrong key will not fix itself: fail fast, like a bad config.
+			return err
+		case err != nil:
+			// Stripe (or the network) may be down for a moment: the fleet
+			// API must still start. Billing calls fail until it is back.
+			log.Warn("stripe not reachable at startup; billing calls fail until it is", "error", err)
+		default:
+			log.Info("stripe connected", "account", acct.ID, "test_mode", cfg.StripeTestMode(),
+				"webhooks", cfg.StripeWebhookSecret != "")
+		}
+	} else {
+		log.Warn("STRIPE_SECRET_KEY not set; billing is disabled")
 	}
 
 	// Wire the 3 layers, bottom-up: repository → service → handler.

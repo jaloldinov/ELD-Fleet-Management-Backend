@@ -21,8 +21,10 @@ test:
 # Also runs tests that need a real database and Redis (TEST_DATABASE_URL and
 # TEST_REDIS_URL, never DATABASE_URL/REDIS_URL).
 # -p 1 runs packages one at a time, because they share the same test database.
+# -count=1 disables the test cache: these tests depend on the database (and
+# e2e on the cmd/api binary it builds), which Go's cache cannot see.
 test-integration: test-db
-	go test ./... -race -cover -p 1
+	go test ./... -race -cover -p 1 -count=1
 
 # Only the end-to-end tests: builds and starts the real API against eld_test
 # and drives it over HTTP. -count=1: always rerun (the binary may have changed

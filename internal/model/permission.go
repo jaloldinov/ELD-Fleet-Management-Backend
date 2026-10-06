@@ -72,6 +72,34 @@ var (
 	// Platform settings: platform_admin only.
 	PermRateLimitRead   = define("ratelimit:read", "View rate-limit settings")
 	PermRateLimitUpdate = define("ratelimit:update", "Change rate-limit settings")
+
+	// ---------- Billing (Phase 2, Stripe) ----------
+	// Only company admins get billing by default: it is about money, and
+	// dispatchers or managers have no reason to see the company's bills.
+
+	// The catalog (products and their prices) is the platform's: company
+	// admins read it to choose a plan; only the platform changes it.
+	PermProductRead   = define("product:read", "View products and prices", RoleAdmin)
+	PermProductCreate = define("product:create", "Create products and prices")
+	PermProductUpdate = define("product:update", "Edit products, archive prices")
+	PermProductDelete = define("product:delete", "Archive products")
+
+	// A company's own subscription: start it, change the plan, schedule a
+	// change, cancel.
+	PermSubscriptionRead   = define("subscription:read", "View the company subscription", RoleAdmin)
+	PermSubscriptionManage = define("subscription:manage", "Start, change, schedule and cancel the subscription", RoleAdmin)
+
+	// Cards are collected by Stripe.js; we only see their ids and last 4 digits.
+	PermPaymentMethodManage = define("payment_method:manage", "View, add and remove payment methods", RoleAdmin)
+
+	PermInvoiceRead = define("invoice:read", "View invoices", RoleAdmin)
+	PermInvoicePay  = define("invoice:pay", "Pay open invoices", RoleAdmin)
+	// Platform only: create one-off charges, finalize and void invoices.
+	PermInvoiceManage = define("invoice:manage", "Create one-off charges, finalize and void invoices")
+	// Platform only: give credit (customer balance) and credit notes.
+	PermCreditManage = define("credit:manage", "Give credits and credit notes")
+	// Platform only: revenue across all companies.
+	PermBillingMetricsRead = define("billing_metrics:read", "View billing metrics (MRR, revenue, failed payments)")
 )
 
 // Permissions returns every registered permission, in declaration order.

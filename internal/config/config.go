@@ -44,6 +44,13 @@ type Config struct {
 	SMTPFrom     string // plain address: you@gmail.com
 	SMTPFromName string // shown as the sender's name; default "ELD"
 
+	// Stripe (billing). Optional: without StripeSecretKey billing is off and
+	// the rest of the API works as before (tests and CI run without it).
+	// Development refuses live keys, so no real card is charged from a laptop.
+	StripeSecretKey      string // sk_test_/sk_live_ (or restricted rk_...): server only
+	StripePublishableKey string // pk_test_/pk_live_: given to the browser (Stripe.js)
+	StripeWebhookSecret  string // whsec_...: verifies that webhooks come from Stripe
+
 	JWTSecret       string        // HMAC key for signing access tokens
 	AccessTokenTTL  time.Duration // how long an access token is valid
 	RefreshTokenTTL time.Duration // how long a refresh token (session) is valid
@@ -77,18 +84,21 @@ func Load() (*Config, error) {
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 		// No defaults for secrets/connections: a wrong database or a
 		// well-known secret must never be used by accident.
-		DatabaseURL:     getEnv("DATABASE_URL", ""),
-		RedisURL:        getEnv("REDIS_URL", ""),
-		SMTPHost:        getEnv("SMTP_HOST", ""),
-		SMTPPort:        smtpPort,
-		SMTPUsername:    getEnv("SMTP_USERNAME", ""),
-		SMTPPassword:    getEnv("SMTP_PASSWORD", ""),
-		SMTPFrom:        getEnv("SMTP_FROM", ""),
-		SMTPFromName:    getEnv("SMTP_FROM_NAME", "ELD"),
-		JWTSecret:       getEnv("JWT_SECRET", ""),
-		AccessTokenTTL:  ttl,
-		RefreshTokenTTL: refreshTTL,
-		TrustedProxies:  splitList(getEnv("TRUSTED_PROXIES", "")),
+		DatabaseURL:          getEnv("DATABASE_URL", ""),
+		RedisURL:             getEnv("REDIS_URL", ""),
+		SMTPHost:             getEnv("SMTP_HOST", ""),
+		SMTPPort:             smtpPort,
+		SMTPUsername:         getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:         getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:             getEnv("SMTP_FROM", ""),
+		SMTPFromName:         getEnv("SMTP_FROM_NAME", "ELD"),
+		StripeSecretKey:      getEnv("STRIPE_SECRET_KEY", ""),
+		StripePublishableKey: getEnv("STRIPE_PUBLISHABLE_KEY", ""),
+		StripeWebhookSecret:  getEnv("STRIPE_WEBHOOK_SECRET", ""),
+		JWTSecret:            getEnv("JWT_SECRET", ""),
+		AccessTokenTTL:       ttl,
+		RefreshTokenTTL:      refreshTTL,
+		TrustedProxies:       splitList(getEnv("TRUSTED_PROXIES", "")),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -147,6 +157,10 @@ func (c *Config) validate() error {
 		}
 	}
 
+	if err := c.validateStripe(); err != nil {
+		return err
+	}
+
 	for _, p := range c.TrustedProxies {
 		if net.ParseIP(p) == nil {
 			if _, _, err := net.ParseCIDR(p); err != nil {
@@ -156,6 +170,67 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// BillingEnabled reports whether Stripe is configured.
+func (c *Config) BillingEnabled() bool {
+	return c.StripeSecretKey != ""
+}
+
+// StripeTestMode reports whether the Stripe keys are test-mode keys (no
+// real money moves). Only meaningful when BillingEnabled.
+func (c *Config) StripeTestMode() bool {
+	mode, _ := stripeKeyMode(c.StripeSecretKey, "sk_", "rk_")
+	return mode == "test"
+}
+
+// validateStripe checks the shape of the keys only (prefixes); whether
+// Stripe accepts the secret key is checked at startup (stripeclient.Check).
+// Errors name the variable, never its value.
+func (c *Config) validateStripe() error {
+	if c.StripeSecretKey == "" {
+		// The other two are useless alone; probably a typo in the name.
+		if c.StripePublishableKey != "" || c.StripeWebhookSecret != "" {
+			return fmt.Errorf("STRIPE_PUBLISHABLE_KEY and STRIPE_WEBHOOK_SECRET need STRIPE_SECRET_KEY")
+		}
+		return nil
+	}
+
+	mode, ok := stripeKeyMode(c.StripeSecretKey, "sk_", "rk_")
+	if !ok {
+		return fmt.Errorf("STRIPE_SECRET_KEY must start with sk_test_ or sk_live_ (or rk_test_/rk_live_ for a restricted key)")
+	}
+	if mode == "live" && !c.IsProduction() {
+		return fmt.Errorf("STRIPE_SECRET_KEY is a live key; outside production use a test key (sk_test_...), so no real card is charged")
+	}
+
+	pubMode, ok := stripeKeyMode(c.StripePublishableKey, "pk_")
+	if !ok {
+		return fmt.Errorf("STRIPE_PUBLISHABLE_KEY is required with STRIPE_SECRET_KEY and must start with pk_test_ or pk_live_")
+	}
+	if pubMode != mode {
+		return fmt.Errorf("STRIPE_PUBLISHABLE_KEY and STRIPE_SECRET_KEY must both be test keys or both be live keys")
+	}
+
+	// Optional until the webhook endpoint exists; without it webhooks are refused.
+	if c.StripeWebhookSecret != "" && !strings.HasPrefix(c.StripeWebhookSecret, "whsec_") {
+		return fmt.Errorf("STRIPE_WEBHOOK_SECRET must start with whsec_")
+	}
+	return nil
+}
+
+// stripeKeyMode returns "test" or "live" for a key like sk_test_abc, given
+// the allowed type prefixes ("sk_", "pk_", ...). ok is false for any other
+// shape, including an empty key or an empty part after the mode.
+func stripeKeyMode(key string, prefixes ...string) (mode string, ok bool) {
+	for _, p := range prefixes {
+		for _, m := range []string{"test", "live"} {
+			if rest, found := strings.CutPrefix(key, p+m+"_"); found && rest != "" {
+				return m, true
+			}
+		}
+	}
+	return "", false
 }
 
 // splitList splits a comma-separated value, trimming spaces and dropping
