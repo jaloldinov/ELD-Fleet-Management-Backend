@@ -3845,6 +3845,47 @@
                 }
             }
         },
+        "/api/v1/webhooks/stripe": {
+            "post": {
+                "description": "Called by Stripe, not by clients. No token: the Stripe-Signature header proves the sender.\n200 = handled (or not needed); 400 = not signed by Stripe; 500 = failed, Stripe retries for up to 3 days.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Stripe webhook",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Signature made by Stripe with the webhook secret",
+                        "name": "Stripe-Signature",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "invalid signature",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "produces": [
@@ -4008,6 +4049,11 @@
         "handler.CompanyResponse": {
             "type": "object",
             "properties": {
+                "billing_status": {
+                    "description": "Follows the subscription: none, pending (first invoice unpaid), active,\npast_due (payment failed, grace period), blocked. Fleet routes need\nactive or past_due when billing is enabled.",
+                    "type": "string",
+                    "example": "active"
+                },
                 "created_at": {
                     "type": "string",
                     "example": "2026-10-02T11:26:26Z"

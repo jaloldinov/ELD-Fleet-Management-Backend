@@ -50,4 +50,12 @@ var (
 	// ErrSubscriptionExists: the company already has a subscription that
 	// has not ended. Change it instead of starting another one.
 	ErrSubscriptionExists = errors.New("the company already has a subscription")
+
+	// ErrBillingInactive: the company's subscription does not allow using
+	// the product (not paid yet, or Stripe gave up). Becomes HTTP 402.
+	ErrBillingInactive = errors.New("the company's subscription is not active")
+
+	// ErrWebhookSignature: a webhook was not signed by Stripe (or is too old
+	// to be trusted). Becomes HTTP 400, so Stripe would not retry it.
+	ErrWebhookSignature = errors.New("invalid webhook signature")
 )

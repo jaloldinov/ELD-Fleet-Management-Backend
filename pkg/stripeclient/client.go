@@ -86,6 +86,9 @@ func (a slogAdapter) Warnf(ctx context.Context, format string, v ...any) {
 	a.log.WarnContext(ctx, fmt.Sprintf(format, v...))
 }
 
+// Errorf logs at debug too: every Stripe error is also returned to our
+// code, which decides whether it is a problem (a card id that does not
+// exist is an expected 404, not an incident) and logs real failures itself.
 func (a slogAdapter) Errorf(ctx context.Context, format string, v ...any) {
-	a.log.ErrorContext(ctx, fmt.Sprintf(format, v...))
+	a.log.DebugContext(ctx, fmt.Sprintf(format, v...))
 }

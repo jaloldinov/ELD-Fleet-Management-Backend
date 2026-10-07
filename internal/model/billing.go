@@ -129,6 +129,7 @@ type SubscriptionFilter struct {
 type StripeSubscription struct {
 	ID                string // sub_...
 	CustomerID        string // cus_...
+	Metadata          map[string]string
 	Status            string
 	CancelAtPeriodEnd bool
 	CanceledAt        *time.Time
@@ -162,12 +163,61 @@ type CatalogPrice struct {
 	ProductActive bool
 }
 
+// StripeMetaSubscriptionID is the Stripe metadata key holding our
+// subscription id (set at creation; read when a webhook arrives first).
+const StripeMetaSubscriptionID = "eld_subscription_id"
+
 // StripeSubscriptionCreate is what is sent to Stripe to start a
 // subscription.
 type StripeSubscriptionCreate struct {
-	ID              uuid.UUID // ours: metadata and idempotency key
-	CompanyID       uuid.UUID
-	CustomerID      string                   // cus_...
-	PaymentMethodID string                   // pm_...: the card the first invoice will be paid with
-	Items           []StripeSubscriptionItem // StripePriceID + Quantity
+	ID         uuid.UUID // ours: metadata and idempotency key
+	CompanyID  uuid.UUID
+	CustomerID string                   // cus_...
+	Items      []StripeSubscriptionItem // StripePriceID + Quantity
+}
+
+// Billing statuses of a company (companies.billing_status): what its
+// subscription allows it to do.
+const (
+	BillingNone    = "none"     // no subscription (never, or it ended)
+	BillingPending = "pending"  // subscribed, first invoice unpaid
+	BillingActive  = "active"   // paid up
+	BillingPastDue = "past_due" // a renewal failed; grace period while Stripe retries
+	BillingBlocked = "blocked"  // Stripe gave up (unpaid) or collection is paused
+)
+
+// BillingStatusFor maps the status of a company's current subscription to
+// its billing status. current is nil when it has none.
+func BillingStatusFor(current *Subscription) string {
+	if current == nil {
+		return BillingNone
+	}
+	switch current.Status {
+	case SubscriptionActive, SubscriptionTrialing:
+		return BillingActive
+	case SubscriptionPastDue:
+		return BillingPastDue
+	case SubscriptionIncomplete:
+		return BillingPending
+	case SubscriptionUnpaid, SubscriptionPaused:
+		return BillingBlocked
+	default: // canceled, incomplete_expired: not current anyway
+		return BillingNone
+	}
+}
+
+// BillingAllowsUse reports whether a company with this billing status may
+// use the product. past_due is allowed on purpose: one expired card must
+// not stop a fleet the same day (the grace period).
+func BillingAllowsUse(status string) bool {
+	return status == BillingActive || status == BillingPastDue
+}
+
+// StripeEvent is a webhook from Stripe, reduced to what we act on.
+type StripeEvent struct {
+	ID         string // evt_...
+	Type       string // invoice.payment_failed, ...
+	ObjectID   string // id of the object it is about: sub_..., in_..., ...
+	ObjectType string // subscription, invoice, ...
+	Livemode   bool
 }

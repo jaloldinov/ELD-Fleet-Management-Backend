@@ -13,7 +13,7 @@ import (
 
 // companyColumns is shared by every SELECT/RETURNING so the column order always
 // matches scanCompany.
-const companyColumns = `id, name, dot_number, timezone, is_active, stripe_customer_id, created_at, updated_at, deleted_at`
+const companyColumns = `id, name, dot_number, timezone, is_active, stripe_customer_id, billing_status, created_at, updated_at, deleted_at`
 
 type CompanyRepository struct {
 	db DBTX
@@ -163,12 +163,56 @@ func (r *CompanyRepository) SetStripeCustomerID(ctx context.Context, id uuid.UUI
 	return linked, nil
 }
 
+// GetByStripeCustomerID finds the company of a Stripe Customer (cus_...),
+// deleted companies included: their old subscriptions still send events.
+func (r *CompanyRepository) GetByStripeCustomerID(ctx context.Context, customerID string) (*model.Company, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		SELECT `+companyColumns+` FROM companies WHERE stripe_customer_id = $1`, customerID)
+	c, err := scanCompany(row)
+	if err != nil {
+		return nil, mapCompanyError("get company by stripe customer", err)
+	}
+	return c, nil
+}
+
+// SetBillingStatus saves the company's billing status and returns the one
+// it had before (the row is locked, so the "before" is exact even when two
+// syncs race).
+func (r *CompanyRepository) SetBillingStatus(ctx context.Context, id uuid.UUID, status string) (old string, err error) {
+	err = r.q(ctx).QueryRow(ctx, `
+		WITH before AS (
+			SELECT billing_status FROM companies WHERE id = $1 FOR UPDATE
+		)
+		UPDATE companies SET billing_status = $2
+		FROM before
+		WHERE companies.id = $1
+		RETURNING before.billing_status`,
+		id, status,
+	).Scan(&old)
+	if err != nil {
+		return "", mapCompanyError("set billing status", err)
+	}
+	return old, nil
+}
+
+// BillingStatus returns only the company's billing status: the cheap
+// lookup done on every request to a fleet route.
+func (r *CompanyRepository) BillingStatus(ctx context.Context, id uuid.UUID) (string, error) {
+	var status string
+	err := r.q(ctx).QueryRow(ctx, `
+		SELECT billing_status FROM companies WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&status)
+	if err != nil {
+		return "", mapCompanyError("get billing status", err)
+	}
+	return status, nil
+}
+
 // scanCompany reads one row in companyColumns order.
 // pgx.Row is satisfied by both QueryRow's result and rows inside CollectRows.
 func scanCompany(row pgx.Row) (*model.Company, error) {
 	var c model.Company
 	err := row.Scan(
-		&c.ID, &c.Name, &c.DOTNumber, &c.Timezone, &c.IsActive, &c.StripeCustomerID,
+		&c.ID, &c.Name, &c.DOTNumber, &c.Timezone, &c.IsActive, &c.StripeCustomerID, &c.BillingStatus,
 		&c.CreatedAt, &c.UpdatedAt, &c.DeletedAt,
 	)
 	if err != nil {

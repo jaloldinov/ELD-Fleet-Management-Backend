@@ -16,9 +16,12 @@ type Company struct {
 	// StripeCustomerID (cus_...) is the company's Stripe Customer; nil
 	// until the company first needs billing.
 	StripeCustomerID *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	DeletedAt        *time.Time // nil = not deleted (pointer because the column is nullable)
+	// BillingStatus (BillingActive, ...) follows the subscription; set only
+	// by the subscription sync.
+	BillingStatus string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time // nil = not deleted (pointer because the column is nullable)
 }
 
 // CompanyFilter narrows a company list. The zero value means "no filter".

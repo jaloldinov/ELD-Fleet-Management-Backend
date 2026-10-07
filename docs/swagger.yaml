@@ -82,6 +82,13 @@ definitions:
     type: object
   handler.CompanyResponse:
     properties:
+      billing_status:
+        description: |-
+          Follows the subscription: none, pending (first invoice unpaid), active,
+          past_due (payment failed, grace period), blocked. Fleet routes need
+          active or past_due when billing is enabled.
+        example: active
+        type: string
       created_at:
         example: "2026-10-02T11:26:26Z"
         type: string
@@ -3674,6 +3681,35 @@ paths:
       summary: Set a user's password
       tags:
       - users
+  /api/v1/webhooks/stripe:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Called by Stripe, not by clients. No token: the Stripe-Signature header proves the sender.
+        200 = handled (or not needed); 400 = not signed by Stripe; 500 = failed, Stripe retries for up to 3 days.
+      parameters:
+      - description: Signature made by Stripe with the webhook secret
+        in: header
+        name: Stripe-Signature
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: invalid signature
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      summary: Stripe webhook
+      tags:
+      - billing
   /health:
     get:
       produces:

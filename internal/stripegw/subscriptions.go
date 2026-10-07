@@ -10,7 +10,7 @@ import (
 )
 
 // MetaSubscriptionID links a Stripe subscription back to our row.
-const MetaSubscriptionID = "eld_subscription_id"
+const MetaSubscriptionID = model.StripeMetaSubscriptionID
 
 // Stripe returns the first invoice's payment secret only when asked to
 // "expand" it (include the nested object instead of just its id).
@@ -33,8 +33,9 @@ func NewSubscriptions(c *stripe.Client) *Subscriptions {
 //     browser confirms the payment with the returned client secret, so the
 //     user is present if the bank asks for 3-D Secure. Unpaid, it expires
 //     after 23 hours (incomplete_expired).
-//   - save_default_payment_method=on_subscription: the card that pays the
-//     first invoice also pays every renewal.
+//   - No card is stored ON the subscription: renewals charge the customer's
+//     default card (invoice_settings.default_payment_method), so "Make
+//     default" in our API also changes which card pays the next renewal.
 func (g *Subscriptions) CreateSubscription(ctx context.Context, in model.StripeSubscriptionCreate) (*model.StripeSubscription, error) {
 	items := make([]*stripe.SubscriptionCreateItemParams, 0, len(in.Items))
 	for _, it := range in.Items {
@@ -44,13 +45,9 @@ func (g *Subscriptions) CreateSubscription(ctx context.Context, in model.StripeS
 		})
 	}
 	params := &stripe.SubscriptionCreateParams{
-		Customer:             stripe.String(in.CustomerID),
-		Items:                items,
-		DefaultPaymentMethod: stripe.String(in.PaymentMethodID),
-		PaymentBehavior:      stripe.String("default_incomplete"),
-		PaymentSettings: &stripe.SubscriptionCreatePaymentSettingsParams{
-			SaveDefaultPaymentMethod: stripe.String("on_subscription"),
-		},
+		Customer:        stripe.String(in.CustomerID),
+		Items:           items,
+		PaymentBehavior: stripe.String("default_incomplete"),
 		Metadata: map[string]string{
 			MetaSubscriptionID: in.ID.String(),
 			MetaCompanyID:      in.CompanyID.String(),
@@ -80,9 +77,27 @@ func (g *Subscriptions) GetSubscription(ctx context.Context, id string) (*model.
 	return toStripeSubscription(sub), nil
 }
 
+// InvoiceSubscriptionID returns the id of the subscription an invoice
+// belongs to; "" for an invoice that is not a subscription's (a one-off
+// charge).
+func (g *Subscriptions) InvoiceSubscriptionID(ctx context.Context, invoiceID string) (string, error) {
+	inv, err := g.c.V1Invoices.Retrieve(ctx, invoiceID, nil)
+	if err != nil {
+		if isResourceMissing(err) {
+			return "", model.ErrNotFound
+		}
+		return "", wrap("retrieve invoice", err)
+	}
+	if inv.Parent == nil || inv.Parent.SubscriptionDetails == nil || inv.Parent.SubscriptionDetails.Subscription == nil {
+		return "", nil
+	}
+	return inv.Parent.SubscriptionDetails.Subscription.ID, nil
+}
+
 func toStripeSubscription(sub *stripe.Subscription) *model.StripeSubscription {
 	out := &model.StripeSubscription{
 		ID:                sub.ID,
+		Metadata:          sub.Metadata,
 		Status:            string(sub.Status),
 		CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
 		CanceledAt:        unixTime(sub.CanceledAt),

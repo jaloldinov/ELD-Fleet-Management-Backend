@@ -192,3 +192,18 @@ func TestTruckRepository_CountActive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "inactive and deleted trucks are not billed")
 }
+
+func TestSubscriptionRepository_GetByStripeID(t *testing.T) {
+	f := newSubscriptionFixture(t)
+	ctx := context.Background()
+	created, err := f.repo.Upsert(ctx, f.sub("sub_1", model.SubscriptionActive, item("si_1", f.flat, 1)))
+	require.NoError(t, err)
+
+	got, err := f.repo.GetByStripeID(ctx, "sub_1")
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, got.ID)
+	assert.Len(t, got.Items, 1)
+
+	_, err = f.repo.GetByStripeID(ctx, "sub_unknown")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}

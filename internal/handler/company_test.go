@@ -111,6 +111,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) apierror.Body {
 }
 
 func sampleCompany() *model.Company {
+	customer := "cus_internal"
 	// A non-UTC time proves the handler converts to UTC.
 	tashkent := time.FixedZone("UTC+5", 5*60*60)
 	return &model.Company{
@@ -119,9 +120,12 @@ func sampleCompany() *model.Company {
 		DOTNumber: "1234567",
 		Timezone:  "America/Chicago",
 		IsActive:  true,
-		CreatedAt: time.Date(2026, 10, 2, 16, 0, 0, 0, tashkent),
-		UpdatedAt: time.Date(2026, 10, 2, 16, 0, 0, 0, tashkent),
-		DeletedAt: nil,
+		// Billing data: billing_status is shown, the Stripe customer id is not.
+		StripeCustomerID: &customer,
+		BillingStatus:    model.BillingActive,
+		CreatedAt:        time.Date(2026, 10, 2, 16, 0, 0, 0, tashkent),
+		UpdatedAt:        time.Date(2026, 10, 2, 16, 0, 0, 0, tashkent),
+		DeletedAt:        nil,
 	}
 }
 
@@ -146,9 +150,10 @@ func TestCompanyHandler_Create_Success(t *testing.T) {
 		"dot_number": "1234567",
 		"timezone": "America/Chicago",
 		"is_active": true,
+		"billing_status": "active",
 		"created_at": "2026-10-02T11:00:00Z",
 		"updated_at": "2026-10-02T11:00:00Z"
-	}`, rec.Body.String(), "times are UTC, deleted_at is never exposed")
+	}`, rec.Body.String(), "times are UTC; deleted_at and the Stripe customer id are never exposed")
 }
 
 func TestCompanyHandler_Create_InvalidJSON(t *testing.T) {

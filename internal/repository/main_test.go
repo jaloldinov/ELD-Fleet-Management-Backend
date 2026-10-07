@@ -50,6 +50,7 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 	// several statements in one call.
 	_, err = pool.Exec(context.Background(), `
 		TRUNCATE audit_logs; -- append-only: DELETE is refused, TRUNCATE is allowed
+		TRUNCATE stripe_events;
 		DELETE FROM subscriptions; -- items go with them (ON DELETE CASCADE)
 		DELETE FROM prices;
 		DELETE FROM products;

@@ -51,19 +51,24 @@ type CompanyResponse struct {
 	DOTNumber string    `json:"dot_number" example:"1234567"`
 	Timezone  string    `json:"timezone" example:"America/Chicago"`
 	IsActive  bool      `json:"is_active" example:"true"`
-	CreatedAt time.Time `json:"created_at" example:"2026-10-02T11:26:26Z"`
-	UpdatedAt time.Time `json:"updated_at" example:"2026-10-02T11:26:26Z"`
+	// Follows the subscription: none, pending (first invoice unpaid), active,
+	// past_due (payment failed, grace period), blocked. Fleet routes need
+	// active or past_due when billing is enabled.
+	BillingStatus string    `json:"billing_status" example:"active"`
+	CreatedAt     time.Time `json:"created_at" example:"2026-10-02T11:26:26Z"`
+	UpdatedAt     time.Time `json:"updated_at" example:"2026-10-02T11:26:26Z"`
 }
 
 func newCompanyResponse(c *model.Company) CompanyResponse {
 	return CompanyResponse{
-		ID:        c.ID,
-		Name:      c.Name,
-		DOTNumber: c.DOTNumber,
-		Timezone:  c.Timezone,
-		IsActive:  c.IsActive,
-		CreatedAt: c.CreatedAt.UTC(), // API always speaks UTC
-		UpdatedAt: c.UpdatedAt.UTC(),
+		ID:            c.ID,
+		Name:          c.Name,
+		DOTNumber:     c.DOTNumber,
+		Timezone:      c.Timezone,
+		IsActive:      c.IsActive,
+		BillingStatus: c.BillingStatus,
+		CreatedAt:     c.CreatedAt.UTC(), // API always speaks UTC
+		UpdatedAt:     c.UpdatedAt.UTC(),
 	}
 }
 

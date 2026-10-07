@@ -195,6 +195,7 @@ func resetDatabase(pool *pgxpool.Pool) error {
 	defer cancel()
 	_, err := pool.Exec(ctx, `
 		TRUNCATE audit_logs;
+		TRUNCATE stripe_events;
 		DELETE FROM subscriptions; -- items go with them (ON DELETE CASCADE)
 		DELETE FROM prices;
 		DELETE FROM products;

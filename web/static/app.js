@@ -370,9 +370,13 @@ function showSubscription(st) {
   const pay = $("sub-pay");
   pay.hidden = !sub.payment;
   if (sub.payment) pay.textContent = `Pay ${money(sub.payment.amount_due)} now`;
-  $("sub-message").textContent = s.status === "incomplete"
-    ? "Not active yet: the first invoice is waiting for payment."
-    : "";
+  const messages = {
+    incomplete: "Not active yet: the first invoice is waiting for payment.",
+    past_due: "A payment failed. Stripe will retry the card over the next days; " +
+      "add a working card and make it the default to avoid suspension.",
+    unpaid: "Suspended: payments failed. Trucks, drivers and ELD devices are locked until the open invoice is paid.",
+  };
+  $("sub-message").textContent = messages[s.status] || "";
   $("sub-current").hidden = false;
 }
 

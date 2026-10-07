@@ -91,6 +91,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		Product:       handler.NewProductHandler(nil),
 		PaymentMethod: handler.NewPaymentMethodHandler(nil),
 		Subscription:  handler.NewSubscriptionHandler(nil),
+		Webhook:       handler.NewWebhookHandler(nil),
 	})
 }
 
@@ -156,6 +157,9 @@ var publicRoutes = map[string]bool{
 	"GET /":               true,
 	"GET /app/*filepath":  true,
 	"HEAD /app/*filepath": true,
+
+	// Stripe signs its webhooks instead of sending a token.
+	"POST /api/v1/webhooks/stripe": true,
 }
 
 func TestRouter_EveryNonPublicRouteRequiresAuthentication(t *testing.T) {
@@ -422,4 +426,55 @@ func TestRouter_PaymentMethodRoutesRegistered(t *testing.T) {
 	rec := send(r, http.MethodGet, "/api/v1/companies/not-a-uuid/billing/payment-methods", authHeader)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// companyTokens: "company-token" belongs to a user of a company (the
+// billing gate only applies to company users).
+type companyTokens struct{}
+
+func (companyTokens) Parse(token string) (*auth.TokenClaims, error) {
+	if token != "company-token" {
+		return nil, errors.New("invalid")
+	}
+	company := uuid.New()
+	return &auth.TokenClaims{UserID: uuid.New(), CompanyID: &company}, nil
+}
+
+type blockedBilling struct{}
+
+func (blockedBilling) BillingStatus(context.Context, uuid.UUID) (string, error) {
+	return model.BillingNone, nil
+}
+
+func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	log := logger.New(&bytes.Buffer{}, true, "debug")
+	sec := handler.RouterSecurity{Tokens: companyTokens{}, Permissions: fakePermissions(model.AllPermissions()),
+		AuthLimiter: ratelimit.New(1000, time.Minute), Billing: blockedBilling{}}
+	r := handler.NewRouter(log, handler.RouterOptions{}, sec, handler.Handlers{
+		Health: handler.NewHealthHandler(okPinger{}, log), Auth: handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
+		User: handler.NewUserHandler(nil), Driver: handler.NewDriverHandler(nil), Truck: handler.NewTruckHandler(nil),
+		ELDDevice: handler.NewELDDeviceHandler(nil), Company: handler.NewCompanyHandler(nil),
+		RateLimit: handler.NewRateLimitHandler(nil), Password: handler.NewPasswordResetHandler(nil, nil),
+		AuditLog: handler.NewAuditLogHandler(nil), PaymentMethod: handler.NewPaymentMethodHandler(nil),
+		Subscription: handler.NewSubscriptionHandler(nil),
+	})
+	h := map[string]string{"Authorization": "Bearer company-token"}
+
+	// The fleet: 402 for a company without a paid-up subscription.
+	for _, path := range []string{"/api/v1/trucks", "/api/v1/drivers", "/api/v1/drivers/me", "/api/v1/eld-devices/" + uuid.NewString()} {
+		rec := send(r, http.MethodGet, path, h)
+		assert.Equal(t, http.StatusPaymentRequired, rec.Code, path)
+	}
+
+	// Billing and the company itself stay reachable, or a blocked company
+	// could never pay. (400 = the handler ran: the gate let it through.)
+	for _, path := range []string{
+		"/api/v1/companies/not-a-uuid",
+		"/api/v1/companies/not-a-uuid/billing/payment-methods",
+		"/api/v1/companies/not-a-uuid/billing/subscription",
+	} {
+		rec := send(r, http.MethodGet, path, h)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, path)
+	}
 }

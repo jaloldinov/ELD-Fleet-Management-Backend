@@ -32,6 +32,16 @@ func (m *memSubscriptionStore) Upsert(_ context.Context, s model.Subscription) (
 	return &c, nil
 }
 
+func (m *memSubscriptionStore) GetByStripeID(_ context.Context, stripeID string) (*model.Subscription, error) {
+	for _, s := range m.subs {
+		if s.StripeSubscriptionID == stripeID {
+			c := *s
+			return &c, nil
+		}
+	}
+	return nil, model.ErrNotFound
+}
+
 func (m *memSubscriptionStore) GetCurrent(_ context.Context, companyID uuid.UUID) (*model.Subscription, error) {
 	for _, s := range m.subs {
 		if s.CompanyID == companyID && !model.SubscriptionEnded(s.Status) {
@@ -70,6 +80,29 @@ func (f fakePrices) GetCatalogPricesByStripeIDs(_ context.Context, stripeIDs []s
 		}
 	}
 	return out, nil
+}
+
+// memBilling: companies by Stripe customer, and their billing status.
+type memBilling struct {
+	customers map[string]uuid.UUID // cus_... -> company
+	status    map[uuid.UUID]string
+}
+
+func (m *memBilling) GetByStripeCustomerID(_ context.Context, customerID string) (*model.Company, error) {
+	id, ok := m.customers[customerID]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	return &model.Company{ID: id}, nil
+}
+
+func (m *memBilling) SetBillingStatus(_ context.Context, id uuid.UUID, status string) (string, error) {
+	old, ok := m.status[id]
+	if !ok {
+		old = model.BillingNone
+	}
+	m.status[id] = status
+	return old, nil
 }
 
 type fakeTrucks int
@@ -139,6 +172,7 @@ type subFixture struct {
 	store     *memSubscriptionStore
 	gw        *fakeSubGateway
 	customers *fakeSubCustomers
+	billing   *memBilling
 	audit     *memAuditStore
 	perTruck  model.CatalogPrice // $25 / truck / month
 	flat      model.CatalogPrice // $100 / month
@@ -168,9 +202,10 @@ func newSubFixture(trucks int) subFixture {
 	f.customers = &fakeSubCustomers{cards: []model.PaymentMethod{
 		{ID: "pm_old"}, {ID: "pm_default", IsDefault: true},
 	}}
+	f.billing = &memBilling{customers: map[string]uuid.UUID{"cus_A": companyA}, status: map[uuid.UUID]string{}}
 	var auditor *Auditor
 	auditor, f.audit = newTestAuditor()
-	f.svc = NewSubscriptionService(f.store, prices, fakeTrucks(trucks), f.customers, f.gw, auditor)
+	f.svc = NewSubscriptionService(f.store, f.billing, prices, fakeTrucks(trucks), f.customers, f.gw, auditor)
 	return f
 }
 
@@ -190,13 +225,11 @@ func TestSubscription_Create_PayFirst(t *testing.T) {
 	st, err := f.create(companyAUser, f.perTruck, f.flat)
 
 	require.NoError(t, err)
-	// Sent to Stripe: per-truck quantity = active trucks, flat = 1, paid
-	// with the DEFAULT card.
+	// Sent to Stripe: per-truck quantity = active trucks, flat = 1.
 	require.NotNil(t, f.gw.created)
 	assert.Equal(t, []model.StripeSubscriptionItem{
 		{StripePriceID: "price_truck", Quantity: 12}, {StripePriceID: "price_flat", Quantity: 1},
 	}, f.gw.created.Items)
-	assert.Equal(t, "pm_default", f.gw.created.PaymentMethodID)
 	assert.Equal(t, "cus_A", f.gw.created.CustomerID)
 
 	sub := st.Subscription
@@ -210,8 +243,10 @@ func TestSubscription_Create_PayFirst(t *testing.T) {
 	require.NotNil(t, st.Payment)
 	assert.Equal(t, PaymentDue{InvoiceID: "in_1", AmountDue: 40000, ClientSecret: "pi_secret", PaymentMethodID: "pm_default"}, *st.Payment)
 
-	e := f.audit.last(t)
-	assert.Equal(t, "subscription.create", e.Action)
+	// The company may not use the product yet: pay first.
+	assert.Equal(t, model.BillingPending, f.billing.status[companyA])
+	assert.Equal(t, []string{"subscription.create", "company.billing_status"}, f.audit.actions())
+	e := f.audit.entries[0]
 	assert.Equal(t, &companyA, e.CompanyID)
 	assert.Equal(t, []string{"Plan × 12", "Plan × 1"}, e.Changes["items"].New)
 	f.audit.requireAllInTx(t)
@@ -232,8 +267,10 @@ func TestSubscription_Create_ThenPaidThenRefresh(t *testing.T) {
 	assert.Equal(t, st.Subscription.ID, got.Subscription.ID)
 	assert.Equal(t, model.SubscriptionActive, got.Subscription.Status)
 	assert.Nil(t, got.Payment, "nothing left to pay")
-	e := f.audit.last(t)
-	assert.Equal(t, "subscription.sync", e.Action)
+	assert.Equal(t, model.BillingActive, f.billing.status[companyA], "paid: the company may use the product")
+	actions := f.audit.actions()
+	assert.Equal(t, []string{"subscription.sync", "company.billing_status"}, actions[len(actions)-2:])
+	e := f.audit.entries[len(f.audit.entries)-2]
 	assert.Equal(t, model.AuditChange{Old: model.SubscriptionIncomplete, New: model.SubscriptionActive}, e.Changes["status"])
 
 	// Refreshing again changes nothing, so records nothing.
@@ -380,4 +417,94 @@ func TestSubscription_List_Scope(t *testing.T) {
 	_, err = f.svc.List(context.Background(), platformAdmin, SubscriptionListParams{CompanyID: &other})
 	require.NoError(t, err)
 	assert.Equal(t, &other, f.store.listF.CompanyID)
+}
+
+// ---------- webhook sync ----------
+
+func TestSubscription_SyncByStripeID_PaymentFailsThenStripeGivesUp(t *testing.T) {
+	f := newSubFixture(3)
+	ctx := context.Background()
+	_, err := f.create(companyAUser, f.perTruck)
+	require.NoError(t, err)
+	f.gw.current.Status = model.SubscriptionActive
+	_, err = f.svc.SyncByStripeID(ctx, "sub_1")
+	require.NoError(t, err)
+	require.Equal(t, model.BillingActive, f.billing.status[companyA])
+
+	// A renewal fails: grace period, still allowed.
+	f.gw.current.Status = model.SubscriptionPastDue
+	sub, err := f.svc.SyncByStripeID(ctx, "sub_1")
+	require.NoError(t, err)
+	assert.Equal(t, model.SubscriptionPastDue, sub.Status)
+	assert.Equal(t, model.BillingPastDue, f.billing.status[companyA])
+	assert.True(t, model.BillingAllowsUse(f.billing.status[companyA]))
+	last := f.audit.last(t)
+	assert.Nil(t, last.ActorID, "webhooks act as the system, not as a user")
+
+	// Stripe's retries are exhausted: blocked.
+	f.gw.current.Status = model.SubscriptionUnpaid
+	_, err = f.svc.SyncByStripeID(ctx, "sub_1")
+	require.NoError(t, err)
+	assert.Equal(t, model.BillingBlocked, f.billing.status[companyA])
+	assert.False(t, model.BillingAllowsUse(f.billing.status[companyA]))
+
+	// The subscription is canceled: no current subscription any more.
+	f.gw.current.Status = model.SubscriptionCanceled
+	_, err = f.svc.SyncByStripeID(ctx, "sub_1")
+	require.NoError(t, err)
+	assert.Equal(t, model.BillingNone, f.billing.status[companyA])
+}
+
+func TestSubscription_SyncByStripeID_WebhookBeforeOurSave(t *testing.T) {
+	f := newSubFixture(3)
+	ourID := uuid.Must(uuid.NewV7())
+	start := time.Now()
+	f.gw.current = &model.StripeSubscription{
+		ID: "sub_early", CustomerID: "cus_A", Status: model.SubscriptionIncomplete,
+		Metadata: map[string]string{model.StripeMetaSubscriptionID: ourID.String()},
+		Items:    []model.StripeSubscriptionItem{{ID: "si_1", StripePriceID: "price_flat", Quantity: 1, PeriodStart: &start}},
+	}
+
+	sub, err := f.svc.SyncByStripeID(context.Background(), "sub_early")
+
+	require.NoError(t, err)
+	assert.Equal(t, ourID, sub.ID, "our id comes back from Stripe's metadata")
+	assert.Equal(t, companyA, sub.CompanyID, "the company is found by its Stripe customer")
+}
+
+func TestSubscription_SyncByStripeID_NotOurs(t *testing.T) {
+	f := newSubFixture(3)
+	ctx := context.Background()
+	f.gw.current = &model.StripeSubscription{ID: "sub_stranger", CustomerID: "cus_unknown", Status: model.SubscriptionActive}
+
+	_, err := f.svc.SyncByStripeID(ctx, "sub_stranger")
+	assert.ErrorIs(t, err, ErrNotOurs, "a customer of none of our companies")
+
+	_, err = f.svc.SyncByStripeID(ctx, "sub_deleted_in_stripe")
+	assert.ErrorIs(t, err, ErrNotOurs)
+	assert.Empty(t, f.store.subs)
+}
+
+func TestSubscription_OldEndedSubscriptionDoesNotBlockTheNewOne(t *testing.T) {
+	f := newSubFixture(3)
+	ctx := context.Background()
+	// An old subscription, already ended.
+	old := &model.Subscription{ID: uuid.New(), CompanyID: companyA, StripeSubscriptionID: "sub_old", Status: model.SubscriptionCanceled}
+	f.store.subs[old.ID] = old
+	// The new one, active.
+	_, err := f.create(companyAUser, f.flat)
+	require.NoError(t, err)
+	f.gw.current.Status = model.SubscriptionActive
+	_, err = f.svc.SyncByStripeID(ctx, "sub_1")
+	require.NoError(t, err)
+	require.Equal(t, model.BillingActive, f.billing.status[companyA])
+
+	// A late event about the OLD one arrives.
+	newOne := f.gw.current
+	f.gw.current = &model.StripeSubscription{ID: "sub_old", CustomerID: "cus_A", Status: model.SubscriptionCanceled}
+	_, err = f.svc.SyncByStripeID(ctx, "sub_old")
+	require.NoError(t, err)
+	f.gw.current = newOne
+
+	assert.Equal(t, model.BillingActive, f.billing.status[companyA], "the status follows the CURRENT subscription")
 }

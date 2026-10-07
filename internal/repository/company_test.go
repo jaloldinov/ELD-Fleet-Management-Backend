@@ -220,3 +220,42 @@ func TestCompanyRepository_SetStripeCustomerID(t *testing.T) {
 	_, err = repo.SetStripeCustomerID(ctx, uuid.New(), "cus_x")
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
+
+func TestCompanyRepository_BillingStatus(t *testing.T) {
+	repo := NewCompanyRepository(newTestDB(t))
+	ctx := context.Background()
+	c := createCompany(t, repo, "Acme", "1")
+	assert.Equal(t, model.BillingNone, c.BillingStatus, "no subscription yet: pay first")
+
+	old, err := repo.SetBillingStatus(ctx, c.ID, model.BillingActive)
+	require.NoError(t, err)
+	assert.Equal(t, model.BillingNone, old)
+
+	old, err = repo.SetBillingStatus(ctx, c.ID, model.BillingPastDue)
+	require.NoError(t, err)
+	assert.Equal(t, model.BillingActive, old)
+
+	got, err := repo.BillingStatus(ctx, c.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.BillingPastDue, got)
+
+	_, err = repo.SetBillingStatus(ctx, c.ID, "free beer")
+	assert.Error(t, err, "the CHECK constraint refuses unknown statuses")
+	_, err = repo.BillingStatus(ctx, uuid.New())
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+func TestCompanyRepository_GetByStripeCustomerID(t *testing.T) {
+	repo := NewCompanyRepository(newTestDB(t))
+	ctx := context.Background()
+	c := createCompany(t, repo, "Acme", "1")
+	_, err := repo.SetStripeCustomerID(ctx, c.ID, "cus_acme")
+	require.NoError(t, err)
+
+	got, err := repo.GetByStripeCustomerID(ctx, "cus_acme")
+	require.NoError(t, err)
+	assert.Equal(t, c.ID, got.ID)
+
+	_, err = repo.GetByStripeCustomerID(ctx, "cus_someone_else")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}

@@ -16,6 +16,7 @@ import (
 // SubscriptionStore is what SubscriptionService needs from the data layer.
 type SubscriptionStore interface {
 	Upsert(ctx context.Context, s model.Subscription) (*model.Subscription, error)
+	GetByStripeID(ctx context.Context, stripeID string) (*model.Subscription, error)
 	GetCurrent(ctx context.Context, companyID uuid.UUID) (*model.Subscription, error)
 	List(ctx context.Context, f model.SubscriptionFilter, limit, offset int) ([]model.Subscription, int, error)
 }
@@ -25,6 +26,18 @@ type SubscriptionPrices interface {
 	GetCatalogPrices(ctx context.Context, ids []uuid.UUID) ([]model.CatalogPrice, error)
 	GetCatalogPricesByStripeIDs(ctx context.Context, stripeIDs []string) ([]model.CatalogPrice, error)
 }
+
+// SubscriptionCompanies is what SubscriptionService needs from the company
+// store (repository.CompanyRepository).
+type SubscriptionCompanies interface {
+	GetByStripeCustomerID(ctx context.Context, customerID string) (*model.Company, error)
+	SetBillingStatus(ctx context.Context, id uuid.UUID, status string) (old string, err error)
+}
+
+// ErrNotOurs: a Stripe object that belongs to none of our companies (made
+// in the Dashboard, by `stripe trigger`, or by another app on the same
+// Stripe account). Webhooks about it are ignored.
+var ErrNotOurs = errors.New("the stripe object belongs to none of our companies")
 
 // TruckCounter counts the trucks a per-truck price is billed for.
 type TruckCounter interface {
@@ -93,6 +106,7 @@ type SubscriptionState struct {
 // Create, on Refresh, and (step 6e) when a webhook says something changed.
 type SubscriptionService struct {
 	store     SubscriptionStore
+	companies SubscriptionCompanies
 	prices    SubscriptionPrices
 	trucks    TruckCounter
 	customers SubscriptionCustomers
@@ -100,9 +114,10 @@ type SubscriptionService struct {
 	audit     *Auditor
 }
 
-func NewSubscriptionService(store SubscriptionStore, prices SubscriptionPrices, trucks TruckCounter,
-	customers SubscriptionCustomers, gateway SubscriptionGateway, audit *Auditor) *SubscriptionService {
-	return &SubscriptionService{store: store, prices: prices, trucks: trucks, customers: customers, gateway: gateway, audit: audit}
+func NewSubscriptionService(store SubscriptionStore, companies SubscriptionCompanies, prices SubscriptionPrices,
+	trucks TruckCounter, customers SubscriptionCustomers, gateway SubscriptionGateway, audit *Auditor) *SubscriptionService {
+	return &SubscriptionService{store: store, companies: companies, prices: prices, trucks: trucks,
+		customers: customers, gateway: gateway, audit: audit}
 }
 
 // Create starts the company's subscription to the given prices.
@@ -143,7 +158,7 @@ func (s *SubscriptionService) Create(ctx context.Context, p auth.Principal, comp
 	}
 
 	snap, err := s.gateway.CreateSubscription(ctx, model.StripeSubscriptionCreate{
-		ID: id, CompanyID: companyID, CustomerID: customerID, PaymentMethodID: card, Items: items,
+		ID: id, CompanyID: companyID, CustomerID: customerID, Items: items,
 	})
 	if err != nil {
 		return nil, err
@@ -195,6 +210,47 @@ func (s *SubscriptionService) Refresh(ctx context.Context, p auth.Principal, com
 		}
 	}
 	return &SubscriptionState{Subscription: sub, Payment: paymentDue(snap, card)}, nil
+}
+
+// SyncByStripeID re-reads one Stripe subscription and saves our copy (and
+// the company's billing status). Webhooks call it: "something changed
+// about sub_123" is all they need to say. Runs as the system.
+//
+// Returns ErrNotOurs for a subscription of none of our companies.
+func (s *SubscriptionService) SyncByStripeID(ctx context.Context, stripeID string) (*model.Subscription, error) {
+	snap, err := s.gateway.GetSubscription(ctx, stripeID)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil, ErrNotOurs // deleted in Stripe, or never existed
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	before, err := s.store.GetByStripeID(ctx, stripeID)
+	switch {
+	case err == nil:
+		return s.save(ctx, auth.SystemPrincipal(), before.CompanyID, before.ID, snap, before)
+	case !errors.Is(err, model.ErrNotFound):
+		return nil, err
+	}
+
+	// Not saved here yet: the webhook came before our own save (or the save
+	// failed). Find the company by its Stripe customer, reuse our id from
+	// the metadata if Stripe has it.
+	company, err := s.companies.GetByStripeCustomerID(ctx, snap.CustomerID)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil, ErrNotOurs
+	}
+	if err != nil {
+		return nil, err
+	}
+	id, err := uuid.Parse(snap.Metadata[model.StripeMetaSubscriptionID])
+	if err != nil {
+		if id, err = uuid.NewV7(); err != nil {
+			return nil, err
+		}
+	}
+	return s.save(ctx, auth.SystemPrincipal(), company.ID, id, snap, nil)
 }
 
 // List returns subscriptions, newest first, history included. Company
@@ -319,16 +375,40 @@ func (s *SubscriptionService) save(ctx context.Context, p auth.Principal, compan
 		action, ch := "subscription.create", subscriptionChanges(model.Subscription{}, *saved)
 		if before != nil {
 			action, ch = "subscription.sync", subscriptionChanges(*before, *saved)
-			if len(ch) == 0 {
-				return nil // Stripe said nothing new
+		}
+		if len(ch) > 0 { // nothing new from Stripe = nothing to record
+			if err := s.audit.Record(ctx, p, model.AuditEntry{
+				Action: action, Entity: model.AuditSubscription, EntityID: saved.ID.String(),
+				CompanyID: &saved.CompanyID, Changes: ch,
+			}); err != nil {
+				return err
 			}
 		}
-		return s.audit.Record(ctx, p, model.AuditEntry{
-			Action: action, Entity: model.AuditSubscription, EntityID: saved.ID.String(),
-			CompanyID: &saved.CompanyID, Changes: ch,
-		})
+		return s.updateBillingStatus(ctx, p, saved.CompanyID)
 	})
 	return saved, err
+}
+
+// updateBillingStatus derives the company's billing status from its
+// CURRENT subscription (not from the one just synced: a late event about
+// an old, ended subscription must not block a company that has a new one).
+func (s *SubscriptionService) updateBillingStatus(ctx context.Context, p auth.Principal, companyID uuid.UUID) error {
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if err != nil && !errors.Is(err, model.ErrNotFound) {
+		return err
+	}
+	status := model.BillingStatusFor(current) // current is nil when not found
+	old, err := s.companies.SetBillingStatus(ctx, companyID, status)
+	if err != nil {
+		return err
+	}
+	if old == status {
+		return nil
+	}
+	return s.audit.Record(ctx, p, model.AuditEntry{
+		Action: "company.billing_status", Entity: model.AuditCompany, EntityID: companyID.String(),
+		CompanyID: &companyID, Changes: model.AuditChanges{"billing_status": {Old: old, New: status}},
+	})
 }
 
 // fromStripe maps Stripe's subscription onto our model: Stripe price ids

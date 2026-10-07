@@ -51,6 +51,9 @@ type Handlers struct {
 	Product       *ProductHandler
 	PaymentMethod *PaymentMethodHandler
 	Subscription  *SubscriptionHandler
+	// nil without STRIPE_WEBHOOK_SECRET: webhooks cannot be verified, so
+	// the route does not exist.
+	Webhook *WebhookHandler
 }
 
 // RouterSecurity holds what the router needs to protect routes.
@@ -58,6 +61,9 @@ type RouterSecurity struct {
 	Tokens      middleware.TokenParser      // authentication: who is calling?
 	Permissions middleware.PermissionLoader // authorization: what may they do?
 	AuthLimiter middleware.RateLimiter      // per-IP limit on the public /auth routes
+	// Billing gates the product (fleet routes) on the company's
+	// subscription. nil = billing disabled: everything is free.
+	Billing middleware.BillingStatusLoader
 }
 
 // NewRouter builds the Gin engine and registers all routes.
@@ -123,6 +129,13 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	public.POST("/password/verify", h.Password.Verify)
 	public.POST("/password/reset", h.Password.Reset) // the reset token is the credential
 
+	// Stripe's webhooks: no token (Stripe has none); the signature proves
+	// the sender. Not under /auth, so not rate limited per IP: Stripe sends
+	// bursts from a few addresses.
+	if h.Webhook != nil {
+		v1.POST("/webhooks/stripe", h.Webhook.Stripe)
+	}
+
 	// ---------- Protected: every route below requires a valid access token ----------
 	// Registering the middleware on the GROUP (not per route) means a new
 	// route added here can never forget authentication.
@@ -150,7 +163,14 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	users.DELETE("/:id", perm.Require(model.PermUserDelete), h.User.Delete)
 	users.PUT("/:id/password", perm.Require(model.PermUserSetPassword), h.User.SetPassword)
 
-	drivers := protected.Group("/drivers")
+	// The product itself (the fleet) needs a paid-up subscription; users,
+	// companies and billing do not, so a blocked company can still pay.
+	product := protected
+	if sec.Billing != nil {
+		product = protected.Group("", middleware.RequireActiveBilling(sec.Billing))
+	}
+
+	drivers := product.Group("/drivers")
 	// Login only: a driver reads their OWN profile (identity, not a permission).
 	// Registered before /:id; Gin matches the static segment "me" first.
 	drivers.GET("/me", h.Driver.Me)
@@ -160,7 +180,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	drivers.PATCH("/:id", perm.Require(model.PermDriverUpdate), h.Driver.Update)
 	drivers.DELETE("/:id", perm.Require(model.PermDriverDelete), h.Driver.Delete)
 
-	trucks := protected.Group("/trucks")
+	trucks := product.Group("/trucks")
 	trucks.POST("", perm.Require(model.PermTruckCreate), h.Truck.Create)
 	trucks.GET("", perm.Require(model.PermTruckRead), h.Truck.List)
 	trucks.GET("/:id", perm.Require(model.PermTruckRead), h.Truck.Get)
@@ -168,7 +188,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	trucks.DELETE("/:id", perm.Require(model.PermTruckDelete), h.Truck.Delete)
 
 	// Installing/removing a device is an edit of the device: eld:update.
-	elds := protected.Group("/eld-devices")
+	elds := product.Group("/eld-devices")
 	elds.POST("", perm.Require(model.PermELDCreate), h.ELDDevice.Create)
 	elds.GET("", perm.Require(model.PermELDRead), h.ELDDevice.List)
 	elds.GET("/:id", perm.Require(model.PermELDRead), h.ELDDevice.Get)

@@ -251,6 +251,8 @@ func run() error {
 		productHandler       *handler.ProductHandler
 		paymentMethodHandler *handler.PaymentMethodHandler
 		subscriptionHandler  *handler.SubscriptionHandler
+		webhookHandler       *handler.WebhookHandler
+		billingGate          middleware.BillingStatusLoader // nil = everything free
 	)
 	if stripeClient != nil {
 		productRepo := repository.NewProductRepository(pool)
@@ -259,9 +261,22 @@ func run() error {
 		customerSvc := service.NewCustomerService(companyRepo, stripegw.NewCustomers(stripeClient), auditor,
 			cfg.StripePublishableKey)
 		paymentMethodHandler = handler.NewPaymentMethodHandler(customerSvc)
-		subscriptionHandler = handler.NewSubscriptionHandler(service.NewSubscriptionService(
-			repository.NewSubscriptionRepository(pool), productRepo, truckRepo, customerSvc,
-			stripegw.NewSubscriptions(stripeClient), auditor))
+		subscriptionGateway := stripegw.NewSubscriptions(stripeClient)
+		subscriptionSvc := service.NewSubscriptionService(repository.NewSubscriptionRepository(pool), companyRepo,
+			productRepo, truckRepo, customerSvc, subscriptionGateway, auditor)
+		subscriptionHandler = handler.NewSubscriptionHandler(subscriptionSvc)
+
+		// Pay first, then use: fleet routes need a paid-up subscription.
+		billingGate = companyRepo
+
+		if cfg.StripeWebhookSecret != "" {
+			webhookHandler = handler.NewWebhookHandler(service.NewWebhookService(
+				stripegw.NewWebhooks(cfg.StripeWebhookSecret), repository.NewStripeEventRepository(pool),
+				subscriptionSvc, subscriptionGateway, log))
+		} else {
+			log.Warn("STRIPE_WEBHOOK_SECRET not set; Stripe webhooks are refused, so payments and renewals " +
+				"reach us only through the refresh endpoint")
+		}
 	}
 
 	router := handler.NewRouter(log, handler.RouterOptions{
@@ -272,6 +287,7 @@ func run() error {
 		Tokens:      tokens,
 		Permissions: userSvc,
 		AuthLimiter: authIPLimiter,
+		Billing:     billingGate,
 	}, handler.Handlers{
 		Health:        handler.NewHealthHandler(pool, log),
 		Auth:          handler.NewAuthHandler(authSvc, loginLimiter),
@@ -286,6 +302,7 @@ func run() error {
 		Product:       productHandler,
 		PaymentMethod: paymentMethodHandler,
 		Subscription:  subscriptionHandler,
+		Webhook:       webhookHandler,
 	})
 
 	srv := &http.Server{

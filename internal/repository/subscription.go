@@ -81,6 +81,12 @@ func (r *SubscriptionRepository) GetByID(ctx context.Context, id uuid.UUID) (*mo
 	return r.one(ctx, row, "get subscription")
 }
 
+// GetByStripeID finds our copy of a Stripe subscription (sub_...).
+func (r *SubscriptionRepository) GetByStripeID(ctx context.Context, stripeID string) (*model.Subscription, error) {
+	row := r.q(ctx).QueryRow(ctx, `SELECT `+subscriptionColumns+` FROM subscriptions WHERE stripe_subscription_id = $1`, stripeID)
+	return r.one(ctx, row, "get subscription by stripe id")
+}
+
 // GetCurrent returns the company's subscription that has not ended
 // (model.ErrNotFound if none). The unique index guarantees at most one.
 func (r *SubscriptionRepository) GetCurrent(ctx context.Context, companyID uuid.UUID) (*model.Subscription, error) {
