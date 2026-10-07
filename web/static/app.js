@@ -109,8 +109,19 @@ async function start() {
   } else {
     await loadCompanies();
   }
-  await loadCards();
-  await loadSubscription();
+  await loadCompanyBilling();
+  if (can("billing_metrics:read")) await loadDashboard();
+}
+
+// can reports whether the logged-in user has a permission (the server
+// still checks every request; this only decides what the page shows).
+function can(permission) {
+  return !!state.me && state.me.permissions.includes(permission);
+}
+
+// loadCompanyBilling (re)loads everything about the chosen company.
+async function loadCompanyBilling() {
+  await Promise.all([loadBanner(), loadCards(), loadSubscription(), loadInvoices()]);
 }
 
 // getStripe loads Stripe.js with our account's public key, once.
@@ -144,8 +155,7 @@ async function loadCompanies() {
 $("company-select").addEventListener("change", (ev) => {
   state.companyId = ev.target.value;
   closeCardForm();
-  loadCards();
-  loadSubscription();
+  loadCompanyBilling();
 });
 
 // ---------- cards ----------
@@ -576,6 +586,7 @@ $("sub-picker").addEventListener("submit", async (ev) => {
     // An invoice to pay in the browser: the first one, or a change for
     // which the bank asks for 3-D Secure.
     if (st.payment) await payNow();
+    await Promise.all([loadBanner(), loadInvoices()]);
   } catch (err) {
     const details = err.status === 400 ? " " + Object.values(err.body?.error?.details || {}).join(" ") : "";
     $("plan-error").textContent = err.message + details;
@@ -662,13 +673,277 @@ async function payNow() {
     for (let i = 0; i < 5; i++) {
       const st = await api("POST", billingPath("/subscription/refresh"));
       showSubscription(st);
-      if (!st.payment) return;
+      if (!st.payment) {
+        await Promise.all([loadBanner(), loadInvoices()]);
+        return;
+      }
       await new Promise((r) => setTimeout(r, 1000));
     }
   } catch (err) {
     $("sub-error").textContent = err.message;
   } finally {
     pay.disabled = false;
+  }
+}
+
+// ---------- billing status banner ----------
+
+// What each billing status means for the company, in its own words.
+const BANNERS = {
+  none: ["No active subscription", "Trucks, drivers and ELD devices are locked until you subscribe.", "bad"],
+  pending: ["Waiting for the first payment", "The subscription starts as soon as the first invoice is paid.", "bad"],
+  past_due: ["A payment failed", "Everything still works while Stripe retries the card. Pay the open invoice or add a working card to avoid suspension.", ""],
+  blocked: ["Suspended for unpaid invoices", "Trucks, drivers and ELD devices are locked. Pay the open invoice below to continue.", "bad"],
+};
+
+async function loadBanner() {
+  const banner = $("billing-banner");
+  banner.hidden = true;
+  if (!state.companyId) return;
+  try {
+    const company = await api("GET", `/companies/${encodeURIComponent(state.companyId)}`);
+    const b = BANNERS[company.billing_status];
+    if (!b) return; // active: nothing to say
+    const title = document.createElement("strong");
+    title.textContent = b[0];
+    const text = document.createElement("span");
+    text.textContent = b[1];
+    banner.replaceChildren(title, text);
+    banner.className = "banner " + b[2];
+    banner.hidden = false;
+  } catch {
+    // The banner is a hint; the rest of the page still works without it.
+  }
+}
+
+// ---------- invoices ----------
+
+const REASONS = {
+  subscription_create: "First payment",
+  subscription_cycle: "Renewal",
+  subscription_update: "Plan change",
+  manual: "One-off charge",
+};
+
+async function loadInvoices() {
+  const card = $("invoices-card");
+  const list = $("invoice-list");
+  const msg = $("invoices-message");
+  card.hidden = !can("invoice:read") || !state.companyId;
+  if (card.hidden) return;
+  list.replaceChildren();
+  msg.textContent = "";
+  $("invoice-error").textContent = "";
+  try {
+    const [page, bal] = await Promise.all([
+      api("GET", `/invoices?page_size=20&company_id=${encodeURIComponent(state.companyId)}`),
+      api("GET", billingPath("/balance")),
+    ]);
+    $("balance").textContent = bal.balance < 0 ? `Credit available: ${money(-bal.balance)}`
+      : bal.balance > 0 ? `Owed from earlier: ${money(bal.balance)}` : "";
+    if (page.items.length === 0) msg.textContent = "No invoices yet.";
+    for (const inv of page.items) list.append(invoiceRow(inv));
+  } catch (err) {
+    msg.textContent = err.status === 404 && err.message === "route not found"
+      ? "Billing is not enabled on this server."
+      : `Could not load invoices: ${err.message}`;
+  }
+}
+
+function invoiceRow(inv) {
+  const li = document.createElement("li");
+
+  const left = document.createElement("div");
+  const what = document.createElement("div");
+  what.className = "what";
+  what.textContent = inv.description || REASONS[inv.billing_reason] || "Invoice";
+  const when = document.createElement("div");
+  when.className = "when";
+  when.textContent = [inv.number || "Draft", new Date(inv.created_at).toLocaleDateString()].join(" · ");
+  left.append(what, when);
+
+  const right = document.createElement("div");
+  right.className = "money";
+  const total = document.createElement("div");
+  total.textContent = money(inv.total);
+  const status = document.createElement("span");
+  status.className = "status " + (inv.status === "paid" ? "good" : inv.status === "open" ? "bad" : "");
+  status.textContent = inv.status === "open" ? `${money(inv.amount_remaining)} due` : inv.status;
+  right.append(total, status);
+
+  const actions = document.createElement("div");
+  actions.className = "row-actions";
+  for (const [label, url] of [["View", inv.hosted_invoice_url], ["PDF", inv.invoice_pdf]]) {
+    if (!url) continue;
+    const a = document.createElement("a");
+    a.href = url; // Stripe's own page: opened in a new tab, without access to ours
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = label;
+    actions.append(a);
+  }
+  if (inv.status === "open" && can("invoice:pay")) {
+    actions.append(smallButton(`Pay ${money(inv.amount_remaining)}`, () => payInvoice(inv)));
+  }
+
+  li.append(left, right);
+  if (actions.childElementCount) {
+    const spacer = document.createElement("div");
+    li.append(spacer, actions);
+  }
+  return li;
+}
+
+// payInvoice charges an open invoice with the default card. If the bank
+// wants 3-D Secure, Stripe.js shows it; the card never passes our server.
+async function payInvoice(inv) {
+  $("invoice-error").textContent = "";
+  try {
+    const res = await api("POST", `/invoices/${encodeURIComponent(inv.id)}/pay`);
+    if (res.payment) {
+      const stripe = await getStripe();
+      const { error } = await stripe.confirmPayment({
+        clientSecret: res.payment.client_secret,
+        confirmParams: { payment_method: res.payment.payment_method_id, return_url: window.location.href },
+        redirect: "if_required",
+      });
+      if (error) {
+        $("invoice-error").textContent = error.message;
+        return;
+      }
+    }
+    // Paid: the subscription may be unblocked; everything else follows.
+    await loadCompanyBilling();
+  } catch (err) {
+    // 402 card_declined carries the bank's words.
+    $("invoice-error").textContent = err.message;
+  }
+}
+
+// ---------- platform dashboard ----------
+
+const STATUS_WORDS = { active: "active", past_due: "past due", blocked: "blocked", pending: "waiting for first payment", none: "no subscription" };
+
+async function loadDashboard() {
+  const card = $("dashboard");
+  try {
+    const m = await api("GET", "/billing/metrics?months=12");
+    renderKpis(m);
+    renderStatusCounts(m);
+    renderRevenueChart(m.months);
+    card.hidden = false;
+  } catch {
+    card.hidden = true; // billing disabled, or no permission
+  }
+}
+
+function kpi(label, value, sub, hero) {
+  const div = document.createElement("div");
+  div.className = hero ? "kpi hero" : "kpi";
+  const l = document.createElement("div");
+  l.className = "label";
+  l.textContent = label;
+  const v = document.createElement("div");
+  v.className = "value";
+  v.textContent = value;
+  div.append(l, v);
+  if (sub) {
+    const s = document.createElement("div");
+    s.className = "sub";
+    s.textContent = sub;
+    div.append(s);
+  }
+  return div;
+}
+
+// compact formats big amounts for tiles: 4200 -> "$42", 1234500 -> "$12.3K".
+function compact(cents) {
+  return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
+}
+
+function renderKpis(m) {
+  const top = m.mrr_by_product[0];
+  $("kpis").replaceChildren(
+    kpi("Monthly recurring revenue", money(m.mrr), top ? `Largest: ${top.product_name} (${money(top.mrr)})` : "No paying subscriptions yet", true),
+    kpi("Annual run rate", compact(m.arr), "MRR × 12"),
+    kpi("Outstanding", money(m.outstanding.amount), `${m.outstanding.invoices} open invoice${m.outstanding.invoices === 1 ? "" : "s"}`),
+    kpi("Failed payments", String(m.payment_failures_30d), "attempts, last 30 days"),
+  );
+}
+
+function renderStatusCounts(m) {
+  const parts = Object.entries(m.companies_by_billing_status)
+    .filter(([, n]) => n > 0)
+    .map(([s, n]) => `${n} ${STATUS_WORDS[s] || s}`);
+  $("status-counts").textContent = parts.length ? `Companies: ${parts.join(" · ")}` : "";
+}
+
+// renderRevenueChart draws one column per month in plain HTML. Single
+// series: no legend (the heading names it). Only the latest month gets a
+// value on its cap; every month has a tooltip (hover or keyboard focus)
+// and the table below has all the numbers.
+function renderRevenueChart(months) {
+  const chart = $("revenue-chart");
+  const tip = $("chart-tooltip");
+  const max = Math.max(1, ...months.map((m) => m.revenue));
+  const short = (ym) => new Date(`${ym}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
+  const long = (ym) => new Date(`${ym}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+
+  chart.replaceChildren();
+  const axis = document.createElement("div");
+  axis.className = "chart-axis";
+
+  months.forEach((m, i) => {
+    const col = document.createElement("div");
+    col.className = "col";
+    col.tabIndex = 0; // keyboard users get the tooltip too
+    const details = `${long(m.month)}: ${money(m.revenue)} collected · ${m.new_subscriptions} new · ${m.canceled_subscriptions} cancelled`;
+    col.setAttribute("aria-label", details);
+
+    if (i === months.length - 1) {
+      const cap = document.createElement("div");
+      cap.className = "cap";
+      cap.textContent = compact(m.revenue);
+      col.append(cap);
+    }
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.style.height = `${(m.revenue / max) * 100}%`; // CSSOM: allowed by our CSP
+    col.append(bar);
+
+    const show = () => {
+      tip.textContent = details;
+      tip.hidden = false;
+      const box = col.getBoundingClientRect();
+      const host = $("dashboard").getBoundingClientRect();
+      const left = Math.min(Math.max(0, box.left - host.left + box.width / 2 - tip.offsetWidth / 2), host.width - tip.offsetWidth);
+      tip.style.left = `${left}px`;
+      tip.style.top = `${box.top - host.top - tip.offsetHeight - 6}px`;
+    };
+    const hide = () => { tip.hidden = true; };
+    col.addEventListener("mouseenter", show);
+    col.addEventListener("focus", show);
+    col.addEventListener("mouseleave", hide);
+    col.addEventListener("blur", hide);
+    chart.append(col);
+
+    const label = document.createElement("span");
+    label.textContent = short(m.month);
+    axis.append(label);
+  });
+  chart.after(axis);
+  document.querySelectorAll(".chart-axis").forEach((a) => { if (a !== axis) a.remove(); });
+
+  const body = $("revenue-table").querySelector("tbody");
+  body.replaceChildren();
+  for (const m of [...months].reverse()) {
+    const tr = document.createElement("tr");
+    for (const v of [long(m.month), money(m.revenue), m.new_subscriptions, m.canceled_subscriptions]) {
+      const td = document.createElement("td");
+      td.textContent = String(v);
+      tr.append(td);
+    }
+    body.append(tr);
   }
 }
 

@@ -356,3 +356,20 @@ func TestInvoice_SyncByStripeID(t *testing.T) {
 	_, err = f.svc.SyncByStripeID(ctx, "in_deleted")
 	assert.ErrorIs(t, err, ErrNotOurs)
 }
+
+func TestInvoice_Balance_ReadingCreatesNothing(t *testing.T) {
+	f := newInvFixture(t)
+	ctx := context.Background()
+
+	bal, err := f.svc.Balance(ctx, platformAdmin, companyB) // company B has no Stripe customer
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), bal.Balance)
+	assert.NotNil(t, bal.Transactions)
+
+	bal, err = f.svc.Balance(ctx, companyAUser, companyA)
+	require.NoError(t, err)
+	assert.Equal(t, int64(-2500), bal.Balance)
+
+	_, err = f.svc.Balance(ctx, companyAUser, companyB)
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}

@@ -101,6 +101,16 @@ func (m *memBilling) GetByStripeCustomerID(_ context.Context, customerID string)
 	return &model.Company{ID: id}, nil
 }
 
+func (m *memBilling) GetByID(_ context.Context, id uuid.UUID) (*model.Company, error) {
+	for cus, cid := range m.customers {
+		if cid == id {
+			c := cus
+			return &model.Company{ID: id, StripeCustomerID: &c}, nil
+		}
+	}
+	return &model.Company{ID: id}, nil
+}
+
 func (m *memBilling) SetBillingStatus(_ context.Context, id uuid.UUID, status string) (string, error) {
 	old, ok := m.status[id]
 	if !ok {

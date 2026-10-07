@@ -38,12 +38,33 @@
 
     <!-- Billing -->
     <section id="billing-view" hidden>
+      <!-- Platform admins: the business at a glance. -->
+      <div class="card" id="dashboard" hidden>
+        <h2>Billing dashboard</h2>
+        <div id="kpis" class="kpis"></div>
+        <p id="status-counts" class="hint"></p>
+        <h3>Revenue collected per month</h3>
+        <p class="hint">Paid invoices by payment date, before refunds. Hover or focus a month for details.</p>
+        <div id="revenue-chart" class="chart" role="img" aria-label="Revenue collected per month"></div>
+        <div id="chart-tooltip" class="tooltip" role="status" hidden></div>
+        <details class="table-view">
+          <summary>Show as table</summary>
+          <table id="revenue-table">
+            <thead><tr><th scope="col">Month</th><th scope="col">Revenue</th><th scope="col">New</th><th scope="col">Cancelled</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </details>
+      </div>
+
       <div class="card" id="company-picker" hidden>
         <label>Company
           <select id="company-select"></select>
         </label>
         <p class="hint">You are a platform admin: choose whose billing to manage.</p>
       </div>
+
+      <!-- What the company may do right now (billing status). -->
+      <div id="billing-banner" class="banner" role="status" hidden></div>
 
       <div class="card">
         <h2>Subscription</h2>
@@ -92,6 +113,16 @@
           <p id="plan-error" class="error" role="alert"></p>
           <p class="hint">Per-truck prices are billed for your active trucks. You pay first; the subscription starts once the payment succeeds.</p>
         </form>
+      </div>
+
+      <div class="card" id="invoices-card" hidden>
+        <div class="card-head">
+          <h2>Invoices</h2>
+          <span id="balance" class="hint"></span>
+        </div>
+        <p id="invoices-message" class="hint"></p>
+        <ul id="invoice-list" class="invoices"></ul>
+        <p id="invoice-error" class="error" role="alert"></p>
       </div>
 
       <div class="card">

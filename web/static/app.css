@@ -8,6 +8,10 @@
   --accent-text: #ffffff;
   --error: #c0262d;
   --ok: #18794e;
+  --warn: #8a5a00;
+  /* Chart marks (validated: lightness band + 3:1 against the surface). */
+  --chart-bar: #2456d3;
+  --chart-grid: #e6e9ef;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: light dark;
 }
@@ -23,6 +27,9 @@
     --accent-text: #0b0e14;
     --error: #ff7a7f;
     --ok: #4cc38a;
+    --warn: #f0b84a;
+    --chart-bar: #5b84f0;
+    --chart-grid: #2a303b;
   }
 }
 
@@ -154,7 +161,17 @@ button.small { padding: 0.25rem 0.6rem; font-size: 0.85rem; }
 .hint { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
 .error { color: var(--error); font-size: 0.9rem; min-height: 1.2em; margin: 0.5rem 0 0; }
 
-#who { color: var(--muted); margin-right: 0.75rem; }
+/* The signed-in name shrinks (…) instead of widening the page on phones. */
+.topbar { flex-wrap: wrap; }
+#session { display: flex; align-items: center; min-width: 0; max-width: 100%; }
+#who {
+  color: var(--muted);
+  margin-right: 0.75rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ---------- subscription ---------- */
 
@@ -234,3 +251,126 @@ label.inline input { width: auto; margin: 0; }
 }
 
 .scheduled p { margin: 0; font-weight: 600; }
+
+/* ---------- banner ---------- */
+
+.banner {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--warn);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.banner.bad { border-left-color: var(--error); }
+.banner strong { display: block; }
+
+/* ---------- invoices ---------- */
+
+.invoices { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+
+.invoices li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 1rem;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.invoices .what { font-weight: 600; }
+.invoices .when { color: var(--muted); font-size: 0.85rem; }
+.invoices .money { text-align: right; font-variant-numeric: tabular-nums; }
+.invoices .row-actions { display: flex; gap: 0.75rem; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.invoices a { color: var(--accent); font-size: 0.9rem; }
+
+/* ---------- dashboard ---------- */
+
+.kpis {
+  display: grid;
+  /* The hero spans the row; the three tiles below share it equally. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.kpi {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.kpi .label { color: var(--muted); font-size: 0.85rem; }
+.kpi .value { font-size: 1.4rem; font-weight: 600; font-variant-numeric: proportional-nums; }
+.kpi.hero { grid-column: 1 / -1; }
+.kpi.hero .value { font-size: 3rem; line-height: 1.1; }
+
+@media (max-width: 34rem) {
+  .kpis { grid-template-columns: 1fr; }
+}
+.kpi .sub { color: var(--muted); font-size: 0.8rem; }
+
+/* A column chart in plain HTML: one baseline, bars grow up from it. */
+.chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  height: 11rem;
+  padding-top: 1.25rem;
+  border-bottom: 1px solid var(--chart-grid);
+  position: relative;
+}
+
+.chart .col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 0;
+  cursor: default;
+  border-radius: 4px;
+  outline-offset: 2px;
+}
+
+.chart .col:hover, .chart .col:focus-visible { background: var(--chart-grid); }
+
+.chart .bar {
+  width: min(24px, 70%);
+  background: var(--chart-bar);
+  border-radius: 4px 4px 0 0; /* rounded data end, square at the baseline */
+  min-height: 0;
+}
+
+.chart .cap { font-size: 0.75rem; color: var(--text); margin-bottom: 0.2rem; font-variant-numeric: tabular-nums; }
+
+.chart-axis {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.chart-axis span { flex: 1; text-align: center; font-size: 0.75rem; color: var(--muted); min-width: 0; overflow: hidden; }
+
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
+  white-space: nowrap;
+  z-index: 2;
+}
+
+#dashboard { position: relative; }
+
+.table-view { margin-top: 0.75rem; }
+.table-view summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
+.table-view table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }
+.table-view th, .table-view td { text-align: right; padding: 0.3rem 0.4rem; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.table-view th:first-child, .table-view td:first-child { text-align: left; }

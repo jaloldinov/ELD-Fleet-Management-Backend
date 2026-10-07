@@ -23,6 +23,7 @@ type InvoiceStore interface {
 
 // InvoiceCompanies finds the company of a Stripe customer.
 type InvoiceCompanies interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Company, error)
 	GetByStripeCustomerID(ctx context.Context, customerID string) (*model.Company, error)
 }
 
@@ -156,16 +157,20 @@ func (s *InvoiceService) CreditNotes(ctx context.Context, p auth.Principal, id u
 	return s.gateway.ListCreditNotes(ctx, inv.StripeInvoiceID)
 }
 
-// Balance returns the company's credit balance at Stripe.
+// Balance returns the company's credit balance at Stripe. A company
+// without billing has none: reading never creates a Stripe customer.
 func (s *InvoiceService) Balance(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.CustomerBalance, error) {
 	if !canAccessCompany(p, companyID) {
 		return nil, model.ErrNotFound
 	}
-	customerID, err := s.customers.EnsureCustomer(ctx, p, companyID)
+	c, err := s.companies.GetByID(ctx, companyID)
 	if err != nil {
 		return nil, err
 	}
-	return s.gateway.Balance(ctx, customerID)
+	if c.StripeCustomerID == nil {
+		return &model.CustomerBalance{Transactions: []model.BalanceTransaction{}}, nil
+	}
+	return s.gateway.Balance(ctx, *c.StripeCustomerID)
 }
 
 // ---------- paying ----------
