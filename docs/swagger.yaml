@@ -126,6 +126,48 @@ definitions:
         example: pk_test_51Qabc
         type: string
     type: object
+  handler.BillingMetricsResponse:
+    properties:
+      arr:
+        example: 3000000
+        type: integer
+      companies_by_billing_status:
+        additionalProperties:
+          type: integer
+        description: 'Companies by billing status: none, pending, active, past_due,
+          blocked.'
+        type: object
+      currency:
+        example: usd
+        type: string
+      months:
+        description: Oldest first; every month present.
+        items:
+          $ref: '#/definitions/handler.MonthMetricsResponse'
+        type: array
+      mrr:
+        description: |-
+          Monthly recurring revenue in cents: active and past_due subscriptions,
+          yearly prices counted as 1/12. Discounts and credit are not subtracted.
+        example: 250000
+        type: integer
+      mrr_by_product:
+        items:
+          $ref: '#/definitions/handler.ProductMRRResponse'
+        type: array
+      outstanding:
+        $ref: '#/definitions/handler.OutstandingResponse'
+      payment_failures_30d:
+        description: Failed payment attempts Stripe reported in the last 30 days (retries
+          count).
+        example: 3
+        type: integer
+      subscriptions_by_status:
+        additionalProperties:
+          type: integer
+        description: All subscriptions (ended ones too) by status.
+        type: object
+    type: object
   handler.CancelSubscriptionRequest:
     properties:
       at_period_end:
@@ -824,6 +866,32 @@ definitions:
         example: jane.smith
         type: string
     type: object
+  handler.MonthMetricsResponse:
+    properties:
+      canceled_subscriptions:
+        example: 1
+        type: integer
+      month:
+        example: 2026-10
+        type: string
+      new_subscriptions:
+        example: 3
+        type: integer
+      revenue:
+        description: Cents collected that month (paid invoices, by payment date; refunds
+          not subtracted).
+        example: 240000
+        type: integer
+    type: object
+  handler.OutstandingResponse:
+    properties:
+      amount:
+        example: 30000
+        type: integer
+      invoices:
+        example: 2
+        type: integer
+    type: object
   handler.PaymentDueResponse:
     properties:
       amount_due:
@@ -906,6 +974,21 @@ definitions:
         type: string
       unit_amount:
         example: 2500
+        type: integer
+    type: object
+  handler.ProductMRRResponse:
+    properties:
+      mrr:
+        example: 150000
+        type: integer
+      product_id:
+        format: uuid
+        type: string
+      product_name:
+        example: ELD Fleet plan
+        type: string
+      subscriptions:
+        example: 12
         type: integer
     type: object
   handler.ProductResponse:
@@ -1747,6 +1830,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Billing settings for the browser
+      tags:
+      - billing
+  /api/v1/billing/metrics:
+    get:
+      description: |-
+        Requires permission: billing_metrics:read (platform only). MRR, subscriptions and companies by status, outstanding invoices, payment failures and monthly revenue.
+        Computed from our copies (no Stripe calls).
+      parameters:
+      - default: 12
+        description: How many months of history, the current one included
+        in: query
+        maximum: 36
+        minimum: 1
+        name: months
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.BillingMetricsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission billing_metrics:read, or not a platform
+            user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Billing dashboard
       tags:
       - billing
   /api/v1/companies:

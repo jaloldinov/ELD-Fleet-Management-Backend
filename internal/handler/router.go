@@ -52,6 +52,7 @@ type Handlers struct {
 	PaymentMethod *PaymentMethodHandler
 	Subscription  *SubscriptionHandler
 	Invoice       *InvoiceHandler
+	Metrics       *BillingMetricsHandler
 	// nil without STRIPE_WEBHOOK_SECRET: webhooks cannot be verified, so
 	// the route does not exist.
 	Webhook *WebhookHandler
@@ -247,6 +248,9 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 		billingMoney.POST("/charges", perm.Require(model.PermInvoiceManage), h.Invoice.CreateCharge)
 		billingMoney.GET("/balance", perm.Require(model.PermInvoiceRead), h.Invoice.Balance)
 		billingMoney.POST("/credits", perm.Require(model.PermCreditManage), h.Invoice.AddCredit)
+	}
+	if h.Metrics != nil {
+		protected.GET("/billing/metrics", perm.Require(model.PermBillingMetricsRead), h.Metrics.Get)
 	}
 	if h.Subscription != nil {
 		// The company's subscription. Refresh only re-reads Stripe, so

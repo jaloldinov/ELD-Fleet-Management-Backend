@@ -254,6 +254,7 @@ func run() error {
 		paymentMethodHandler *handler.PaymentMethodHandler
 		subscriptionHandler  *handler.SubscriptionHandler
 		invoiceHandler       *handler.InvoiceHandler
+		metricsHandler       *handler.BillingMetricsHandler
 		webhookHandler       *handler.WebhookHandler
 		billingGate          middleware.BillingStatusLoader // nil = everything free
 	)
@@ -271,6 +272,8 @@ func run() error {
 		invoiceSvc := service.NewInvoiceService(repository.NewInvoiceRepository(pool), companyRepo, customerSvc,
 			stripegw.NewInvoices(stripeClient), subscriptionSvc, auditor)
 		invoiceHandler = handler.NewInvoiceHandler(invoiceSvc)
+		metricsHandler = handler.NewBillingMetricsHandler(service.NewBillingMetricsService(
+			repository.NewBillingMetricsRepository(pool)))
 
 		// Pay first, then use: fleet routes need a paid-up subscription.
 		billingGate = companyRepo
@@ -332,6 +335,7 @@ func run() error {
 		Subscription:  subscriptionHandler,
 		Webhook:       webhookHandler,
 		Invoice:       invoiceHandler,
+		Metrics:       metricsHandler,
 	})
 
 	srv := &http.Server{

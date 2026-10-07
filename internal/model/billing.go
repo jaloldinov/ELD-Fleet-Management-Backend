@@ -405,3 +405,31 @@ type StripeCreditNoteRequest struct {
 	Reason string // duplicate, fraudulent, order_change, product_unsatisfactory
 	Memo   string
 }
+
+// ProductMRR is one product's monthly recurring revenue.
+type ProductMRR struct {
+	ProductID     uuid.UUID
+	ProductName   string
+	MRR           int64 // cents per month
+	Subscriptions int   // paying subscriptions that include it
+}
+
+// MonthMetrics is one calendar month (UTC) of billing activity.
+type MonthMetrics struct {
+	Month                 string // "2026-10"
+	Revenue               int64  // cents collected (paid invoices, gross of refunds)
+	NewSubscriptions      int
+	CanceledSubscriptions int
+}
+
+// BillingMetrics is the platform's billing dashboard.
+type BillingMetrics struct {
+	MRR                      int64 // cents per month, active + past_due
+	MRRByProduct             []ProductMRR
+	SubscriptionsByStatus    map[string]int
+	CompaniesByBillingStatus map[string]int
+	OutstandingInvoices      int
+	OutstandingAmount        int64
+	PaymentFailures30d       int
+	Months                   []MonthMetrics // oldest first, every month present
+}

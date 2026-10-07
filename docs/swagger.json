@@ -532,6 +532,66 @@
                 }
             }
         },
+        "/api/v1/billing/metrics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: billing_metrics:read (platform only). MRR, subscriptions and companies by status, outstanding invoices, payment failures and monthly revenue.\nComputed from our copies (no Stripe calls).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Billing dashboard",
+                "parameters": [
+                    {
+                        "maximum": 36,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 12,
+                        "description": "How many months of history, the current one included",
+                        "name": "months",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.BillingMetricsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission billing_metrics:read, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/companies": {
             "get": {
                 "security": [
@@ -5254,6 +5314,59 @@
                 }
             }
         },
+        "handler.BillingMetricsResponse": {
+            "type": "object",
+            "properties": {
+                "arr": {
+                    "type": "integer",
+                    "example": 3000000
+                },
+                "companies_by_billing_status": {
+                    "description": "Companies by billing status: none, pending, active, past_due, blocked.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "usd"
+                },
+                "months": {
+                    "description": "Oldest first; every month present.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.MonthMetricsResponse"
+                    }
+                },
+                "mrr": {
+                    "description": "Monthly recurring revenue in cents: active and past_due subscriptions,\nyearly prices counted as 1/12. Discounts and credit are not subtracted.",
+                    "type": "integer",
+                    "example": 250000
+                },
+                "mrr_by_product": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.ProductMRRResponse"
+                    }
+                },
+                "outstanding": {
+                    "$ref": "#/definitions/handler.OutstandingResponse"
+                },
+                "payment_failures_30d": {
+                    "description": "Failed payment attempts Stripe reported in the last 30 days (retries count).",
+                    "type": "integer",
+                    "example": 3
+                },
+                "subscriptions_by_status": {
+                    "description": "All subscriptions (ended ones too) by status.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "handler.CancelSubscriptionRequest": {
             "type": "object",
             "properties": {
@@ -6190,6 +6303,41 @@
                 }
             }
         },
+        "handler.MonthMetricsResponse": {
+            "type": "object",
+            "properties": {
+                "canceled_subscriptions": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "month": {
+                    "type": "string",
+                    "example": "2026-10"
+                },
+                "new_subscriptions": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "revenue": {
+                    "description": "Cents collected that month (paid invoices, by payment date; refunds not subtracted).",
+                    "type": "integer",
+                    "example": 240000
+                }
+            }
+        },
+        "handler.OutstandingResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 30000
+                },
+                "invoices": {
+                    "type": "integer",
+                    "example": 2
+                }
+            }
+        },
         "handler.PaymentDueResponse": {
             "type": "object",
             "properties": {
@@ -6302,6 +6450,27 @@
                 "unit_amount": {
                     "type": "integer",
                     "example": 2500
+                }
+            }
+        },
+        "handler.ProductMRRResponse": {
+            "type": "object",
+            "properties": {
+                "mrr": {
+                    "type": "integer",
+                    "example": 150000
+                },
+                "product_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "product_name": {
+                    "type": "string",
+                    "example": "ELD Fleet plan"
+                },
+                "subscriptions": {
+                    "type": "integer",
+                    "example": 12
                 }
             }
         },
