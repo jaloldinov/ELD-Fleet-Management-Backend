@@ -50,6 +50,7 @@ type Handlers struct {
 	// Billing (nil when Stripe is not configured: the routes do not exist).
 	Product       *ProductHandler
 	PaymentMethod *PaymentMethodHandler
+	Subscription  *SubscriptionHandler
 }
 
 // RouterSecurity holds what the router needs to protect routes.
@@ -199,6 +200,8 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 		protected.PATCH("/prices/:id", perm.Require(model.PermProductUpdate), h.Product.UpdatePrice)
 	}
 	if h.PaymentMethod != nil {
+		// Login only: the publishable key is public by design.
+		protected.GET("/billing/config", h.PaymentMethod.Config)
 		// A company's cards. Company admins: own company (the service turns
 		// any other id into 404); platform admins: any company.
 		billing := companies.Group("/:id/billing")
@@ -206,6 +209,15 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 		billing.GET("/payment-methods", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.List)
 		billing.PUT("/payment-methods/:pm/default", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.SetDefault)
 		billing.DELETE("/payment-methods/:pm", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.Remove)
+	}
+	if h.Subscription != nil {
+		// The company's subscription. Refresh only re-reads Stripe, so
+		// reading permission is enough.
+		sub := companies.Group("/:id/billing/subscription")
+		sub.POST("", perm.Require(model.PermSubscriptionManage), h.Subscription.Create)
+		sub.GET("", perm.Require(model.PermSubscriptionRead), h.Subscription.Current)
+		sub.POST("/refresh", perm.Require(model.PermSubscriptionRead), h.Subscription.Refresh)
+		protected.GET("/subscriptions", perm.Require(model.PermSubscriptionRead), h.Subscription.List)
 	}
 
 	return r

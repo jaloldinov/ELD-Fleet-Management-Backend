@@ -14,6 +14,7 @@ import (
 
 // CustomerService is what PaymentMethodHandler needs from the service layer.
 type CustomerService interface {
+	PublishableKey() string
 	CreateSetupIntent(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*service.SetupIntent, error)
 	ListPaymentMethods(ctx context.Context, p auth.Principal, companyID uuid.UUID) ([]model.PaymentMethod, error)
 	SetDefaultPaymentMethod(ctx context.Context, p auth.Principal, companyID uuid.UUID, paymentMethodID string) error
@@ -43,6 +44,11 @@ type ListPaymentMethodsResponse struct {
 	Items []PaymentMethodResponse `json:"items"`
 }
 
+type BillingConfigResponse struct {
+	// Public key of our Stripe account, for Stripe("pk_...").
+	PublishableKey string `json:"publishable_key" example:"pk_test_51Qabc"`
+}
+
 // ---------- Handler ----------
 
 type PaymentMethodHandler struct {
@@ -51,6 +57,21 @@ type PaymentMethodHandler struct {
 
 func NewPaymentMethodHandler(svc CustomerService) *PaymentMethodHandler {
 	return &PaymentMethodHandler{svc: svc}
+}
+
+// Config handles GET /api/v1/billing/config.
+//
+//	@Summary		Billing settings for the browser
+//	@Description	Login only. The Stripe publishable key the page needs to load Stripe.js (public by design).
+//	@Description	The route exists only when billing is enabled.
+//	@Tags			billing
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	BillingConfigResponse
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Router			/api/v1/billing/config [get]
+func (h *PaymentMethodHandler) Config(c *gin.Context) {
+	c.JSON(http.StatusOK, BillingConfigResponse{PublishableKey: h.svc.PublishableKey()})
 }
 
 // CreateSetupIntent handles POST /api/v1/companies/:id/billing/setup-intent.

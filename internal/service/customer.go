@@ -58,6 +58,13 @@ func NewCustomerService(companies CustomerCompanies, gateway CustomerGateway, au
 	return &CustomerService{companies: companies, gateway: gateway, audit: audit, publishableKey: publishableKey}
 }
 
+// PublishableKey is our Stripe account's public key (pk_...), which
+// Stripe.js needs in the browser. Public by design: it can only create
+// tokens and confirm payments that our server set up.
+func (s *CustomerService) PublishableKey() string {
+	return s.publishableKey
+}
+
 // EnsureCustomer returns the company's Stripe Customer id, creating the
 // customer the first time. Used by every billing feature that needs one.
 func (s *CustomerService) EnsureCustomer(ctx context.Context, p auth.Principal, companyID uuid.UUID) (string, error) {

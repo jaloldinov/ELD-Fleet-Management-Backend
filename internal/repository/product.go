@@ -226,3 +226,40 @@ func mapProductError(op string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", op, err)
 }
+
+// GetCatalogPrices returns the prices with these ids (unknown ids are left
+// out), each with its product's name and state.
+func (r *ProductRepository) GetCatalogPrices(ctx context.Context, ids []uuid.UUID) ([]model.CatalogPrice, error) {
+	return r.catalogPrices(ctx, `p.id = ANY($1)`, ids)
+}
+
+// GetCatalogPricesByStripeIDs is GetCatalogPrices by Stripe price id
+// (price_...), for reading what Stripe returns.
+func (r *ProductRepository) GetCatalogPricesByStripeIDs(ctx context.Context, stripeIDs []string) ([]model.CatalogPrice, error) {
+	return r.catalogPrices(ctx, `p.stripe_price_id = ANY($1)`, stripeIDs)
+}
+
+func (r *ProductRepository) catalogPrices(ctx context.Context, where string, arg any) ([]model.CatalogPrice, error) {
+	rows, err := r.q(ctx).Query(ctx, `
+		SELECT p.id, p.product_id, p.stripe_price_id, p.nickname, p.currency, p.unit_amount,
+		       p.billing_interval, p.billing_unit, p.is_active, p.created_at, p.updated_at,
+		       pr.name, pr.is_active
+		FROM prices p
+		JOIN products pr ON pr.id = p.product_id
+		WHERE `+where, arg)
+	if err != nil {
+		return nil, fmt.Errorf("get catalog prices: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.CatalogPrice, error) {
+		var cp model.CatalogPrice
+		p := &cp.Price
+		err := row.Scan(&p.ID, &p.ProductID, &p.StripePriceID, &p.Nickname, &p.Currency, &p.UnitAmount,
+			&p.Interval, &p.BillingUnit, &p.IsActive, &p.CreatedAt, &p.UpdatedAt,
+			&cp.ProductName, &cp.ProductActive)
+		return cp, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan catalog prices: %w", err)
+	}
+	return out, nil
+}

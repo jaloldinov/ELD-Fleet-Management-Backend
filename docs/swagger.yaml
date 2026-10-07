@@ -73,6 +73,13 @@ definitions:
         example: 9c1a1ea6-d4cb-4085-a373-493ea2077a6c
         type: string
     type: object
+  handler.BillingConfigResponse:
+    properties:
+      publishable_key:
+        description: Public key of our Stripe account, for Stripe("pk_...").
+        example: pk_test_51Qabc
+        type: string
+    type: object
   handler.CompanyResponse:
     properties:
       created_at:
@@ -199,6 +206,17 @@ definitions:
       name:
         example: ELD Fleet plan
         type: string
+    type: object
+  handler.CreateSubscriptionRequest:
+    properties:
+      price_ids:
+        description: One price per product, all with the same interval (all monthly
+          or all yearly).
+        example:
+        - 0199a1b2-0000-7000-8000-0000000000b1
+        items:
+          type: string
+        type: array
     type: object
   handler.CreateTruckRequest:
     properties:
@@ -449,6 +467,22 @@ definitions:
           $ref: '#/definitions/handler.RateLimitResponse'
         type: array
     type: object
+  handler.ListSubscriptionsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.SubscriptionResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 4
+        type: integer
+    type: object
   handler.ListTrucksResponse:
     properties:
       items:
@@ -535,6 +569,22 @@ definitions:
         type: array
       username:
         example: jane.smith
+        type: string
+    type: object
+  handler.PaymentDueResponse:
+    properties:
+      amount_due:
+        example: 40000
+        type: integer
+      client_secret:
+        description: 'For stripe.confirmPayment({clientSecret, confirmParams: {payment_method}}).'
+        example: pi_1Qabc_secret_xyz
+        type: string
+      invoice_id:
+        example: in_1QabcDEF
+        type: string
+      payment_method_id:
+        example: pm_1QabcDEF
         type: string
     type: object
   handler.PaymentMethodResponse:
@@ -688,6 +738,89 @@ definitions:
         description: Public key of our Stripe account, for Stripe("pk_...").
         example: pk_test_51Qabc
         type: string
+    type: object
+  handler.SubscriptionItemResponse:
+    properties:
+      amount:
+        description: unit_amount × quantity, in cents.
+        example: 30000
+        type: integer
+      billing_unit:
+        example: truck
+        type: string
+      id:
+        format: uuid
+        type: string
+      nickname:
+        example: Monthly
+        type: string
+      price_id:
+        format: uuid
+        type: string
+      product_name:
+        example: ELD Fleet plan
+        type: string
+      quantity:
+        example: 12
+        type: integer
+      unit_amount:
+        example: 2500
+        type: integer
+    type: object
+  handler.SubscriptionResponse:
+    properties:
+      cancel_at_period_end:
+        example: false
+        type: boolean
+      canceled_at:
+        type: string
+      company_id:
+        format: uuid
+        type: string
+      created_at:
+        example: "2026-10-07T11:26:26Z"
+        type: string
+      current_period_end:
+        example: "2026-11-07T00:00:00Z"
+        type: string
+      current_period_start:
+        example: "2026-10-07T00:00:00Z"
+        type: string
+      id:
+        format: uuid
+        type: string
+      interval:
+        example: month
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/handler.SubscriptionItemResponse'
+        type: array
+      status:
+        description: incomplete (not paid yet), active, past_due, unpaid, canceled,
+          incomplete_expired, trialing, paused.
+        example: active
+        type: string
+      stripe_subscription_id:
+        example: sub_1QabcDEFghiJKL
+        type: string
+      total_amount:
+        description: |-
+          Sum of the items' amounts: what one interval costs, in cents (before
+          proration, credits and tax).
+        example: 40000
+        type: integer
+    type: object
+  handler.SubscriptionStateResponse:
+    properties:
+      payment:
+        allOf:
+        - $ref: '#/definitions/handler.PaymentDueResponse'
+        description: |-
+          Present while the first invoice is unpaid: pay it in the browser,
+          then POST .../subscription/refresh. null = nothing to pay now.
+      subscription:
+        $ref: '#/definitions/handler.SubscriptionResponse'
     type: object
   handler.TokenResponse:
     properties:
@@ -950,6 +1083,7 @@ paths:
         - rate_limit
         - product
         - price
+        - subscription
         in: query
         name: entity
         type: string
@@ -1276,6 +1410,27 @@ paths:
       summary: Refresh tokens
       tags:
       - auth
+  /api/v1/billing/config:
+    get:
+      description: |-
+        Login only. The Stripe publishable key the page needs to load Stripe.js (public by design).
+        The route exists only when billing is enabled.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.BillingConfigResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Billing settings for the browser
+      tags:
+      - billing
   /api/v1/companies:
     get:
       description: |-
@@ -1700,6 +1855,160 @@ paths:
       security:
       - BearerAuth: []
       summary: Start adding a card
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/subscription:
+    get:
+      description: |-
+        Requires permission: subscription:read. Company users: own company only.
+        The subscription that has not ended (any status but canceled and incomplete_expired), as last synced from Stripe.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.SubscriptionResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: The company's current subscription
+      tags:
+      - billing
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: subscription:manage. Company users: own company only.
+        Starts the subscription as "incomplete" with an open first invoice; nothing is charged yet.
+        Pay it in the browser with Stripe.js using payment.client_secret, then call .../subscription/refresh: the status becomes "active".
+        Per-truck prices are billed for the company's active trucks; flat prices once. Needs a default card.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Prices to subscribe to
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.SubscriptionStateResponse'
+        "400":
+          description: 'validation failed: unknown/archived price, mixed intervals,
+            no default card'
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "409":
+          description: the company already has a subscription
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Subscribe (pay first)
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/subscription/refresh:
+    post:
+      description: |-
+        Requires permission: subscription:read. Company users: own company only.
+        Call after paying in the browser. While still unpaid, payment says how to pay (again).
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.SubscriptionStateResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Re-read the subscription from Stripe
       tags:
       - billing
   /api/v1/drivers:
@@ -2777,6 +3086,71 @@ paths:
       summary: Update a rate limit
       tags:
       - rate-limits
+  /api/v1/subscriptions:
+    get:
+      description: |-
+        Requires permission: subscription:read. Newest first, ended ones included (history).
+        Company users get only their own company's (company_id is ignored).
+      parameters:
+      - description: Filter by company (platform users only)
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - description: Filter by status
+        enum:
+        - incomplete
+        - incomplete_expired
+        - trialing
+        - active
+        - past_due
+        - unpaid
+        - canceled
+        - paused
+        in: query
+        name: status
+        type: string
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListSubscriptionsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: List subscriptions
+      tags:
+      - billing
   /api/v1/trucks:
     get:
       description: |-

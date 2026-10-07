@@ -90,6 +90,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		// Billing on, so the generic route checks below cover its routes too.
 		Product:       handler.NewProductHandler(nil),
 		PaymentMethod: handler.NewPaymentMethodHandler(nil),
+		Subscription:  handler.NewSubscriptionHandler(nil),
 	})
 }
 
@@ -179,8 +180,9 @@ func TestRouter_EveryNonPublicRouteRequiresAuthentication(t *testing.T) {
 
 // authenticatedOnlyRoutes need a login but no specific permission.
 var authenticatedOnlyRoutes = map[string]bool{
-	"GET /api/v1/auth/me":    true,
-	"GET /api/v1/drivers/me": true,
+	"GET /api/v1/auth/me":        true,
+	"GET /api/v1/drivers/me":     true,
+	"GET /api/v1/billing/config": true,
 }
 
 // A logged-in user with NO permissions must be denied (403) everywhere except

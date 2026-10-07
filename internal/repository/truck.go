@@ -149,3 +149,16 @@ func mapTruckError(op string, err error) error {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 }
+
+// CountActive returns how many active trucks the company has: the quantity
+// of its per-truck subscription items.
+func (r *TruckRepository) CountActive(ctx context.Context, companyID uuid.UUID) (int, error) {
+	var n int
+	err := r.q(ctx).QueryRow(ctx, `
+		SELECT count(*) FROM trucks
+		WHERE company_id = $1 AND is_active AND deleted_at IS NULL`, companyID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count active trucks: %w", err)
+	}
+	return n, nil
+}

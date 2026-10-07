@@ -46,6 +46,39 @@
       </div>
 
       <div class="card">
+        <h2>Subscription</h2>
+        <p id="sub-message" class="hint"></p>
+
+        <!-- Shown when the company has a subscription. -->
+        <div id="sub-current" hidden>
+          <p><span id="sub-status" class="status"></span> <span id="sub-period" class="hint"></span></p>
+          <ul id="sub-items" class="lines"></ul>
+          <p class="total">Total: <span id="sub-total"></span></p>
+          <div class="actions">
+            <button id="sub-pay" hidden>Pay now</button>
+            <button id="sub-refresh" class="secondary">Refresh</button>
+          </div>
+          <p id="sub-error" class="error" role="alert"></p>
+        </div>
+
+        <!-- Shown when it has none: pick a plan. -->
+        <form id="sub-picker" hidden>
+          <fieldset class="toggle">
+            <legend>Billing</legend>
+            <label class="inline"><input type="radio" name="interval" value="month" checked> Monthly</label>
+            <label class="inline"><input type="radio" name="interval" value="year"> Yearly</label>
+          </fieldset>
+          <ul id="plan-list" class="lines"></ul>
+          <p class="total">Due now: <span id="plan-total">$0.00</span></p>
+          <div class="actions">
+            <button type="submit" id="subscribe">Subscribe and pay</button>
+          </div>
+          <p id="plan-error" class="error" role="alert"></p>
+          <p class="hint">Per-truck prices are billed for your active trucks. You pay first; the subscription starts once the payment succeeds.</p>
+        </form>
+      </div>
+
+      <div class="card">
         <div class="card-head">
           <h2>Payment methods</h2>
           <button id="add-card">Add card</button>

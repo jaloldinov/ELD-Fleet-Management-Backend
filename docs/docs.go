@@ -40,7 +40,8 @@ const docTemplate = `{
                             "eld_device",
                             "rate_limit",
                             "product",
-                            "price"
+                            "price",
+                            "subscription"
                         ],
                         "type": "string",
                         "description": "Entity type",
@@ -499,6 +500,37 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/billing/config": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Login only. The Stripe publishable key the page needs to load Stripe.js (public by design).\nThe route exists only when billing is enabled.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Billing settings for the browser",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.BillingConfigResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -1117,6 +1149,229 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/subscription": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:read. Company users: own company only.\nThe subscription that has not ended (any status but canceled and incomplete_expired), as last synced from Stripe.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "The company's current subscription",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:manage. Company users: own company only.\nStarts the subscription as \"incomplete\" with an open first invoice; nothing is charged yet.\nPay it in the browser with Stripe.js using payment.client_secret, then call .../subscription/refresh: the status becomes \"active\".\nPer-truck prices are billed for the company's active trucks; flat prices once. Needs a default card.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Subscribe (pay first)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Prices to subscribe to",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreateSubscriptionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionStateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed: unknown/archived price, mixed intervals, no default card",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "the company already has a subscription",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/subscription/refresh": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:read. Company users: own company only.\nCall after paying in the browser. While still unpaid, payment says how to pay (again).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Re-read the subscription from Stripe",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionStateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -2733,6 +2988,97 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/subscriptions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:read. Newest first, ended ones included (history).\nCompany users get only their own company's (company_id is ignored).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "List subscriptions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Filter by company (platform users only)",
+                        "name": "company_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "incomplete",
+                            "incomplete_expired",
+                            "trialing",
+                            "active",
+                            "past_due",
+                            "unpaid",
+                            "canceled",
+                            "paused"
+                        ],
+                        "type": "string",
+                        "description": "Filter by status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListSubscriptionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/trucks": {
             "get": {
                 "security": [
@@ -3656,6 +4002,16 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.BillingConfigResponse": {
+            "type": "object",
+            "properties": {
+                "publishable_key": {
+                    "description": "Public key of our Stripe account, for Stripe(\"pk_...\").",
+                    "type": "string",
+                    "example": "pk_test_51Qabc"
+                }
+            }
+        },
         "handler.CompanyResponse": {
             "type": "object",
             "properties": {
@@ -3818,6 +4174,21 @@ const docTemplate = `{
                 "name": {
                     "type": "string",
                     "example": "ELD Fleet plan"
+                }
+            }
+        },
+        "handler.CreateSubscriptionRequest": {
+            "type": "object",
+            "properties": {
+                "price_ids": {
+                    "description": "One price per product, all with the same interval (all monthly or all yearly).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "0199a1b2-0000-7000-8000-0000000000b1"
+                    ]
                 }
             }
         },
@@ -4163,6 +4534,29 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.ListSubscriptionsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.SubscriptionResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 4
+                }
+            }
+        },
         "handler.ListTrucksResponse": {
             "type": "object",
             "properties": {
@@ -4283,6 +4677,28 @@ const docTemplate = `{
                 "username": {
                     "type": "string",
                     "example": "jane.smith"
+                }
+            }
+        },
+        "handler.PaymentDueResponse": {
+            "type": "object",
+            "properties": {
+                "amount_due": {
+                    "type": "integer",
+                    "example": 40000
+                },
+                "client_secret": {
+                    "description": "For stripe.confirmPayment({clientSecret, confirmParams: {payment_method}}).",
+                    "type": "string",
+                    "example": "pi_1Qabc_secret_xyz"
+                },
+                "invoice_id": {
+                    "type": "string",
+                    "example": "in_1QabcDEF"
+                },
+                "payment_method_id": {
+                    "type": "string",
+                    "example": "pm_1QabcDEF"
                 }
             }
         },
@@ -4487,6 +4903,116 @@ const docTemplate = `{
                     "description": "Public key of our Stripe account, for Stripe(\"pk_...\").",
                     "type": "string",
                     "example": "pk_test_51Qabc"
+                }
+            }
+        },
+        "handler.SubscriptionItemResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "unit_amount × quantity, in cents.",
+                    "type": "integer",
+                    "example": 30000
+                },
+                "billing_unit": {
+                    "type": "string",
+                    "example": "truck"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "nickname": {
+                    "type": "string",
+                    "example": "Monthly"
+                },
+                "price_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "product_name": {
+                    "type": "string",
+                    "example": "ELD Fleet plan"
+                },
+                "quantity": {
+                    "type": "integer",
+                    "example": 12
+                },
+                "unit_amount": {
+                    "type": "integer",
+                    "example": 2500
+                }
+            }
+        },
+        "handler.SubscriptionResponse": {
+            "type": "object",
+            "properties": {
+                "cancel_at_period_end": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "canceled_at": {
+                    "type": "string"
+                },
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-07T11:26:26Z"
+                },
+                "current_period_end": {
+                    "type": "string",
+                    "example": "2026-11-07T00:00:00Z"
+                },
+                "current_period_start": {
+                    "type": "string",
+                    "example": "2026-10-07T00:00:00Z"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "interval": {
+                    "type": "string",
+                    "example": "month"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.SubscriptionItemResponse"
+                    }
+                },
+                "status": {
+                    "description": "incomplete (not paid yet), active, past_due, unpaid, canceled, incomplete_expired, trialing, paused.",
+                    "type": "string",
+                    "example": "active"
+                },
+                "stripe_subscription_id": {
+                    "type": "string",
+                    "example": "sub_1QabcDEFghiJKL"
+                },
+                "total_amount": {
+                    "description": "Sum of the items' amounts: what one interval costs, in cents (before\nproration, credits and tax).",
+                    "type": "integer",
+                    "example": 40000
+                }
+            }
+        },
+        "handler.SubscriptionStateResponse": {
+            "type": "object",
+            "properties": {
+                "payment": {
+                    "description": "Present while the first invoice is unpaid: pay it in the browser,\nthen POST .../subscription/refresh. null = nothing to pay now.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.PaymentDueResponse"
+                        }
+                    ]
+                },
+                "subscription": {
+                    "$ref": "#/definitions/handler.SubscriptionResponse"
                 }
             }
         },

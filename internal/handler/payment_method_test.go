@@ -23,6 +23,8 @@ type fakeCustomerService struct {
 	err        error
 }
 
+func (f *fakeCustomerService) PublishableKey() string { return "pk_test_1" }
+
 func (f *fakeCustomerService) CreateSetupIntent(_ context.Context, _ auth.Principal, companyID uuid.UUID) (*service.SetupIntent, error) {
 	f.gotCompany = companyID
 	if f.err != nil {
@@ -102,4 +104,15 @@ func TestPaymentMethodHandler_SetDefaultAndRemove(t *testing.T) {
 
 	svc.err = model.ErrNotFound
 	assert.Equal(t, http.StatusNotFound, do(r, http.MethodDelete, base, "").Code, "another company's card")
+}
+
+func TestPaymentMethodHandler_Config(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/v1/billing/config", NewPaymentMethodHandler(&fakeCustomerService{}).Config)
+
+	rec := do(r, http.MethodGet, "/api/v1/billing/config", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"publishable_key":"pk_test_1"}`, rec.Body.String())
 }

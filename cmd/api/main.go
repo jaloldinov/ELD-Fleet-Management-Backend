@@ -250,13 +250,18 @@ func run() error {
 	var (
 		productHandler       *handler.ProductHandler
 		paymentMethodHandler *handler.PaymentMethodHandler
+		subscriptionHandler  *handler.SubscriptionHandler
 	)
 	if stripeClient != nil {
+		productRepo := repository.NewProductRepository(pool)
 		productHandler = handler.NewProductHandler(service.NewCatalogService(
-			repository.NewProductRepository(pool), stripegw.NewCatalog(stripeClient), auditor))
+			productRepo, stripegw.NewCatalog(stripeClient), auditor))
 		customerSvc := service.NewCustomerService(companyRepo, stripegw.NewCustomers(stripeClient), auditor,
 			cfg.StripePublishableKey)
 		paymentMethodHandler = handler.NewPaymentMethodHandler(customerSvc)
+		subscriptionHandler = handler.NewSubscriptionHandler(service.NewSubscriptionService(
+			repository.NewSubscriptionRepository(pool), productRepo, truckRepo, customerSvc,
+			stripegw.NewSubscriptions(stripeClient), auditor))
 	}
 
 	router := handler.NewRouter(log, handler.RouterOptions{
@@ -280,6 +285,7 @@ func run() error {
 		AuditLog:      handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),
 		Product:       productHandler,
 		PaymentMethod: paymentMethodHandler,
+		Subscription:  subscriptionHandler,
 	})
 
 	srv := &http.Server{

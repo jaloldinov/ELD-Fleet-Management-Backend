@@ -72,3 +72,102 @@ type PaymentMethod struct {
 	ExpYear    int
 	IsDefault  bool // charged for invoices unless another is chosen
 }
+
+// Subscription statuses, as Stripe names them.
+const (
+	SubscriptionIncomplete        = "incomplete"         // first invoice not paid yet
+	SubscriptionIncompleteExpired = "incomplete_expired" // first invoice never paid
+	SubscriptionTrialing          = "trialing"
+	SubscriptionActive            = "active"
+	SubscriptionPastDue           = "past_due" // a renewal failed, Stripe retries
+	SubscriptionUnpaid            = "unpaid"   // Stripe gave up retrying
+	SubscriptionCanceled          = "canceled"
+	SubscriptionPaused            = "paused"
+)
+
+// SubscriptionEnded reports whether a subscription with this status is
+// history: a company with only ended subscriptions may start a new one.
+func SubscriptionEnded(status string) bool {
+	return status == SubscriptionCanceled || status == SubscriptionIncompleteExpired
+}
+
+// Subscription is a company's contract: prices × quantities, billed every
+// interval. Stripe holds the original; this is our copy.
+type Subscription struct {
+	ID                   uuid.UUID
+	CompanyID            uuid.UUID
+	StripeSubscriptionID string // sub_...
+	Status               string
+	Interval             string     // IntervalMonth / IntervalYear
+	CurrentPeriodStart   *time.Time // the period being paid for now
+	CurrentPeriodEnd     *time.Time
+	CancelAtPeriodEnd    bool
+	CanceledAt           *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+
+	Items []SubscriptionItem
+}
+
+// SubscriptionItem is one price of a subscription and its quantity.
+type SubscriptionItem struct {
+	ID                       uuid.UUID
+	StripeSubscriptionItemID string // si_...
+	Price                    Price  // filled when reading
+	ProductName              string // filled when reading
+	Quantity                 int
+}
+
+// SubscriptionFilter narrows a subscription list. Zero value = no filter.
+type SubscriptionFilter struct {
+	CompanyID *uuid.UUID
+	Status    string // "" = any
+}
+
+// StripeSubscription is a subscription as Stripe returns it: what the
+// gateway reads, and what our copy is built from.
+type StripeSubscription struct {
+	ID                string // sub_...
+	CustomerID        string // cus_...
+	Status            string
+	CancelAtPeriodEnd bool
+	CanceledAt        *time.Time
+	Items             []StripeSubscriptionItem
+	LatestInvoice     *StripeInvoice // nil if Stripe has none
+}
+
+type StripeSubscriptionItem struct {
+	ID            string // si_...
+	StripePriceID string // price_...
+	Quantity      int
+	PeriodStart   *time.Time
+	PeriodEnd     *time.Time
+}
+
+// StripeInvoice is the part of an invoice the payment flow needs.
+type StripeInvoice struct {
+	ID        string // in_...
+	Status    string // draft, open, paid, void, uncollectible
+	AmountDue int64  // cents
+	// ClientSecret lets the browser confirm the payment (Stripe.js),
+	// including 3-D Secure. Empty when there is nothing to pay.
+	ClientSecret string
+}
+
+// CatalogPrice is a price with what a subscription needs to know about its
+// product.
+type CatalogPrice struct {
+	Price
+	ProductName   string
+	ProductActive bool
+}
+
+// StripeSubscriptionCreate is what is sent to Stripe to start a
+// subscription.
+type StripeSubscriptionCreate struct {
+	ID              uuid.UUID // ours: metadata and idempotency key
+	CompanyID       uuid.UUID
+	CustomerID      string                   // cus_...
+	PaymentMethodID string                   // pm_...: the card the first invoice will be paid with
+	Items           []StripeSubscriptionItem // StripePriceID + Quantity
+}

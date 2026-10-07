@@ -46,4 +46,8 @@ var (
 	// Wrapped around the Stripe error (errors.Is still finds this one), so
 	// the details are logged while clients get a short 502.
 	ErrPaymentProvider = errors.New("payment provider error")
+
+	// ErrSubscriptionExists: the company already has a subscription that
+	// has not ended. Change it instead of starting another one.
+	ErrSubscriptionExists = errors.New("the company already has a subscription")
 )

@@ -1,0 +1,416 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+
+	"github.com/google/uuid"
+
+	"github.com/jaloldinov/ELD-learning/internal/auth"
+	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
+)
+
+// SubscriptionStore is what SubscriptionService needs from the data layer.
+type SubscriptionStore interface {
+	Upsert(ctx context.Context, s model.Subscription) (*model.Subscription, error)
+	GetCurrent(ctx context.Context, companyID uuid.UUID) (*model.Subscription, error)
+	List(ctx context.Context, f model.SubscriptionFilter, limit, offset int) ([]model.Subscription, int, error)
+}
+
+// SubscriptionPrices looks up catalog prices (repository.ProductRepository).
+type SubscriptionPrices interface {
+	GetCatalogPrices(ctx context.Context, ids []uuid.UUID) ([]model.CatalogPrice, error)
+	GetCatalogPricesByStripeIDs(ctx context.Context, stripeIDs []string) ([]model.CatalogPrice, error)
+}
+
+// TruckCounter counts the trucks a per-truck price is billed for.
+type TruckCounter interface {
+	CountActive(ctx context.Context, companyID uuid.UUID) (int, error)
+}
+
+// SubscriptionCustomers is what SubscriptionService needs from
+// CustomerService: the company's Stripe customer and its cards.
+type SubscriptionCustomers interface {
+	EnsureCustomer(ctx context.Context, p auth.Principal, companyID uuid.UUID) (string, error)
+	ListPaymentMethods(ctx context.Context, p auth.Principal, companyID uuid.UUID) ([]model.PaymentMethod, error)
+}
+
+// SubscriptionGateway is what SubscriptionService needs from Stripe
+// (stripegw.Subscriptions).
+type SubscriptionGateway interface {
+	CreateSubscription(ctx context.Context, in model.StripeSubscriptionCreate) (*model.StripeSubscription, error)
+	GetSubscription(ctx context.Context, id string) (*model.StripeSubscription, error)
+}
+
+// Stripe allows at most 20 items per subscription.
+const subscriptionMaxItems = 20
+
+type CreateSubscriptionInput struct {
+	PriceIDs []uuid.UUID // one per product the company wants
+}
+
+type SubscriptionListParams struct {
+	CompanyID *uuid.UUID // platform users only
+	Status    string
+	Page      int
+	PageSize  int
+}
+
+type SubscriptionPage struct {
+	Items    []model.Subscription
+	Total    int
+	Page     int
+	PageSize int
+}
+
+// PaymentDue is what the browser needs to pay an invoice with Stripe.js.
+type PaymentDue struct {
+	InvoiceID       string
+	AmountDue       int64  // cents
+	ClientSecret    string // for stripe.confirmPayment
+	PaymentMethodID string // the card to pay with
+}
+
+// SubscriptionState is a subscription plus, while its first invoice is
+// unpaid, how to pay it.
+type SubscriptionState struct {
+	Subscription *model.Subscription
+	Payment      *PaymentDue // nil = nothing to pay now
+}
+
+// SubscriptionService starts and reads companies' subscriptions.
+//
+// "Pay first, then use": a new subscription starts as incomplete with an
+// open first invoice. The browser pays it (Stripe.js, 3-D Secure if the
+// bank asks), then calls Refresh; Stripe now says "active". Unpaid, Stripe
+// expires it after 23 hours (incomplete_expired) and the company may try
+// again.
+//
+// Our copy is always rebuilt from what Stripe returns (sync): after
+// Create, on Refresh, and (step 6e) when a webhook says something changed.
+type SubscriptionService struct {
+	store     SubscriptionStore
+	prices    SubscriptionPrices
+	trucks    TruckCounter
+	customers SubscriptionCustomers
+	gateway   SubscriptionGateway
+	audit     *Auditor
+}
+
+func NewSubscriptionService(store SubscriptionStore, prices SubscriptionPrices, trucks TruckCounter,
+	customers SubscriptionCustomers, gateway SubscriptionGateway, audit *Auditor) *SubscriptionService {
+	return &SubscriptionService{store: store, prices: prices, trucks: trucks, customers: customers, gateway: gateway, audit: audit}
+}
+
+// Create starts the company's subscription to the given prices.
+func (s *SubscriptionService) Create(ctx context.Context, p auth.Principal, companyID uuid.UUID, in CreateSubscriptionInput) (*SubscriptionState, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, model.ErrNotFound
+	}
+
+	prices, err := s.validatePrices(ctx, in.PriceIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// A friendly early answer; the unique index is what really prevents
+	// two subscriptions when two requests race.
+	if _, err := s.store.GetCurrent(ctx, companyID); err == nil {
+		return nil, model.ErrSubscriptionExists
+	} else if !errors.Is(err, model.ErrNotFound) {
+		return nil, err
+	}
+
+	customerID, err := s.customers.EnsureCustomer(ctx, p, companyID) // also: the company exists
+	if err != nil {
+		return nil, err
+	}
+	card, err := s.defaultCard(ctx, p, companyID)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := s.quantities(ctx, companyID, prices)
+	if err != nil {
+		return nil, err
+	}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, err
+	}
+
+	snap, err := s.gateway.CreateSubscription(ctx, model.StripeSubscriptionCreate{
+		ID: id, CompanyID: companyID, CustomerID: customerID, PaymentMethodID: card, Items: items,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sub, err := s.save(ctx, p, companyID, id, snap, nil)
+	if err != nil {
+		// Nothing was charged: unpaid, Stripe expires it within 23 hours.
+		return nil, fmt.Errorf("subscription created in Stripe as %s but not saved here: %w", snap.ID, err)
+	}
+	return &SubscriptionState{Subscription: sub, Payment: paymentDue(snap, card)}, nil
+}
+
+// Current returns the company's subscription that has not ended, as last
+// synced (no Stripe call).
+func (s *SubscriptionService) Current(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, model.ErrNotFound
+	}
+	return s.store.GetCurrent(ctx, companyID)
+}
+
+// Refresh reads the company's current subscription from Stripe, saves it
+// here, and says what is still to pay. The browser calls it right after
+// paying; webhooks (step 6e) will do the same on their own.
+func (s *SubscriptionService) Refresh(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*SubscriptionState, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, model.ErrNotFound
+	}
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := s.gateway.GetSubscription(ctx, current.StripeSubscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	sub, err := s.save(ctx, p, companyID, current.ID, snap, current)
+	if err != nil {
+		return nil, err
+	}
+
+	var card string
+	if snap.Status == model.SubscriptionIncomplete {
+		// The browser may have lost the payment step (closed tab): give it
+		// again, with the current default card.
+		if card, err = s.defaultCard(ctx, p, companyID); err != nil && !isValidation(err) {
+			return nil, err
+		}
+	}
+	return &SubscriptionState{Subscription: sub, Payment: paymentDue(snap, card)}, nil
+}
+
+// List returns subscriptions, newest first, history included. Company
+// users see only their own company's.
+func (s *SubscriptionService) List(ctx context.Context, p auth.Principal, params SubscriptionListParams) (*SubscriptionPage, error) {
+	page, size := normalizePage(ListParams{Page: params.Page, PageSize: params.PageSize})
+	f := model.SubscriptionFilter{CompanyID: params.CompanyID, Status: params.Status}
+	if !p.IsPlatformUser() {
+		f.CompanyID = p.CompanyID
+	}
+	items, total, err := s.store.List(ctx, f, size, (page-1)*size)
+	if err != nil {
+		return nil, err
+	}
+	return &SubscriptionPage{Items: items, Total: total, Page: page, PageSize: size}, nil
+}
+
+// ---------- helpers ----------
+
+// validatePrices checks the requested prices can be subscribed to together.
+func (s *SubscriptionService) validatePrices(ctx context.Context, ids []uuid.UUID) ([]model.CatalogPrice, error) {
+	var v validation.Validator
+	v.Check(len(ids) >= 1, "price_ids", "choose at least one price")
+	v.Check(len(ids) <= subscriptionMaxItems, "price_ids", "at most 20 prices")
+	seen := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		v.Check(!seen[id], "price_ids", "each price at most once")
+		seen[id] = true
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+
+	found, err := s.prices.GetCatalogPrices(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uuid.UUID]model.CatalogPrice, len(found))
+	for _, cp := range found {
+		byID[cp.ID] = cp
+	}
+
+	ordered := make([]model.CatalogPrice, 0, len(ids))
+	products := map[uuid.UUID]bool{}
+	for i, id := range ids {
+		field := "price_ids[" + strconv.Itoa(i) + "]"
+		cp, ok := byID[id]
+		// Archived looks the same as missing: it cannot be chosen.
+		if !ok || !cp.IsActive || !cp.ProductActive {
+			v.Check(false, field, "price not found or archived")
+			continue
+		}
+		v.Check(!products[cp.ProductID], field, "only one price per product")
+		products[cp.ProductID] = true
+		ordered = append(ordered, cp)
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+	// A Stripe rule: one subscription, one billing interval.
+	for _, cp := range ordered[1:] {
+		if cp.Interval != ordered[0].Interval {
+			return nil, &validation.ValidationError{Fields: map[string]string{
+				"price_ids": "all prices must have the same interval (all monthly or all yearly)"}}
+		}
+	}
+	return ordered, nil
+}
+
+// quantities: 1 for flat prices, the active truck count for per-truck ones.
+func (s *SubscriptionService) quantities(ctx context.Context, companyID uuid.UUID, prices []model.CatalogPrice) ([]model.StripeSubscriptionItem, error) {
+	trucks := -1 // counted once, only if needed
+	items := make([]model.StripeSubscriptionItem, 0, len(prices))
+	for _, cp := range prices {
+		qty := 1
+		if cp.BillingUnit == model.BillingUnitTruck {
+			if trucks < 0 {
+				n, err := s.trucks.CountActive(ctx, companyID)
+				if err != nil {
+					return nil, err
+				}
+				trucks = n
+			}
+			qty = trucks
+		}
+		items = append(items, model.StripeSubscriptionItem{StripePriceID: cp.StripePriceID, Quantity: qty})
+	}
+	return items, nil
+}
+
+// defaultCard returns the company's default card id. Paying first needs a
+// card to pay with: without one, a validation error says what to do.
+func (s *SubscriptionService) defaultCard(ctx context.Context, p auth.Principal, companyID uuid.UUID) (string, error) {
+	cards, err := s.customers.ListPaymentMethods(ctx, p, companyID)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range cards {
+		if c.IsDefault {
+			return c.ID, nil
+		}
+	}
+	return "", &validation.ValidationError{Fields: map[string]string{
+		"payment_method": "add a card and make it the default first"}}
+}
+
+// save rebuilds our copy from what Stripe returned and records the change.
+// before is our previous copy (nil when the subscription is new).
+func (s *SubscriptionService) save(ctx context.Context, p auth.Principal, companyID, id uuid.UUID,
+	snap *model.StripeSubscription, before *model.Subscription) (*model.Subscription, error) {
+	sub, err := s.fromStripe(ctx, companyID, id, snap)
+	if err != nil {
+		return nil, err
+	}
+
+	var saved *model.Subscription
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if saved, err = s.store.Upsert(ctx, *sub); err != nil {
+			return err
+		}
+		action, ch := "subscription.create", subscriptionChanges(model.Subscription{}, *saved)
+		if before != nil {
+			action, ch = "subscription.sync", subscriptionChanges(*before, *saved)
+			if len(ch) == 0 {
+				return nil // Stripe said nothing new
+			}
+		}
+		return s.audit.Record(ctx, p, model.AuditEntry{
+			Action: action, Entity: model.AuditSubscription, EntityID: saved.ID.String(),
+			CompanyID: &saved.CompanyID, Changes: ch,
+		})
+	})
+	return saved, err
+}
+
+// fromStripe maps Stripe's subscription onto our model: Stripe price ids
+// become our prices.
+func (s *SubscriptionService) fromStripe(ctx context.Context, companyID, id uuid.UUID, snap *model.StripeSubscription) (*model.Subscription, error) {
+	stripeIDs := make([]string, 0, len(snap.Items))
+	for _, it := range snap.Items {
+		stripeIDs = append(stripeIDs, it.StripePriceID)
+	}
+	found, err := s.prices.GetCatalogPricesByStripeIDs(ctx, stripeIDs)
+	if err != nil {
+		return nil, err
+	}
+	byStripe := make(map[string]model.CatalogPrice, len(found))
+	for _, cp := range found {
+		byStripe[cp.StripePriceID] = cp
+	}
+
+	sub := &model.Subscription{
+		ID: id, CompanyID: companyID, StripeSubscriptionID: snap.ID, Status: snap.Status,
+		CancelAtPeriodEnd: snap.CancelAtPeriodEnd, CanceledAt: snap.CanceledAt,
+		Items: make([]model.SubscriptionItem, 0, len(snap.Items)),
+	}
+	for _, it := range snap.Items {
+		cp, ok := byStripe[it.StripePriceID]
+		if !ok {
+			// Added in the Stripe Dashboard, not through our API.
+			return nil, fmt.Errorf("subscription %s uses price %s, which is not in our catalog", snap.ID, it.StripePriceID)
+		}
+		sub.Interval = cp.Interval
+		// All items share one interval, so their periods are the same.
+		sub.CurrentPeriodStart, sub.CurrentPeriodEnd = it.PeriodStart, it.PeriodEnd
+		sub.Items = append(sub.Items, model.SubscriptionItem{
+			StripeSubscriptionItemID: it.ID, Price: cp.Price, ProductName: cp.ProductName, Quantity: it.Quantity,
+		})
+	}
+	return sub, nil
+}
+
+// paymentDue: the open first invoice the browser still has to pay, if any.
+func paymentDue(snap *model.StripeSubscription, card string) *PaymentDue {
+	inv := snap.LatestInvoice
+	if snap.Status != model.SubscriptionIncomplete || inv == nil || inv.Status != "open" ||
+		inv.AmountDue == 0 || inv.ClientSecret == "" {
+		return nil
+	}
+	return &PaymentDue{InvoiceID: inv.ID, AmountDue: inv.AmountDue, ClientSecret: inv.ClientSecret, PaymentMethodID: card}
+}
+
+// canAccessCompany: company users only their own; platform users any.
+func canAccessCompany(p auth.Principal, companyID uuid.UUID) bool {
+	return p.IsPlatformUser() || *p.CompanyID == companyID
+}
+
+func isValidation(err error) bool {
+	var vErr *validation.ValidationError
+	return errors.As(err, &vErr)
+}
+
+func subscriptionChanges(before, after model.Subscription) model.AuditChanges {
+	ch := model.AuditChanges{}
+	ch.Set("status", before.Status, after.Status)
+	ch.Set("stripe_subscription_id", before.StripeSubscriptionID, after.StripeSubscriptionID)
+	ch.Set("interval", before.Interval, after.Interval)
+	ch.Set("cancel_at_period_end", before.CancelAtPeriodEnd, after.CancelAtPeriodEnd)
+	ch.Set("items", describeItems(before.Items), describeItems(after.Items))
+	return ch
+}
+
+// describeItems is how items appear in the audit log: "ELD Fleet plan
+// (Monthly) × 12".
+func describeItems(items []model.SubscriptionItem) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		name := it.ProductName
+		if it.Price.Nickname != "" {
+			name += " (" + it.Price.Nickname + ")"
+		}
+		out = append(out, fmt.Sprintf("%s × %d", name, it.Quantity))
+	}
+	return out
+}
