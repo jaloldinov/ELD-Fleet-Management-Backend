@@ -64,9 +64,15 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 2s --health-timeout 3s --health-retries 15
+      # Stripe contract tests (internal/stripegw): offline, no secrets.
+      stripe-mock:
+        image: stripe/stripe-mock:v0.206.0
+        ports:
+          - 12111:12111
     env:
       TEST_DATABASE_URL: postgres://eld:eld@localhost:5432/eld_test?sslmode=disable
       TEST_REDIS_URL: redis://localhost:6379/1
+      STRIPE_MOCK_URL: http://localhost:12111
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -84,6 +90,54 @@ jobs:
             migrate/migrate:v4.20.1 -path /migrations -database "$TEST_DATABASE_URL" up
       # -p 1: packages share one test database, so run them one at a time.
       - run: go test ./... -race -cover -p 1
+
+  # Billing end to end against REAL Stripe (test mode). Only on main, and
+  # only when the repository has the secrets STRIPE_TEST_SECRET_KEY and
+  # STRIPE_TEST_PUBLISHABLE_KEY (Settings -> Secrets and variables ->
+  # Actions). Without them the job skips; it never blocks a build.
+  billing-e2e:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: eld
+          POSTGRES_PASSWORD: eld
+          POSTGRES_DB: eld_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eld -d eld_test"
+          --health-interval 2s --health-timeout 3s --health-retries 15
+    env:
+      TEST_DATABASE_URL: postgres://eld:eld@localhost:5432/eld_test?sslmode=disable
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+    steps:
+      - name: Skip without Stripe test keys
+        id: keys
+        run: |
+          if [ -z "$STRIPE_SECRET_KEY" ]; then
+            echo "No STRIPE_TEST_SECRET_KEY secret: skipping the real-Stripe tests."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.keys.outputs.run == 'true'
+      - uses: actions/setup-go@v6
+        if: steps.keys.outputs.run == 'true'
+        with:
+          go-version-file: go.mod
+      - name: Run migrations
+        if: steps.keys.outputs.run == 'true'
+        run: |
+          docker run --rm --network host -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.20.1 -path /migrations -database "$TEST_DATABASE_URL" up
+      - name: Billing e2e (real Stripe, test mode)
+        if: steps.keys.outputs.run == 'true'
+        run: E2E_STRIPE=1 go test ./e2e/... -run Stripe -count=1 -v -timeout 15m
 
   docker:
     runs-on: ubuntu-latest

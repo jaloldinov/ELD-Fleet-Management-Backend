@@ -25,6 +25,14 @@ type client struct {
 	token   string            // access token; empty = anonymous
 	refresh string            // refresh token of the same session
 	header  map[string]string // extra request headers
+	base    string            // server URL; "" = baseURL (billing off)
+}
+
+// on returns the same session talking to another server (both servers
+// share the database and the JWT secret, so a token works on both).
+func (c client) on(base string) client {
+	c.base = base
+	return c
 }
 
 var anon = client{}
@@ -54,7 +62,11 @@ func (c client) send(t *testing.T, method, path string, body any) *response {
 		require.NoError(t, err)
 		reqBody = bytes.NewReader(j)
 	}
-	req, err := http.NewRequest(method, baseURL+path, reqBody)
+	base := c.base
+	if base == "" {
+		base = baseURL
+	}
+	req, err := http.NewRequest(method, base+path, reqBody)
 	require.NoError(t, err)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run test test-integration test-e2e test-db test-db-reset build create-admin swagger swagger-check \
+.PHONY: run test test-integration test-e2e test-e2e-stripe test-db test-db-reset build create-admin swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -13,10 +13,11 @@ MIGRATIONS_DIR := migrations
 run:
 	go run ./cmd/api
 
-# Fast unit tests only. TEST_DATABASE_URL and TEST_REDIS_URL are cleared (they
-# are exported from .env), so tests that need Postgres or Redis are skipped.
+# Fast unit tests only. TEST_DATABASE_URL, TEST_REDIS_URL and STRIPE_MOCK_URL
+# are cleared (they are exported from .env), so tests that need Postgres,
+# Redis or stripe-mock are skipped.
 test:
-	TEST_DATABASE_URL= TEST_REDIS_URL= go test ./... -race -cover
+	TEST_DATABASE_URL= TEST_REDIS_URL= STRIPE_MOCK_URL= go test ./... -race -cover
 
 # Also runs tests that need a real database and Redis (TEST_DATABASE_URL and
 # TEST_REDIS_URL, never DATABASE_URL/REDIS_URL).
@@ -31,6 +32,12 @@ test-integration: test-db
 # even when no test file did, and Go's test cache would not notice).
 test-e2e: test-db
 	go test ./e2e/... -count=1 -v
+
+# Billing end to end against REAL Stripe in TEST mode (keys from .env;
+# live keys are refused). Slow (Stripe round trips, test clocks) and needs
+# the network, so it is a separate, opt-in target.
+test-e2e-stripe: test-db
+	E2E_STRIPE=1 go test ./e2e/... -run Stripe -count=1 -v -timeout 15m
 
 # Creates the eld_test database if missing and applies all migrations to it.
 test-db:

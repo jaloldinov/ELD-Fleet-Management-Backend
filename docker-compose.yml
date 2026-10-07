@@ -35,6 +35,16 @@ services:
       timeout: 3s
       retries: 15
 
+  # Stripe's official fake API, for the contract tests in internal/stripegw:
+  # checks that every request we send matches Stripe's API specification.
+  # Stateless (it does not simulate billing). Pinned: a newer version may
+  # know newer parameters, which is what an SDK upgrade should be tested with.
+  stripe-mock:
+    image: stripe/stripe-mock:v0.206.0
+    container_name: eld-stripe-mock
+    ports:
+      - "12111:12111"
+
   # Fake mail server for development: catches every email the API sends
   # (nothing reaches real inboxes). Read them at http://localhost:8025
   mailpit:

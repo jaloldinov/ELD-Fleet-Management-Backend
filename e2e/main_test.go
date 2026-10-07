@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,6 +41,16 @@ const (
 var (
 	// baseURL is where the API under test listens, e.g. http://127.0.0.1:53817.
 	baseURL string
+
+	// The second API server, with billing ON (real Stripe test mode), when
+	// E2E_STRIPE=1 and test keys are set; "" otherwise. Same database.
+	billingURL string
+	// The webhook secret the billing server trusts; the tests sign Stripe
+	// "doorbell" events with it (no Stripe CLI needed).
+	webhookSecret string
+	// testDB lets billing tests link a Stripe test-clock customer to a
+	// company (a test-only shortcut; see linkCustomer).
+	testDB *pgxpool.Pool
 	// mailbox receives every email the API sends.
 	mailbox *inbox
 )
@@ -63,6 +74,7 @@ func runMain(m *testing.M) int {
 		return 1
 	}
 	defer pool.Close()
+	testDB = pool
 
 	if err := resetDatabase(pool); err != nil {
 		fmt.Fprintln(os.Stderr, "e2e: reset database:", err)
@@ -130,19 +142,65 @@ func runMain(m *testing.M) int {
 		return 1
 	}
 
+	// Billing server: only on request, with TEST keys (never live money).
+	var billing *exec.Cmd
+	var billingLogs bytes.Buffer
+	if stripeE2E() {
+		bport, err := freePort()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "e2e: find free port:", err)
+			return 1
+		}
+		webhookSecret = "whsec_e2e" + strings.ReplaceAll(uuid.NewString(), "-", "")
+		billing = exec.Command(apiBin)
+		billing.Env = append(serverEnv(dbURL, bport, mailbox.Port()),
+			"STRIPE_SECRET_KEY="+os.Getenv("STRIPE_SECRET_KEY"),
+			"STRIPE_PUBLISHABLE_KEY="+os.Getenv("STRIPE_PUBLISHABLE_KEY"),
+			"STRIPE_WEBHOOK_SECRET="+webhookSecret)
+		billing.Stdout, billing.Stderr = &billingLogs, &billingLogs
+		if err := billing.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "e2e: start billing api:", err)
+			return 1
+		}
+		billingURL = "http://127.0.0.1:" + bport
+		if err := waitReady(billingURL+"/ready", 20*time.Second); err != nil {
+			_ = billing.Process.Kill()
+			fmt.Fprintf(os.Stderr, "e2e: billing api not ready: %v\n--- logs ---\n%s", err, billingLogs.String())
+			return 1
+		}
+	}
+
 	code := m.Run()
 
 	// SIGTERM, like Docker/Kubernetes: the API must shut down gracefully
 	// and exit 0. A non-zero exit fails the run too.
-	_ = api.Process.Signal(syscall.SIGTERM)
-	if err := api.Wait(); err != nil {
-		fmt.Fprintln(os.Stderr, "e2e: api did not shut down cleanly:", err)
-		code = 1
-	}
-	if code != 0 {
-		fmt.Fprintf(os.Stderr, "--- api logs ---\n%s", logs.String())
+	for _, srv := range []struct {
+		cmd  *exec.Cmd
+		logs *bytes.Buffer
+		name string
+	}{{api, &logs, "api"}, {billing, &billingLogs, "billing api"}} {
+		if srv.cmd == nil {
+			continue
+		}
+		_ = srv.cmd.Process.Signal(syscall.SIGTERM)
+		if err := srv.cmd.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "e2e: %s did not shut down cleanly: %v\n", srv.name, err)
+			code = 1
+		}
+		if code != 0 {
+			fmt.Fprintf(os.Stderr, "--- %s logs ---\n%s", srv.name, srv.logs.String())
+		}
 	}
 	return code
+}
+
+// stripeE2E reports whether the real-Stripe billing tests should run:
+// explicitly requested (they are slow and need the network) and with TEST
+// keys only.
+func stripeE2E() bool {
+	return os.Getenv("E2E_STRIPE") == "1" &&
+		strings.HasPrefix(os.Getenv("STRIPE_SECRET_KEY"), "sk_test_") &&
+		strings.HasPrefix(os.Getenv("STRIPE_PUBLISHABLE_KEY"), "pk_test_")
 }
 
 // serverEnv is the COMPLETE environment of the API and CLI. Built from
