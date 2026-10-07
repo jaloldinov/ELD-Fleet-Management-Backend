@@ -51,6 +51,7 @@ type Handlers struct {
 	Product       *ProductHandler
 	PaymentMethod *PaymentMethodHandler
 	Subscription  *SubscriptionHandler
+	Invoice       *InvoiceHandler
 	// nil without STRIPE_WEBHOOK_SECRET: webhooks cannot be verified, so
 	// the route does not exist.
 	Webhook *WebhookHandler
@@ -229,6 +230,23 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 		billing.GET("/payment-methods", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.List)
 		billing.PUT("/payment-methods/:pm/default", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.SetDefault)
 		billing.DELETE("/payment-methods/:pm", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.Remove)
+	}
+	if h.Invoice != nil {
+		// Bills. Not behind the billing gate: a blocked company must be able
+		// to see and pay what it owes.
+		invoices := protected.Group("/invoices")
+		invoices.GET("", perm.Require(model.PermInvoiceRead), h.Invoice.List)
+		invoices.GET("/:id", perm.Require(model.PermInvoiceRead), h.Invoice.Get)
+		invoices.POST("/:id/pay", perm.Require(model.PermInvoicePay), h.Invoice.Pay)
+		invoices.POST("/:id/finalize", perm.Require(model.PermInvoiceManage), h.Invoice.Finalize)
+		invoices.POST("/:id/void", perm.Require(model.PermInvoiceManage), h.Invoice.Void)
+		invoices.GET("/:id/credit-notes", perm.Require(model.PermInvoiceRead), h.Invoice.ListCreditNotes)
+		invoices.POST("/:id/credit-notes", perm.Require(model.PermCreditManage), h.Invoice.CreateCreditNote)
+
+		billingMoney := companies.Group("/:id/billing")
+		billingMoney.POST("/charges", perm.Require(model.PermInvoiceManage), h.Invoice.CreateCharge)
+		billingMoney.GET("/balance", perm.Require(model.PermInvoiceRead), h.Invoice.Balance)
+		billingMoney.POST("/credits", perm.Require(model.PermCreditManage), h.Invoice.AddCredit)
 	}
 	if h.Subscription != nil {
 		// The company's subscription. Refresh only re-reads Stripe, so

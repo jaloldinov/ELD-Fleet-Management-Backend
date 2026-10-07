@@ -92,6 +92,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		PaymentMethod: handler.NewPaymentMethodHandler(nil),
 		Subscription:  handler.NewSubscriptionHandler(nil),
 		Webhook:       handler.NewWebhookHandler(nil),
+		Invoice:       handler.NewInvoiceHandler(nil),
 	})
 }
 

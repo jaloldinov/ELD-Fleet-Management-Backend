@@ -18,6 +18,7 @@ const (
 	AuditProduct      = "product"
 	AuditPrice        = "price"
 	AuditSubscription = "subscription"
+	AuditInvoice      = "invoice"
 )
 
 // AuditEntry is one change in the audit log.

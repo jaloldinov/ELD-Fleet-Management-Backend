@@ -25,6 +25,11 @@ type SubscriptionSyncer interface {
 	SyncByStripeID(ctx context.Context, stripeID string) (*model.Subscription, error)
 }
 
+// InvoiceSyncer re-reads an invoice from Stripe (InvoiceService).
+type InvoiceSyncer interface {
+	SyncByStripeID(ctx context.Context, stripeID string) (*model.Invoice, error)
+}
+
 // InvoiceLookup finds the subscription of an invoice (stripegw.Subscriptions).
 type InvoiceLookup interface {
 	InvoiceSubscriptionID(ctx context.Context, invoiceID string) (string, error)
@@ -46,11 +51,14 @@ type WebhookService struct {
 	events   StripeEventStore
 	subs     SubscriptionSyncer
 	invoices InvoiceLookup
+	bills    InvoiceSyncer
 	log      *slog.Logger
 }
 
-func NewWebhookService(parser WebhookParser, events StripeEventStore, subs SubscriptionSyncer, invoices InvoiceLookup, log *slog.Logger) *WebhookService {
-	return &WebhookService{parser: parser, events: events, subs: subs, invoices: invoices, log: log.With("component", "stripe-webhook")}
+func NewWebhookService(parser WebhookParser, events StripeEventStore, subs SubscriptionSyncer, invoices InvoiceLookup,
+	bills InvoiceSyncer, log *slog.Logger) *WebhookService {
+	return &WebhookService{parser: parser, events: events, subs: subs, invoices: invoices, bills: bills,
+		log: log.With("component", "stripe-webhook")}
 }
 
 // Handle processes one webhook delivery. model.ErrWebhookSignature means
@@ -91,11 +99,18 @@ func (s *WebhookService) dispatch(ctx context.Context, log *slog.Logger, ev *mod
 		"customer.subscription.resumed":
 		subID = ev.ObjectID
 
+	case "invoice.created", "invoice.finalized", "invoice.updated", "invoice.voided":
+		// Our copy of the invoice follows it; no subscription change.
+		return s.syncInvoice(ctx, log, ev.ObjectID)
+
 	case "invoice.paid",
 		"invoice.payment_failed",
 		"invoice.payment_action_required",
 		"invoice.marked_uncollectible":
-		// An invoice changes its subscription's status (paid: active;
+		if err := s.syncInvoice(ctx, log, ev.ObjectID); err != nil {
+			return err
+		}
+		// An invoice also changes its subscription's status (paid: active;
 		// failed: past_due). Ask Stripe which subscription it belongs to.
 		id, err := s.invoices.InvoiceSubscriptionID(ctx, ev.ObjectID)
 		if errors.Is(err, model.ErrNotFound) || (err == nil && id == "") {
@@ -129,5 +144,20 @@ func (s *WebhookService) dispatch(ctx context.Context, log *slog.Logger, ev *mod
 	}
 	log.Log(ctx, level, "subscription synced from stripe event",
 		"company_id", sub.CompanyID, "subscription", sub.StripeSubscriptionID, "status", sub.Status)
+	return nil
+}
+
+// syncInvoice updates our copy of an invoice. Invoices of no company of
+// ours (another app on the same Stripe account) are ignored.
+func (s *WebhookService) syncInvoice(ctx context.Context, log *slog.Logger, invoiceID string) error {
+	inv, err := s.bills.SyncByStripeID(ctx, invoiceID)
+	if errors.Is(err, ErrNotOurs) {
+		log.Debug("invoice of none of our companies; ignored", "invoice", invoiceID)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	log.Info("invoice synced from stripe event", "company_id", inv.CompanyID, "invoice", inv.StripeInvoiceID, "status", inv.Status)
 	return nil
 }

@@ -288,3 +288,120 @@ type PreviewLine struct {
 	Amount      int64  // cents; negative = credit
 	Proration   bool   // part of the change, not a regular period charge
 }
+
+// Invoice statuses, as Stripe names them.
+const (
+	InvoiceDraft         = "draft" // being prepared; can still change
+	InvoiceOpen          = "open"  // final, waiting for payment
+	InvoicePaid          = "paid"
+	InvoiceVoid          = "void" // cancelled
+	InvoiceUncollectible = "uncollectible"
+)
+
+// Invoice is our copy of a Stripe invoice (a bill). Amounts in cents.
+type Invoice struct {
+	ID                   uuid.UUID
+	CompanyID            uuid.UUID
+	StripeInvoiceID      string // in_...
+	StripeSubscriptionID string // "" = not a subscription's (one-off charge)
+	Number               string // set when finalized
+	Status               string
+	BillingReason        string // subscription_cycle, subscription_update, manual, ...
+	Description          string
+	Currency             string
+	Total                int64 // what the invoice is worth (negative = credit)
+	AmountDue            int64 // asked from the card, after credit
+	AmountPaid           int64
+	AmountRemaining      int64
+	HostedInvoiceURL     string
+	InvoicePDF           string
+	PeriodStart          *time.Time
+	PeriodEnd            *time.Time
+	StripeCreatedAt      time.Time
+	FinalizedAt          *time.Time
+	PaidAt               *time.Time
+	VoidedAt             *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+
+	// Filled only when one invoice is read in detail, from Stripe.
+	Lines []InvoiceLine
+}
+
+type InvoiceLine struct {
+	Description string
+	Amount      int64 // cents
+	Quantity    int
+	Proration   bool
+}
+
+// InvoiceFilter narrows an invoice list. Zero value = no filter.
+type InvoiceFilter struct {
+	CompanyID *uuid.UUID
+	Status    string
+}
+
+// StripeInvoiceSnapshot is an invoice as Stripe returns it, plus the
+// customer it belongs to (to find the company).
+type StripeInvoiceSnapshot struct {
+	Invoice           // ID, CompanyID and timestamps of our row are not set
+	CustomerID string // cus_...
+	// ClientSecret lets the browser finish a payment the bank wants to
+	// confirm (3-D Secure). Empty when nothing is to pay.
+	ClientSecret string
+}
+
+// BalanceTransaction is one change of a company's credit balance.
+type BalanceTransaction struct {
+	ID            string // cbtxn_...
+	Type          string // adjustment (credit given), applied_to_invoice, credit_note, ...
+	Amount        int64  // cents; negative = credit added
+	EndingBalance int64
+	Description   string
+	InvoiceID     string // the Stripe invoice it relates to, if any
+	CreatedAt     time.Time
+}
+
+// CustomerBalance is the company's balance at Stripe. Negative = credit
+// (we owe them; it pays the next invoices); positive = they owe us.
+type CustomerBalance struct {
+	Balance      int64
+	Transactions []BalanceTransaction
+}
+
+// CreditNote reduces a finalized invoice: the money goes back to the card
+// (refund) or to the company's balance (credit).
+type CreditNote struct {
+	ID           string // cn_...
+	Number       string
+	Amount       int64
+	RefundAmount int64
+	CreditAmount int64
+	Reason       string
+	Memo         string
+	CreatedAt    time.Time
+}
+
+// StripeOneOffCharge is a one-off invoice for a company: "ELD installation
+// $150". ID is ours: metadata and idempotency key.
+type StripeOneOffCharge struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	CustomerID  string
+	Description string
+	Amount      int64 // cents, > 0
+}
+
+// StripeCreditNoteRequest reduces a finalized invoice by Amount.
+type StripeCreditNoteRequest struct {
+	ID        uuid.UUID // ours: idempotency key
+	InvoiceID string    // in_...
+	Amount    int64     // cents, > 0
+	// For a PAID invoice the money goes somewhere: Refund = back to the
+	// card; otherwise to the company's balance (pays the next invoices).
+	// For an OPEN invoice it simply lowers what is still to pay.
+	Paid   bool
+	Refund bool
+	Reason string // duplicate, fraudulent, order_change, product_unsatisfactory
+	Memo   string
+}

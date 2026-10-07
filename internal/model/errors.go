@@ -55,6 +55,10 @@ var (
 	// message, which is written for the card holder. Becomes HTTP 402.
 	ErrCardDeclined = errors.New("the card was declined")
 
+	// ErrAuthenticationRequired: the bank wants the card holder to confirm
+	// the payment (3-D Secure); it can only be finished in the browser.
+	ErrAuthenticationRequired = errors.New("the bank asks the card holder to confirm this payment")
+
 	// ErrBillingInactive: the company's subscription does not allow using
 	// the product (not paid yet, or Stripe gave up). Becomes HTTP 402.
 	ErrBillingInactive = errors.New("the company's subscription is not active")

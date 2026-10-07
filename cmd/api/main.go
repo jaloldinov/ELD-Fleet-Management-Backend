@@ -253,6 +253,7 @@ func run() error {
 		productHandler       *handler.ProductHandler
 		paymentMethodHandler *handler.PaymentMethodHandler
 		subscriptionHandler  *handler.SubscriptionHandler
+		invoiceHandler       *handler.InvoiceHandler
 		webhookHandler       *handler.WebhookHandler
 		billingGate          middleware.BillingStatusLoader // nil = everything free
 	)
@@ -267,6 +268,9 @@ func run() error {
 		subscriptionSvc := service.NewSubscriptionService(repository.NewSubscriptionRepository(pool), companyRepo,
 			productRepo, truckRepo, customerSvc, subscriptionGateway, auditor)
 		subscriptionHandler = handler.NewSubscriptionHandler(subscriptionSvc)
+		invoiceSvc := service.NewInvoiceService(repository.NewInvoiceRepository(pool), companyRepo, customerSvc,
+			stripegw.NewInvoices(stripeClient), subscriptionSvc, auditor)
+		invoiceHandler = handler.NewInvoiceHandler(invoiceSvc)
 
 		// Pay first, then use: fleet routes need a paid-up subscription.
 		billingGate = companyRepo
@@ -296,7 +300,7 @@ func run() error {
 		if cfg.StripeWebhookSecret != "" {
 			webhookHandler = handler.NewWebhookHandler(service.NewWebhookService(
 				stripegw.NewWebhooks(cfg.StripeWebhookSecret), repository.NewStripeEventRepository(pool),
-				subscriptionSvc, subscriptionGateway, log))
+				subscriptionSvc, subscriptionGateway, invoiceSvc, log))
 		} else {
 			log.Warn("STRIPE_WEBHOOK_SECRET not set; Stripe webhooks are refused, so payments and renewals " +
 				"reach us only through the refresh endpoint")
@@ -327,6 +331,7 @@ func run() error {
 		PaymentMethod: paymentMethodHandler,
 		Subscription:  subscriptionHandler,
 		Webhook:       webhookHandler,
+		Invoice:       invoiceHandler,
 	})
 
 	srv := &http.Server{

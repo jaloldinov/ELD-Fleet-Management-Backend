@@ -35,6 +35,8 @@ const (
 	// The bank refused the payment (HTTP 402); the message is the bank's,
 	// written for the card holder.
 	CodeCardDeclined = "card_declined"
+	// The bank wants the card holder to confirm (3-D Secure) (HTTP 402).
+	CodeAuthenticationRequired = "authentication_required"
 
 	// Password reset: "wrong or expired code, try again" vs "the reset
 	// token is no longer valid, start over".

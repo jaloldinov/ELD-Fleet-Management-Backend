@@ -70,10 +70,24 @@ func (fakeInvoices) InvoiceSubscriptionID(_ context.Context, id string) (string,
 	}
 }
 
+// fakeBills records the invoices synced; "in_stranger" is not ours.
+type fakeBills struct{ synced []string }
+
+func (f *fakeBills) SyncByStripeID(_ context.Context, id string) (*model.Invoice, error) {
+	f.synced = append(f.synced, id)
+	if id == "in_stranger" {
+		return nil, ErrNotOurs
+	}
+	return &model.Invoice{StripeInvoiceID: id, Status: model.InvoiceOpen}, nil
+}
+
+var lastBills *fakeBills
+
 func newWebhookSvc(ev *model.StripeEvent) (*WebhookService, *memEvents, *fakeSyncer) {
 	events := &memEvents{processed: map[string]bool{}, failed: map[string]string{}}
 	syncer := &fakeSyncer{}
-	return NewWebhookService(fakeParser{ev}, events, syncer, fakeInvoices{}, slog.New(slog.DiscardHandler)), events, syncer
+	lastBills = &fakeBills{}
+	return NewWebhookService(fakeParser{ev}, events, syncer, fakeInvoices{}, lastBills, slog.New(slog.DiscardHandler)), events, syncer
 }
 
 func handle(svc *WebhookService) error {
@@ -157,4 +171,26 @@ func TestWebhook_NotOursIsAcknowledged(t *testing.T) {
 
 	require.NoError(t, handle(svc))
 	assert.True(t, events.processed["evt_1"], "another app's subscription: acknowledged, not retried")
+}
+
+func TestWebhook_InvoiceEventsKeepOurCopy(t *testing.T) {
+	for _, typ := range []string{"invoice.created", "invoice.finalized", "invoice.updated", "invoice.voided"} {
+		t.Run(typ, func(t *testing.T) {
+			svc, _, syncer := newWebhookSvc(&model.StripeEvent{ID: "evt_1", Type: typ, ObjectID: "in_sub"})
+			require.NoError(t, handle(svc))
+			assert.Equal(t, []string{"in_sub"}, lastBills.synced)
+			assert.Empty(t, syncer.synced, "no subscription change for these")
+		})
+	}
+
+	// Paid: the invoice AND its subscription.
+	svc, _, syncer := newWebhookSvc(&model.StripeEvent{ID: "evt_2", Type: "invoice.paid", ObjectID: "in_sub"})
+	require.NoError(t, handle(svc))
+	assert.Equal(t, []string{"in_sub"}, lastBills.synced)
+	assert.Equal(t, []string{"sub_1"}, syncer.synced)
+
+	// Another app's invoice: acknowledged.
+	svc, events, _ := newWebhookSvc(&model.StripeEvent{ID: "evt_3", Type: "invoice.created", ObjectID: "in_stranger"})
+	require.NoError(t, handle(svc))
+	assert.True(t, events.processed["evt_3"])
 }

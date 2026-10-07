@@ -34,7 +34,8 @@
                             "rate_limit",
                             "product",
                             "price",
-                            "subscription"
+                            "subscription",
+                            "invoice"
                         ],
                         "type": "string",
                         "description": "Entity type",
@@ -868,6 +869,219 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/balance": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:read. Company users: own company only. Negative balance = credit that pays the next invoices.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Credit balance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.BalanceResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/charges": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:manage (platform only). A separate invoice with one line (\"ELD installation\").\nProrations waiting for the next renewal are not included. With charge_now, a decline is returned in payment_error and the invoice stays open.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "One-off charge",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Charge",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreateChargeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ChargeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:manage, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/credits": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: credit:manage (platform only). Added to the balance; Stripe uses it for the next invoices.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Give credit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Credit",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.AddCreditRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.BalanceTransactionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission credit:manage, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -2721,6 +2935,497 @@
                 }
             }
         },
+        "/api/v1/invoices": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:read. Newest first. Company users get only their own company's (company_id is ignored).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "List invoices",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Filter by company (platform users only)",
+                        "name": "company_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "draft",
+                            "open",
+                            "paid",
+                            "void",
+                            "uncollectible"
+                        ],
+                        "type": "string",
+                        "description": "Filter by status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number (1-based)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListInvoicesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/invoices/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:read. Company users: own company only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Get an invoice with its lines",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.InvoiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/invoices/{id}/credit-notes": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:read. Company users: own company only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Credit notes of an invoice",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/handler.CreditNoteResponse"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: credit:manage (platform only).\nPaid invoice: refund=true returns the money to the card, refund=false credits the company's balance. Open invoice: lowers what is due.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Credit or refund part of an invoice",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Credit note",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreateCreditNoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreditNoteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission credit:manage, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/invoices/{id}/finalize": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:manage (platform only). The invoice gets a number, cannot change any more, and is collected.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Finalize a draft invoice",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.InvoiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "not a draft",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:manage, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/invoices/{id}/pay": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:pay. Company users: own company only.\nCharges the default card now. A blocked company pays its open invoice this way to be unblocked.\nIf payment is not null, the bank wants the card holder to confirm: finish with Stripe.js.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Pay an open invoice",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.InvoicePaymentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "the invoice is not open",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "card_declined",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:pay",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/invoices/{id}/void": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: invoice:manage (platform only). Kept for the record; nothing is owed any more.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Void an open invoice",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.InvoiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "not open",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission invoice:manage, or not a platform user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/prices/{id}": {
             "patch": {
                 "security": [
@@ -4398,6 +5103,19 @@
                 }
             }
         },
+        "handler.AddCreditRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 2500
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Service outage on 3 Oct"
+                }
+            }
+        },
         "handler.AssignTruckRequest": {
             "type": "object",
             "properties": {
@@ -4475,6 +5193,57 @@
                 }
             }
         },
+        "handler.BalanceResponse": {
+            "type": "object",
+            "properties": {
+                "balance": {
+                    "description": "Cents. Negative = credit the company has (pays its next invoices).",
+                    "type": "integer",
+                    "example": -2500
+                },
+                "transactions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.BalanceTransactionResponse"
+                    }
+                }
+            }
+        },
+        "handler.BalanceTransactionResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Cents; negative = credit added.",
+                    "type": "integer",
+                    "example": -2500
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-07T11:26:26Z"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Service outage on 3 Oct"
+                },
+                "ending_balance": {
+                    "type": "integer",
+                    "example": -2500
+                },
+                "id": {
+                    "type": "string",
+                    "example": "cbtxn_1Qabc"
+                },
+                "stripe_invoice_id": {
+                    "type": "string",
+                    "example": "in_1Qabc"
+                },
+                "type": {
+                    "description": "adjustment (credit given), applied_to_invoice, credit_note, ...",
+                    "type": "string",
+                    "example": "adjustment"
+                }
+            }
+        },
         "handler.BillingConfigResponse": {
             "type": "object",
             "properties": {
@@ -4512,6 +5281,19 @@
                     "description": "From the preview: charges exactly what it showed. Omit to use \"now\".",
                     "type": "integer",
                     "example": 1791331200
+                }
+            }
+        },
+        "handler.ChargeResponse": {
+            "type": "object",
+            "properties": {
+                "invoice": {
+                    "$ref": "#/definitions/handler.InvoiceResponse"
+                },
+                "payment_error": {
+                    "description": "Why charging now failed (the bank's words); the invoice stays open\nand Stripe retries it. Empty = paid (or not charged now).",
+                    "type": "string",
+                    "example": "Your card has insufficient funds."
                 }
             }
         },
@@ -4555,6 +5337,25 @@
                 }
             }
         },
+        "handler.CreateChargeRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 15000
+                },
+                "charge_now": {
+                    "description": "true: charge the default card now. false: Stripe collects it on its own schedule.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "description": {
+                    "description": "What the company sees on the invoice.",
+                    "type": "string",
+                    "example": "ELD installation, 3 trucks"
+                }
+            }
+        },
         "handler.CreateCompanyRequest": {
             "type": "object",
             "properties": {
@@ -4569,6 +5370,29 @@
                 "timezone": {
                     "type": "string",
                     "example": "America/Chicago"
+                }
+            }
+        },
+        "handler.CreateCreditNoteRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 5000
+                },
+                "memo": {
+                    "type": "string",
+                    "example": "Two trucks were billed twice"
+                },
+                "reason": {
+                    "description": "duplicate, fraudulent, order_change, product_unsatisfactory",
+                    "type": "string",
+                    "example": "order_change"
+                },
+                "refund": {
+                    "description": "Paid invoice: true = refund to the card; false = credit to the balance.",
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -4782,6 +5606,43 @@
                 }
             }
         },
+        "handler.CreditNoteResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 5000
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-07T11:26:26Z"
+                },
+                "credit_amount": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "id": {
+                    "type": "string",
+                    "example": "cn_1Qabc"
+                },
+                "memo": {
+                    "type": "string",
+                    "example": "Two trucks were billed twice"
+                },
+                "number": {
+                    "type": "string",
+                    "example": "ABCD-0001-CN-01"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "order_change"
+                },
+                "refund_amount": {
+                    "type": "integer",
+                    "example": 5000
+                }
+            }
+        },
         "handler.DriverResponse": {
             "type": "object",
             "properties": {
@@ -4905,6 +5766,124 @@
                 }
             }
         },
+        "handler.InvoiceLineResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 30000
+                },
+                "description": {
+                    "type": "string",
+                    "example": "12 × ELD Fleet plan (at $25.00 / month)"
+                },
+                "proration": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "quantity": {
+                    "type": "integer",
+                    "example": 12
+                }
+            }
+        },
+        "handler.InvoicePaymentResponse": {
+            "type": "object",
+            "properties": {
+                "invoice": {
+                    "$ref": "#/definitions/handler.InvoiceResponse"
+                },
+                "payment": {
+                    "description": "Not null: the bank wants the card holder to confirm (3-D Secure).\nFinish with stripe.confirmPayment in the browser.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.PaymentDueResponse"
+                        }
+                    ]
+                }
+            }
+        },
+        "handler.InvoiceResponse": {
+            "type": "object",
+            "properties": {
+                "amount_due": {
+                    "type": "integer",
+                    "example": 15000
+                },
+                "amount_paid": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "amount_remaining": {
+                    "type": "integer",
+                    "example": 15000
+                },
+                "billing_reason": {
+                    "description": "subscription_create, subscription_cycle (renewal), subscription_update (plan change), manual (one-off charge).",
+                    "type": "string",
+                    "example": "subscription_cycle"
+                },
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-10-07T11:26:26Z"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "usd"
+                },
+                "description": {
+                    "type": "string",
+                    "example": ""
+                },
+                "hosted_invoice_url": {
+                    "description": "Stripe's page where the customer can see and pay it, and the PDF.",
+                    "type": "string",
+                    "example": "https://invoice.stripe.com/i/acct_1/test_x"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "invoice_pdf": {
+                    "type": "string",
+                    "example": "https://pay.stripe.com/invoice/acct_1/test_x/pdf"
+                },
+                "lines": {
+                    "description": "Only when one invoice is read: its lines.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.InvoiceLineResponse"
+                    }
+                },
+                "number": {
+                    "type": "string",
+                    "example": "ABCD-0001"
+                },
+                "paid_at": {
+                    "type": "string"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "draft, open (waiting for payment), paid, void, uncollectible.",
+                    "type": "string",
+                    "example": "open"
+                },
+                "total": {
+                    "description": "Cents. amount_due is what the card is asked for after credit.",
+                    "type": "integer",
+                    "example": 15000
+                }
+            }
+        },
         "handler.ListAuditLogsResponse": {
             "type": "object",
             "properties": {
@@ -4994,6 +5973,29 @@
                 "total": {
                     "type": "integer",
                     "example": 14
+                }
+            }
+        },
+        "handler.ListInvoicesResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.InvoiceResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 12
                 }
             }
         },

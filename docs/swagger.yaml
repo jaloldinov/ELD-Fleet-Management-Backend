@@ -18,6 +18,15 @@ definitions:
       error:
         $ref: '#/definitions/apierror.Body'
     type: object
+  handler.AddCreditRequest:
+    properties:
+      amount:
+        example: 2500
+        type: integer
+      description:
+        example: Service outage on 3 Oct
+        type: string
+    type: object
   handler.AssignTruckRequest:
     properties:
       truck_id:
@@ -73,6 +82,43 @@ definitions:
         example: 9c1a1ea6-d4cb-4085-a373-493ea2077a6c
         type: string
     type: object
+  handler.BalanceResponse:
+    properties:
+      balance:
+        description: Cents. Negative = credit the company has (pays its next invoices).
+        example: -2500
+        type: integer
+      transactions:
+        items:
+          $ref: '#/definitions/handler.BalanceTransactionResponse'
+        type: array
+    type: object
+  handler.BalanceTransactionResponse:
+    properties:
+      amount:
+        description: Cents; negative = credit added.
+        example: -2500
+        type: integer
+      created_at:
+        example: "2026-10-07T11:26:26Z"
+        type: string
+      description:
+        example: Service outage on 3 Oct
+        type: string
+      ending_balance:
+        example: -2500
+        type: integer
+      id:
+        example: cbtxn_1Qabc
+        type: string
+      stripe_invoice_id:
+        example: in_1Qabc
+        type: string
+      type:
+        description: adjustment (credit given), applied_to_invoice, credit_note, ...
+        example: adjustment
+        type: string
+    type: object
   handler.BillingConfigResponse:
     properties:
       publishable_key:
@@ -104,6 +150,17 @@ definitions:
           "now".'
         example: 1791331200
         type: integer
+    type: object
+  handler.ChargeResponse:
+    properties:
+      invoice:
+        $ref: '#/definitions/handler.InvoiceResponse'
+      payment_error:
+        description: |-
+          Why charging now failed (the bank's words); the invoice stays open
+          and Stripe retries it. Empty = paid (or not charged now).
+        example: Your card has insufficient funds.
+        type: string
     type: object
   handler.CompanyResponse:
     properties:
@@ -138,6 +195,21 @@ definitions:
         example: "2026-10-02T11:26:26Z"
         type: string
     type: object
+  handler.CreateChargeRequest:
+    properties:
+      amount:
+        example: 15000
+        type: integer
+      charge_now:
+        description: 'true: charge the default card now. false: Stripe collects it
+          on its own schedule.'
+        example: true
+        type: boolean
+      description:
+        description: What the company sees on the invoice.
+        example: ELD installation, 3 trucks
+        type: string
+    type: object
   handler.CreateCompanyRequest:
     properties:
       dot_number:
@@ -149,6 +221,24 @@ definitions:
       timezone:
         example: America/Chicago
         type: string
+    type: object
+  handler.CreateCreditNoteRequest:
+    properties:
+      amount:
+        example: 5000
+        type: integer
+      memo:
+        example: Two trucks were billed twice
+        type: string
+      reason:
+        description: duplicate, fraudulent, order_change, product_unsatisfactory
+        example: order_change
+        type: string
+      refund:
+        description: 'Paid invoice: true = refund to the card; false = credit to the
+          balance.'
+        example: true
+        type: boolean
     type: object
   handler.CreateDriverRequest:
     properties:
@@ -315,6 +405,33 @@ definitions:
         example: jane.smith
         type: string
     type: object
+  handler.CreditNoteResponse:
+    properties:
+      amount:
+        example: 5000
+        type: integer
+      created_at:
+        example: "2026-10-07T11:26:26Z"
+        type: string
+      credit_amount:
+        example: 0
+        type: integer
+      id:
+        example: cn_1Qabc
+        type: string
+      memo:
+        example: Two trucks were billed twice
+        type: string
+      number:
+        example: ABCD-0001-CN-01
+        type: string
+      reason:
+        example: order_change
+        type: string
+      refund_amount:
+        example: 5000
+        type: integer
+    type: object
   handler.DriverResponse:
     properties:
       company_id:
@@ -405,6 +522,94 @@ definitions:
         example: ok
         type: string
     type: object
+  handler.InvoiceLineResponse:
+    properties:
+      amount:
+        example: 30000
+        type: integer
+      description:
+        example: 12 × ELD Fleet plan (at $25.00 / month)
+        type: string
+      proration:
+        example: false
+        type: boolean
+      quantity:
+        example: 12
+        type: integer
+    type: object
+  handler.InvoicePaymentResponse:
+    properties:
+      invoice:
+        $ref: '#/definitions/handler.InvoiceResponse'
+      payment:
+        allOf:
+        - $ref: '#/definitions/handler.PaymentDueResponse'
+        description: |-
+          Not null: the bank wants the card holder to confirm (3-D Secure).
+          Finish with stripe.confirmPayment in the browser.
+    type: object
+  handler.InvoiceResponse:
+    properties:
+      amount_due:
+        example: 15000
+        type: integer
+      amount_paid:
+        example: 0
+        type: integer
+      amount_remaining:
+        example: 15000
+        type: integer
+      billing_reason:
+        description: subscription_create, subscription_cycle (renewal), subscription_update
+          (plan change), manual (one-off charge).
+        example: subscription_cycle
+        type: string
+      company_id:
+        format: uuid
+        type: string
+      created_at:
+        example: "2026-10-07T11:26:26Z"
+        type: string
+      currency:
+        example: usd
+        type: string
+      description:
+        example: ""
+        type: string
+      hosted_invoice_url:
+        description: Stripe's page where the customer can see and pay it, and the
+          PDF.
+        example: https://invoice.stripe.com/i/acct_1/test_x
+        type: string
+      id:
+        format: uuid
+        type: string
+      invoice_pdf:
+        example: https://pay.stripe.com/invoice/acct_1/test_x/pdf
+        type: string
+      lines:
+        description: 'Only when one invoice is read: its lines.'
+        items:
+          $ref: '#/definitions/handler.InvoiceLineResponse'
+        type: array
+      number:
+        example: ABCD-0001
+        type: string
+      paid_at:
+        type: string
+      period_end:
+        type: string
+      period_start:
+        type: string
+      status:
+        description: draft, open (waiting for payment), paid, void, uncollectible.
+        example: open
+        type: string
+      total:
+        description: Cents. amount_due is what the card is asked for after credit.
+        example: 15000
+        type: integer
+    type: object
   handler.ListAuditLogsResponse:
     properties:
       items:
@@ -467,6 +672,22 @@ definitions:
         type: integer
       total:
         example: 14
+        type: integer
+    type: object
+  handler.ListInvoicesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.InvoiceResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 12
         type: integer
     type: object
   handler.ListPaymentMethodsResponse:
@@ -1180,6 +1401,7 @@ paths:
         - product
         - price
         - subscription
+        - invoice
         in: query
         name: entity
         type: string
@@ -1760,6 +1982,148 @@ paths:
       summary: Update a company
       tags:
       - companies
+  /api/v1/companies/{id}/billing/balance:
+    get:
+      description: 'Requires permission: invoice:read. Company users: own company
+        only. Negative balance = credit that pays the next invoices.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.BalanceResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Credit balance
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/charges:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: invoice:manage (platform only). A separate invoice with one line ("ELD installation").
+        Prorations waiting for the next renewal are not included. With charge_now, a decline is returned in payment_error and the invoice stays open.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Charge
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateChargeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.ChargeResponse'
+        "400":
+          description: validation failed
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:manage, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: One-off charge
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/credits:
+    post:
+      consumes:
+      - application/json
+      description: 'Requires permission: credit:manage (platform only). Added to the
+        balance; Stripe uses it for the next invoices.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Credit
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.AddCreditRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.BalanceTransactionResponse'
+        "400":
+          description: validation failed
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission credit:manage, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Give credit
+      tags:
+      - billing
   /api/v1/companies/{id}/billing/payment-methods:
     get:
       description: |-
@@ -3015,6 +3379,337 @@ paths:
       summary: Install a device in a truck
       tags:
       - eld-devices
+  /api/v1/invoices:
+    get:
+      description: 'Requires permission: invoice:read. Newest first. Company users
+        get only their own company''s (company_id is ignored).'
+      parameters:
+      - description: Filter by company (platform users only)
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - description: Filter by status
+        enum:
+        - draft
+        - open
+        - paid
+        - void
+        - uncollectible
+        in: query
+        name: status
+        type: string
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page
+        in: query
+        maximum: 100
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListInvoicesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: List invoices
+      tags:
+      - billing
+  /api/v1/invoices/{id}:
+    get:
+      description: 'Requires permission: invoice:read. Company users: own company
+        only.'
+      parameters:
+      - description: Invoice ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.InvoiceResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Get an invoice with its lines
+      tags:
+      - billing
+  /api/v1/invoices/{id}/credit-notes:
+    get:
+      description: 'Requires permission: invoice:read. Company users: own company
+        only.'
+      parameters:
+      - description: Invoice ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handler.CreditNoteResponse'
+            type: array
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Credit notes of an invoice
+      tags:
+      - billing
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: credit:manage (platform only).
+        Paid invoice: refund=true returns the money to the card, refund=false credits the company's balance. Open invoice: lowers what is due.
+      parameters:
+      - description: Invoice ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Credit note
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.CreateCreditNoteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.CreditNoteResponse'
+        "400":
+          description: validation failed
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission credit:manage, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Credit or refund part of an invoice
+      tags:
+      - billing
+  /api/v1/invoices/{id}/finalize:
+    post:
+      description: 'Requires permission: invoice:manage (platform only). The invoice
+        gets a number, cannot change any more, and is collected.'
+      parameters:
+      - description: Invoice ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.InvoiceResponse'
+        "400":
+          description: not a draft
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:manage, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Finalize a draft invoice
+      tags:
+      - billing
+  /api/v1/invoices/{id}/pay:
+    post:
+      description: |-
+        Requires permission: invoice:pay. Company users: own company only.
+        Charges the default card now. A blocked company pays its open invoice this way to be unblocked.
+        If payment is not null, the bank wants the card holder to confirm: finish with Stripe.js.
+      parameters:
+      - description: Invoice ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.InvoicePaymentResponse'
+        "400":
+          description: the invoice is not open
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: card_declined
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:pay
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Pay an open invoice
+      tags:
+      - billing
+  /api/v1/invoices/{id}/void:
+    post:
+      description: 'Requires permission: invoice:manage (platform only). Kept for
+        the record; nothing is owed any more.'
+      parameters:
+      - description: Invoice ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.InvoiceResponse'
+        "400":
+          description: not open
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission invoice:manage, or not a platform user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Void an open invoice
+      tags:
+      - billing
   /api/v1/prices/{id}:
     patch:
       consumes:
