@@ -26,6 +26,12 @@ type SubscriptionService interface {
 	Resume(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error)
 	ScheduleChange(ctx context.Context, p auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*model.Subscription, error)
 	CancelScheduledChange(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error)
+	ActiveTrucks(ctx context.Context, p auth.Principal, companyID uuid.UUID) (int, error)
+}
+
+type UsageResponse struct {
+	// Active trucks: the quantity of per-truck prices.
+	ActiveTrucks int `json:"active_trucks" example:"12"`
 }
 
 // ---------- DTOs ----------
@@ -598,4 +604,36 @@ func (h *SubscriptionHandler) CancelScheduledChange(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, newSubscriptionResponse(sub))
+}
+
+// Usage handles GET /api/v1/companies/:id/billing/usage.
+//
+//	@Summary		What the company would be billed for
+//	@Description	Requires permission: subscription:read. Company users: own company only.
+//	@Description	The number of active trucks (the quantity of per-truck prices). Unlike /trucks, it works before the company subscribes, so a plan picker can show prices.
+//	@Tags			billing
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Company ID"	format(uuid)
+//	@Success		200	{object}	UsageResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission subscription:read"
+//	@Failure		404	{object}	apierror.Response	"company not found"
+//	@Router			/api/v1/companies/{id}/billing/usage [get]
+func (h *SubscriptionHandler) Usage(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	companyID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	n, err := h.svc.ActiveTrucks(c.Request.Context(), p, companyID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, UsageResponse{ActiveTrucks: n})
 }

@@ -675,6 +675,16 @@ func (s *SubscriptionService) ReconcileTruckQuantities(ctx context.Context) (upd
 	return updated, errors.Join(errs...)
 }
 
+// ActiveTrucks returns how many trucks the company would be billed for
+// with a per-truck price. Read for the plan picker; available without a
+// subscription (unlike the fleet routes, which are locked until then).
+func (s *SubscriptionService) ActiveTrucks(ctx context.Context, p auth.Principal, companyID uuid.UUID) (int, error) {
+	if !canAccessCompany(p, companyID) {
+		return 0, model.ErrNotFound
+	}
+	return s.trucks.CountActive(ctx, companyID)
+}
+
 // List returns subscriptions, newest first, history included. Company
 // users see only their own company's.
 func (s *SubscriptionService) List(ctx context.Context, p auth.Principal, params SubscriptionListParams) (*SubscriptionPage, error) {

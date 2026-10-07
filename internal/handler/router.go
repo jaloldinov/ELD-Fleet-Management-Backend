@@ -265,6 +265,9 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 		sub.POST("/resume", perm.Require(model.PermSubscriptionManage), h.Subscription.Resume)
 		sub.PUT("/schedule", perm.Require(model.PermSubscriptionManage), h.Subscription.ScheduleChange)
 		sub.DELETE("/schedule", perm.Require(model.PermSubscriptionManage), h.Subscription.CancelScheduledChange)
+		// Not behind the billing gate: the plan picker needs it BEFORE the
+		// company subscribes (the fleet routes are locked until then).
+		companies.GET("/:id/billing/usage", perm.Require(model.PermSubscriptionRead), h.Subscription.Usage)
 		protected.GET("/subscriptions", perm.Require(model.PermSubscriptionRead), h.Subscription.List)
 	}
 

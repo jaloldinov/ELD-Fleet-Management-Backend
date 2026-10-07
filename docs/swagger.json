@@ -2097,6 +2097,65 @@
                 }
             }
         },
+        "/api/v1/companies/{id}/billing/usage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:read. Company users: own company only.\nThe number of active trucks (the quantity of per-truck prices). Unlike /trucks, it works before the company subscribes, so a plan picker can show prices.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "What the company would be billed for",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.UsageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers": {
             "get": {
                 "security": [
@@ -7027,6 +7086,16 @@
                         "dispatcher",
                         "manager"
                     ]
+                }
+            }
+        },
+        "handler.UsageResponse": {
+            "type": "object",
+            "properties": {
+                "active_trucks": {
+                    "description": "Active trucks: the quantity of per-truck prices.",
+                    "type": "integer",
+                    "example": 12
                 }
             }
         },

@@ -63,6 +63,11 @@ func (f *fakeSubscriptionService) CancelScheduledChange(_ context.Context, _ aut
 	return f.state.Subscription, nil
 }
 
+func (f *fakeSubscriptionService) ActiveTrucks(_ context.Context, _ auth.Principal, companyID uuid.UUID) (int, error) {
+	f.gotCompany = companyID
+	return 12, f.err
+}
+
 func (f *fakeSubscriptionService) Resume(_ context.Context, _ auth.Principal, companyID uuid.UUID) (*model.Subscription, error) {
 	f.gotCompany = companyID
 	if f.err != nil {
@@ -278,4 +283,20 @@ func TestSubscriptionHandler_ScheduledChange(t *testing.T) {
 	st.Subscription.ScheduledChangeAt, st.Subscription.ScheduledItems = nil, nil
 	rec = do(r, http.MethodGet, "/api/v1/companies/"+testCompanyID.String()+"/billing/subscription", "")
 	assert.Contains(t, rec.Body.String(), `"scheduled_change":null`)
+}
+
+func TestSubscriptionHandler_Usage(t *testing.T) {
+	svc := &fakeSubscriptionService{}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(auth.WithPrincipal(c.Request.Context(), testCaller))
+	})
+	r.GET("/api/v1/companies/:id/billing/usage", NewSubscriptionHandler(svc).Usage)
+
+	rec := do(r, http.MethodGet, "/api/v1/companies/"+testCompanyID.String()+"/billing/usage", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"active_trucks":12}`, rec.Body.String())
+	assert.Equal(t, testCompanyID, svc.gotCompany)
 }

@@ -1399,6 +1399,13 @@ definitions:
           type: string
         type: array
     type: object
+  handler.UsageResponse:
+    properties:
+      active_trucks:
+        description: 'Active trucks: the quantity of per-truck prices.'
+        example: 12
+        type: integer
+    type: object
   handler.UserResponse:
     properties:
       company_id:
@@ -2896,6 +2903,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Change the plan at the next renewal
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/usage:
+    get:
+      description: |-
+        Requires permission: subscription:read. Company users: own company only.
+        The number of active trucks (the quantity of per-truck prices). Unlike /trucks, it works before the company subscribes, so a plan picker can show prices.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.UsageResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: What the company would be billed for
       tags:
       - billing
   /api/v1/drivers:

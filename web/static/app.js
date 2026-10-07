@@ -344,7 +344,11 @@ async function loadSubscription() {
     if (err.status === 404 && err.message === "route not found") {
       $("sub-message").textContent = "Billing is not enabled on this server.";
     } else if (err.status === 404) {
-      await showPicker("new"); // no subscription yet
+      // No subscription yet: show the plans. If that fails, say so; an
+      // empty section with no message helps nobody.
+      await showPicker("new").catch((e) => {
+        $("sub-message").textContent = `Could not load the plans: ${e.message}`;
+      });
     } else {
       $("sub-message").textContent = `Could not load the subscription: ${err.message}`;
     }
@@ -430,12 +434,14 @@ function showSubscription(st) {
 // showPicker shows the plan list: to subscribe ("new") or to change the
 // current plan ("change", with a live quote from Stripe).
 async function showPicker(mode) {
-  const [catalog, trucks] = await Promise.all([
+  // The truck count comes from billing ("usage"), not from /trucks: the
+  // fleet routes are locked until the company subscribes.
+  const [catalog, usage] = await Promise.all([
     api("GET", "/products?page_size=100"),
-    api("GET", `/trucks?is_active=true&page_size=1&company_id=${encodeURIComponent(state.companyId)}`),
+    api("GET", billingPath("/usage")),
   ]);
   sub.products = catalog.items;
-  sub.trucks = trucks.total;
+  sub.trucks = usage.active_trucks;
   sub.mode = mode;
 
   const changing = mode === "change";

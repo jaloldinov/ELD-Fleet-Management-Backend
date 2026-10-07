@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run test test-integration test-e2e test-e2e-stripe test-db test-db-reset build create-admin swagger swagger-check \
+.PHONY: run stripe-listen test test-integration test-e2e test-e2e-stripe test-db test-db-reset build create-admin swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -12,6 +12,15 @@ MIGRATIONS_DIR := migrations
 
 run:
 	go run ./cmd/api
+
+# Forwards Stripe's webhooks (test mode) to the local API. Run it in a second
+# terminal next to `make run`. Only the events the API handles
+# (internal/service/webhook.go); the CLI's signing secret goes in .env as
+# STRIPE_WEBHOOK_SECRET (`stripe listen --print-secret` shows it).
+STRIPE_EVENTS := customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,customer.subscription.paused,customer.subscription.resumed,invoice.created,invoice.finalized,invoice.updated,invoice.voided,invoice.paid,invoice.payment_failed,invoice.payment_action_required,invoice.marked_uncollectible
+
+stripe-listen:
+	stripe listen --forward-to localhost:$(HTTP_PORT)/api/v1/webhooks/stripe --events $(STRIPE_EVENTS)
 
 # Fast unit tests only. TEST_DATABASE_URL, TEST_REDIS_URL and STRIPE_MOCK_URL
 # are cleared (they are exported from .env), so tests that need Postgres,

@@ -475,6 +475,7 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		"/api/v1/companies/not-a-uuid",
 		"/api/v1/companies/not-a-uuid/billing/payment-methods",
 		"/api/v1/companies/not-a-uuid/billing/subscription",
+		"/api/v1/companies/not-a-uuid/billing/usage", // the plan picker, before subscribing
 	} {
 		rec := send(r, http.MethodGet, path, h)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, path)

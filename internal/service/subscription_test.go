@@ -633,3 +633,14 @@ func TestSubscription_OldEndedSubscriptionDoesNotBlockTheNewOne(t *testing.T) {
 
 	assert.Equal(t, model.BillingActive, f.billing.status[companyA], "the status follows the CURRENT subscription")
 }
+
+func TestSubscription_ActiveTrucks(t *testing.T) {
+	f := newSubFixture(7)
+
+	n, err := f.svc.ActiveTrucks(context.Background(), companyAUser, companyA)
+	require.NoError(t, err)
+	assert.Equal(t, 7, n)
+
+	_, err = f.svc.ActiveTrucks(context.Background(), companyAUser, uuid.New())
+	assert.ErrorIs(t, err, model.ErrNotFound, "another company's count is not ours to see")
+}
