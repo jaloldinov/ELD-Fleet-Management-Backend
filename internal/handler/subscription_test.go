@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -40,6 +41,22 @@ func (f *fakeSubscriptionService) Change(_ context.Context, _ auth.Principal, co
 
 func (f *fakeSubscriptionService) Cancel(_ context.Context, _ auth.Principal, companyID uuid.UUID, atPeriodEnd bool) (*model.Subscription, error) {
 	f.gotCompany, f.gotAtPeriodEnd = companyID, &atPeriodEnd
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.state.Subscription, nil
+}
+
+func (f *fakeSubscriptionService) ScheduleChange(_ context.Context, _ auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*model.Subscription, error) {
+	f.gotCompany, f.gotChange = companyID, in
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.state.Subscription, nil
+}
+
+func (f *fakeSubscriptionService) CancelScheduledChange(_ context.Context, _ auth.Principal, companyID uuid.UUID) (*model.Subscription, error) {
+	f.gotCompany = companyID
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -108,6 +125,8 @@ func subscriptionRouter(svc SubscriptionService) *gin.Engine {
 	g.PUT("", h.Change)
 	g.POST("/cancel", h.Cancel)
 	g.POST("/resume", h.Resume)
+	g.PUT("/schedule", h.ScheduleChange)
+	g.DELETE("/schedule", h.CancelScheduledChange)
 	r.GET("/api/v1/subscriptions", h.List)
 	return r
 }
@@ -232,4 +251,31 @@ func TestSubscriptionHandler_CancelAndResume(t *testing.T) {
 
 	svc.err = model.ErrForbidden
 	assert.Equal(t, http.StatusForbidden, do(r, http.MethodPost, base+"/cancel", `{"at_period_end":false}`).Code)
+}
+
+func TestSubscriptionHandler_ScheduledChange(t *testing.T) {
+	st := sampleSubscriptionState(false)
+	at := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+	st.Subscription.ScheduledChangeAt = &at
+	st.Subscription.ScheduledItems = []model.SubscriptionItem{{ProductName: "ELD Fleet plan", Quantity: 12,
+		Price: model.Price{ID: testPriceID, UnitAmount: 25000, Interval: model.IntervalYear, BillingUnit: model.BillingUnitTruck}}}
+	svc := &fakeSubscriptionService{state: st}
+	r := subscriptionRouter(svc)
+	base := "/api/v1/companies/" + testCompanyID.String() + "/billing/subscription/schedule"
+
+	rec := do(r, http.MethodPut, base, `{"price_ids":["`+testPriceID.String()+`"]}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []uuid.UUID{testPriceID}, svc.gotChange.PriceIDs)
+	var got SubscriptionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.NotNil(t, got.ScheduledChange)
+	assert.Equal(t, "year", got.ScheduledChange.Interval)
+	assert.Equal(t, int64(300000), got.ScheduledChange.TotalAmount, "12 trucks x $250")
+	assert.Equal(t, int64(40000), got.TotalAmount, "today's plan is unchanged")
+
+	assert.Equal(t, http.StatusOK, do(r, http.MethodDelete, base, "").Code)
+
+	st.Subscription.ScheduledChangeAt, st.Subscription.ScheduledItems = nil, nil
+	rec = do(r, http.MethodGet, "/api/v1/companies/"+testCompanyID.String()+"/billing/subscription", "")
+	assert.Contains(t, rec.Body.String(), `"scheduled_change":null`)
 }

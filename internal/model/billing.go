@@ -107,6 +107,11 @@ type Subscription struct {
 	UpdatedAt            time.Time
 
 	Items []SubscriptionItem
+
+	// A plan change scheduled for the next renewal (nil/empty = none).
+	StripeScheduleID  *string    // sub_sched_...
+	ScheduledChangeAt *time.Time // when ScheduledItems replace Items
+	ScheduledItems    []SubscriptionItem
 }
 
 // SubscriptionItem is one price of a subscription and its quantity.
@@ -138,6 +143,31 @@ type StripeSubscription struct {
 	// PendingUpdate: a plan change is waiting for its invoice to be paid
 	// (pay first applies to upgrades too). Until then the old items stay.
 	PendingUpdate bool
+	// Schedule is the subscription schedule attached to it, if any.
+	Schedule *StripeSchedule
+}
+
+// StripeSchedule is a Stripe subscription schedule (sub_sched_...): the
+// current plan until a date, then another one.
+type StripeSchedule struct {
+	ID string
+	// The phase running now (Unix seconds); updates must start from it.
+	CurrentPhaseStart int64
+	CurrentPhaseEnd   int64
+	// The next phase: when it starts and its items (price + quantity).
+	// NextAt nil = nothing scheduled any more (the last phase is running).
+	NextAt    *time.Time
+	NextItems []StripeSubscriptionItem
+}
+
+// StripeScheduleChange is what is sent to Stripe to schedule a plan change
+// at the end of the current period.
+type StripeScheduleChange struct {
+	SubscriptionID string
+	ScheduleID     string                   // "" = create one from the subscription
+	CurrentItems   []StripeSubscriptionItem // the plan until the period ends
+	NextItems      []StripeSubscriptionItem // the plan after it
+	NextInterval   string                   // IntervalMonth / IntervalYear of NextItems
 }
 
 type StripeSubscriptionItem struct {

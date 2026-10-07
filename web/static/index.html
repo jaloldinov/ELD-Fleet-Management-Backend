@@ -54,6 +54,12 @@
           <p><span id="sub-status" class="status"></span> <span id="sub-period" class="hint"></span></p>
           <ul id="sub-items" class="lines"></ul>
           <p class="total">Total: <span id="sub-total"></span></p>
+          <!-- A plan change waiting for the next renewal. -->
+          <div id="sub-scheduled" class="scheduled" hidden>
+            <p id="sub-scheduled-title"></p>
+            <ul id="sub-scheduled-items" class="lines"></ul>
+            <button id="sub-unschedule" class="secondary small">Cancel scheduled change</button>
+          </div>
           <div class="actions">
             <button id="sub-pay" hidden>Pay now</button>
             <button id="sub-change" class="secondary" hidden>Change plan</button>
@@ -80,6 +86,7 @@
           </div>
           <div class="actions">
             <button type="submit" id="subscribe">Subscribe and pay</button>
+            <button type="button" id="plan-schedule" class="secondary" hidden>Switch at next renewal</button>
             <button type="button" id="plan-back" class="secondary" hidden>Back</button>
           </div>
           <p id="plan-error" class="error" role="alert"></p>

@@ -2,6 +2,7 @@ package stripegw
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/stripe/stripe-go/v87"
@@ -12,9 +13,23 @@ import (
 // MetaSubscriptionID links a Stripe subscription back to our row.
 const MetaSubscriptionID = model.StripeMetaSubscriptionID
 
-// Stripe returns the first invoice's payment secret only when asked to
-// "expand" it (include the nested object instead of just its id).
-const expandConfirmationSecret = "latest_invoice.confirmation_secret"
+// Stripe returns nested objects (the first invoice's payment secret, the
+// attached schedule) only when asked to "expand" them; otherwise only their
+// id. Every call that returns a subscription asks for both, so our copy is
+// always complete (a sync without the schedule would erase a scheduled
+// change).
+const (
+	expandConfirmationSecret = "latest_invoice.confirmation_secret"
+	expandSchedule           = "schedule"
+)
+
+// expander is any params type that can ask Stripe to expand fields.
+type expander interface{ AddExpand(f string) }
+
+func expandSubscription(p expander) {
+	p.AddExpand(expandConfirmationSecret)
+	p.AddExpand(expandSchedule)
+}
 
 // Subscriptions starts and reads Stripe subscriptions.
 type Subscriptions struct {
@@ -53,7 +68,7 @@ func (g *Subscriptions) CreateSubscription(ctx context.Context, in model.StripeS
 			MetaCompanyID:      in.CompanyID.String(),
 		},
 	}
-	params.AddExpand(expandConfirmationSecret)
+	expandSubscription(params)
 	params.SetIdempotencyKey("subscription-create-" + in.ID.String())
 
 	sub, err := g.c.V1Subscriptions.Create(ctx, params)
@@ -66,7 +81,7 @@ func (g *Subscriptions) CreateSubscription(ctx context.Context, in model.StripeS
 // GetSubscription reads a subscription as Stripe sees it now.
 func (g *Subscriptions) GetSubscription(ctx context.Context, id string) (*model.StripeSubscription, error) {
 	params := &stripe.SubscriptionRetrieveParams{}
-	params.AddExpand(expandConfirmationSecret)
+	expandSubscription(params)
 	sub, err := g.c.V1Subscriptions.Retrieve(ctx, id, params)
 	if err != nil {
 		if isResourceMissing(err) {
@@ -170,7 +185,7 @@ func (g *Subscriptions) ChangeItems(ctx context.Context, subscriptionID string, 
 	for _, it := range items {
 		params.Items = append(params.Items, updateItem(it))
 	}
-	params.AddExpand(expandConfirmationSecret)
+	expandSubscription(params)
 
 	sub, err := g.c.V1Subscriptions.Update(ctx, subscriptionID, params)
 	if err != nil {
@@ -187,7 +202,7 @@ func (g *Subscriptions) SetQuantities(ctx context.Context, subscriptionID string
 	for _, it := range items {
 		params.Items = append(params.Items, updateItem(it))
 	}
-	params.AddExpand(expandConfirmationSecret)
+	expandSubscription(params)
 	sub, err := g.c.V1Subscriptions.Update(ctx, subscriptionID, params)
 	if err != nil {
 		return nil, wrap("update subscription quantities", err)
@@ -200,7 +215,7 @@ func (g *Subscriptions) SetQuantities(ctx context.Context, subscriptionID string
 // refunded: the company keeps what it paid for.
 func (g *Subscriptions) SetCancelAtPeriodEnd(ctx context.Context, subscriptionID string, cancel bool) (*model.StripeSubscription, error) {
 	params := &stripe.SubscriptionUpdateParams{CancelAtPeriodEnd: stripe.Bool(cancel)}
-	params.AddExpand(expandConfirmationSecret)
+	expandSubscription(params)
 	sub, err := g.c.V1Subscriptions.Update(ctx, subscriptionID, params)
 	if err != nil {
 		return nil, wrap("set cancel at period end", err)
@@ -212,7 +227,7 @@ func (g *Subscriptions) SetCancelAtPeriodEnd(ctx context.Context, subscriptionID
 // and invoiced at once (invoice_now), which turns it into customer credit.
 func (g *Subscriptions) CancelNow(ctx context.Context, subscriptionID string) (*model.StripeSubscription, error) {
 	params := &stripe.SubscriptionCancelParams{Prorate: stripe.Bool(true), InvoiceNow: stripe.Bool(true)}
-	params.AddExpand(expandConfirmationSecret)
+	expandSubscription(params)
 	sub, err := g.c.V1Subscriptions.Cancel(ctx, subscriptionID, params)
 	if err != nil {
 		return nil, wrap("cancel subscription", err)
@@ -305,11 +320,106 @@ func toStripeSubscription(sub *stripe.Subscription) *model.StripeSubscription {
 			out.Items = append(out.Items, si)
 		}
 	}
+	if sch := sub.Schedule; sch != nil && sch.Status == stripe.SubscriptionScheduleStatusActive {
+		out.Schedule = toStripeSchedule(sch)
+	}
 	if inv := sub.LatestInvoice; inv != nil {
 		out.LatestInvoice = &model.StripeInvoice{ID: inv.ID, Status: string(inv.Status), AmountDue: inv.AmountDue}
 		if inv.ConfirmationSecret != nil {
 			out.LatestInvoice.ClientSecret = inv.ConfirmationSecret.ClientSecret
 		}
+	}
+	return out
+}
+
+// ScheduleChange schedules a plan change for the end of the current period:
+// phase 1 = the current plan until the period ends, phase 2 = the new plan
+// for one period; then the schedule releases the subscription, which runs
+// on normally with the new plan. The switch happens at the renewal, so
+// nothing is prorated (proration_behavior=none) and nothing is charged now.
+//
+// Only the current and future phases are sent (Stripe refuses changes to
+// past ones), starting from the current phase's real start: a quantity
+// change on the subscription moves it to "now".
+func (g *Subscriptions) ScheduleChange(ctx context.Context, in model.StripeScheduleChange) (*model.StripeSubscription, error) {
+	scheduleID := in.ScheduleID
+	if scheduleID == "" {
+		params := &stripe.SubscriptionScheduleCreateParams{FromSubscription: stripe.String(in.SubscriptionID)}
+		sch, err := g.c.V1SubscriptionSchedules.Create(ctx, params)
+		if err != nil {
+			return nil, wrap("create subscription schedule", err)
+		}
+		scheduleID = sch.ID
+	}
+
+	sch, err := g.c.V1SubscriptionSchedules.Retrieve(ctx, scheduleID, nil)
+	if err != nil {
+		return nil, wrap("retrieve subscription schedule", err)
+	}
+	if sch.CurrentPhase == nil {
+		return nil, wrap("schedule subscription change", fmt.Errorf("schedule %s has no current phase", scheduleID))
+	}
+
+	current := &stripe.SubscriptionScheduleUpdatePhaseParams{
+		StartDate: stripe.Int64(sch.CurrentPhase.StartDate),
+		EndDate:   stripe.Int64(sch.CurrentPhase.EndDate),
+	}
+	for _, it := range in.CurrentItems {
+		current.Items = append(current.Items, phaseItem(it))
+	}
+	next := &stripe.SubscriptionScheduleUpdatePhaseParams{
+		Duration: &stripe.SubscriptionScheduleUpdatePhaseDurationParams{
+			Interval: stripe.String(in.NextInterval), IntervalCount: stripe.Int64(1),
+		},
+	}
+	for _, it := range in.NextItems {
+		next.Items = append(next.Items, phaseItem(it))
+	}
+	params := &stripe.SubscriptionScheduleUpdateParams{
+		EndBehavior:       stripe.String("release"),
+		ProrationBehavior: stripe.String("none"),
+		Phases:            []*stripe.SubscriptionScheduleUpdatePhaseParams{current, next},
+	}
+	if _, err := g.c.V1SubscriptionSchedules.Update(ctx, scheduleID, params); err != nil {
+		return nil, wrap("schedule subscription change", err)
+	}
+	return g.GetSubscription(ctx, in.SubscriptionID)
+}
+
+// ReleaseSchedule detaches the schedule: the scheduled change is dropped,
+// the subscription keeps its current plan and renews as usual.
+func (g *Subscriptions) ReleaseSchedule(ctx context.Context, scheduleID, subscriptionID string) (*model.StripeSubscription, error) {
+	if _, err := g.c.V1SubscriptionSchedules.Release(ctx, scheduleID, nil); err != nil {
+		return nil, wrap("release subscription schedule", err)
+	}
+	return g.GetSubscription(ctx, subscriptionID)
+}
+
+func phaseItem(it model.StripeSubscriptionItem) *stripe.SubscriptionScheduleUpdatePhaseItemParams {
+	return &stripe.SubscriptionScheduleUpdatePhaseItemParams{
+		Price: stripe.String(it.StripePriceID), Quantity: stripe.Int64(int64(it.Quantity)),
+	}
+}
+
+func toStripeSchedule(sch *stripe.SubscriptionSchedule) *model.StripeSchedule {
+	out := &model.StripeSchedule{ID: sch.ID}
+	if sch.CurrentPhase != nil {
+		out.CurrentPhaseStart, out.CurrentPhaseEnd = sch.CurrentPhase.StartDate, sch.CurrentPhase.EndDate
+	}
+	// The next phase: the first one starting after the current phase.
+	for _, ph := range sch.Phases {
+		if ph.StartDate <= out.CurrentPhaseStart {
+			continue
+		}
+		out.NextAt = unixTime(ph.StartDate)
+		for _, it := range ph.Items {
+			si := model.StripeSubscriptionItem{Quantity: int(it.Quantity)}
+			if it.Price != nil {
+				si.StripePriceID = it.Price.ID
+			}
+			out.NextItems = append(out.NextItems, si)
+		}
+		break
 	}
 	return out
 }

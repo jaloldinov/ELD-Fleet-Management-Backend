@@ -138,6 +138,7 @@ type fakeSubGateway struct {
 	changed       []model.StripeItemChange
 	prorationDate int64
 	needs3DS      bool // the bank asks for 3-D Secure on the next charge
+	scheduled     *model.StripeScheduleChange
 	err           error
 }
 
@@ -236,6 +237,37 @@ func (f *fakeSubGateway) SetCancelAtPeriodEnd(_ context.Context, subID string, c
 func (f *fakeSubGateway) CancelNow(_ context.Context, subID string) (*model.StripeSubscription, error) {
 	f.calls = append(f.calls, "CancelNow "+subID)
 	f.current.Status = model.SubscriptionCanceled
+	c := *f.current
+	return &c, f.err
+}
+
+func (f *fakeSubGateway) ScheduleChange(_ context.Context, in model.StripeScheduleChange) (*model.StripeSubscription, error) {
+	f.calls = append(f.calls, "ScheduleChange "+in.SubscriptionID+" schedule="+in.ScheduleID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.scheduled = &in
+	at := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+	id := in.ScheduleID
+	if id == "" {
+		id = "sub_sched_1"
+	}
+	// The current phase keeps the given quantities, like Stripe.
+	for i := range f.current.Items {
+		for _, ci := range in.CurrentItems {
+			if ci.StripePriceID == f.current.Items[i].StripePriceID {
+				f.current.Items[i].Quantity = ci.Quantity
+			}
+		}
+	}
+	f.current.Schedule = &model.StripeSchedule{ID: id, NextAt: &at, NextItems: in.NextItems}
+	c := *f.current
+	return &c, nil
+}
+
+func (f *fakeSubGateway) ReleaseSchedule(_ context.Context, scheduleID, subID string) (*model.StripeSubscription, error) {
+	f.calls = append(f.calls, "ReleaseSchedule "+scheduleID)
+	f.current.Schedule = nil
 	c := *f.current
 	return &c, f.err
 }

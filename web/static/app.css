@@ -225,3 +225,12 @@ label.inline input { width: auto; margin: 0; }
 
 .status.good { color: var(--ok); border-color: var(--ok); }
 .status.bad { color: var(--error); border-color: var(--error); }
+
+.scheduled {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.scheduled p { margin: 0; font-weight: 600; }

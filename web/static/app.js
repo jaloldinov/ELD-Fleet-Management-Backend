@@ -373,12 +373,35 @@ function showSubscription(st) {
   }
   $("sub-total").textContent = `${money(s.total_amount)} / ${s.interval}`;
 
+  const sc = s.scheduled_change;
+  $("sub-scheduled").hidden = !sc;
+  if (sc) {
+    $("sub-scheduled-title").textContent =
+      `From ${new Date(sc.at).toLocaleDateString()}: ${money(sc.total_amount)} / ${sc.interval}`;
+    const lines = $("sub-scheduled-items");
+    lines.replaceChildren();
+    for (const it of sc.items) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = it.billing_unit === "truck"
+        ? `${it.product_name}: ${it.quantity} truck${it.quantity === 1 ? "" : "s"} × ${money(it.unit_amount)}`
+        : it.product_name;
+      const amount = document.createElement("span");
+      amount.className = "amount";
+      amount.textContent = money(it.amount);
+      li.append(name, amount);
+      lines.append(li);
+    }
+  }
+
   const running = ["active", "trialing"].includes(s.status);
   const pay = $("sub-pay");
   pay.hidden = !sub.payment;
   if (sub.payment) pay.textContent = `Pay ${money(sub.payment.amount_due)} now`;
-  $("sub-change").hidden = !running || !!sub.payment;
-  $("sub-cancel").hidden = !(running || s.status === "past_due") || s.cancel_at_period_end;
+  // While a change waits for the renewal, other changes would compete with it.
+  $("sub-change").hidden = !running || !!sub.payment || !!sc;
+  $("sub-cancel").hidden = !(running || s.status === "past_due") || s.cancel_at_period_end || !!sc;
   $("sub-resume").hidden = !s.cancel_at_period_end;
 
   const messages = {
@@ -408,6 +431,7 @@ async function showPicker(mode) {
   const changing = mode === "change";
   $("subscribe").textContent = changing ? "Confirm change" : "Subscribe and pay";
   $("plan-back").hidden = !changing;
+  $("plan-schedule").hidden = !changing;
   $("plan-total-line").hidden = changing;
   $("plan-preview").hidden = true;
   $("plan-error").textContent = "";
@@ -557,6 +581,37 @@ $("sub-picker").addEventListener("submit", async (ev) => {
     $("plan-error").textContent = err.message + details;
   } finally {
     button.disabled = false;
+  }
+});
+
+// Schedule the chosen plan for the next renewal: nothing is charged now.
+$("plan-schedule").addEventListener("click", async () => {
+  const button = $("plan-schedule");
+  const priceIds = chosenPrices();
+  $("plan-error").textContent = "";
+  if (priceIds.length === 0) {
+    $("plan-error").textContent = "Choose at least one plan.";
+    return;
+  }
+  button.disabled = true;
+  try {
+    const s = await api("PUT", billingPath("/subscription/schedule"), { price_ids: priceIds });
+    $("sub-picker").hidden = true;
+    showSubscription({ subscription: s, payment: null });
+  } catch (err) {
+    const details = err.status === 400 ? " " + Object.values(err.body?.error?.details || {}).join(" ") : "";
+    $("plan-error").textContent = err.message + details;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("sub-unschedule").addEventListener("click", async () => {
+  try {
+    const s = await api("DELETE", billingPath("/subscription/schedule"));
+    showSubscription({ subscription: s, payment: null });
+  } catch (err) {
+    $("sub-error").textContent = err.message;
   }
 });
 

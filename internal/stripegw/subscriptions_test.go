@@ -219,3 +219,110 @@ func TestWrap_CardDeclinedIsForTheUser(t *testing.T) {
 	assert.False(t, errors.Is(err, model.ErrPaymentProvider), "a decline is not an outage")
 	assert.Contains(t, err.Error(), "Your card has insufficient funds.")
 }
+
+// A subscription with an attached schedule: monthly until 1794049978, then
+// yearly × 3.
+const scheduledSubJSON = `{"id":"sub_1","object":"subscription","customer":"cus_1","status":"active",
+	"items":{"object":"list","data":[{"id":"si_a","object":"subscription_item","quantity":3,
+		"price":{"id":"price_month","object":"price"},"current_period_start":1791371578,"current_period_end":1794049978}]},
+	"schedule":{"id":"sub_sched_1","object":"subscription_schedule","status":"active",
+		"current_phase":{"start_date":1791371583,"end_date":1794049978},
+		"phases":[
+			{"start_date":1791371583,"end_date":1794049978,"items":[{"price":"price_month","quantity":3}]},
+			{"start_date":1794049978,"end_date":1825585978,"items":[{"price":"price_year","quantity":3}]}]}}`
+
+func TestSubscriptions_ReadsTheSchedule(t *testing.T) {
+	_, c := newRoutedFake(t, map[string]reply{"GET /v1/subscriptions/sub_1": {200, scheduledSubJSON}})
+
+	got, err := NewSubscriptions(c).GetSubscription(context.Background(), "sub_1")
+
+	require.NoError(t, err)
+	require.NotNil(t, got.Schedule)
+	assert.Equal(t, "sub_sched_1", got.Schedule.ID)
+	assert.Equal(t, int64(1791371583), got.Schedule.CurrentPhaseStart)
+	require.NotNil(t, got.Schedule.NextAt)
+	assert.Equal(t, int64(1794049978), got.Schedule.NextAt.Unix())
+	assert.Equal(t, []model.StripeSubscriptionItem{{StripePriceID: "price_year", Quantity: 3}}, got.Schedule.NextItems)
+}
+
+func TestSubscriptions_ExpandsTheScheduleEverywhere(t *testing.T) {
+	f, c := newRoutedFake(t, map[string]reply{
+		"GET /v1/subscriptions/sub_1":  {200, scheduledSubJSON},
+		"POST /v1/subscriptions/sub_1": {200, scheduledSubJSON},
+	})
+	g := NewSubscriptions(c)
+
+	_, err := g.GetSubscription(context.Background(), "sub_1")
+	require.NoError(t, err)
+	_, err = g.SetQuantities(context.Background(), "sub_1", []model.StripeItemChange{{ID: "si_a", Quantity: 4}})
+	require.NoError(t, err)
+
+	for _, call := range []string{"GET /v1/subscriptions/sub_1", "POST /v1/subscriptions/sub_1"} {
+		assert.Equal(t, "schedule", f.find(t, call).Form.Get("expand[1]"),
+			"%s: without it, a sync would erase the scheduled change", call)
+	}
+}
+
+func TestSubscriptions_ScheduleChange_CreatesThenSetsPhases(t *testing.T) {
+	f, c := newRoutedFake(t, map[string]reply{
+		"POST /v1/subscription_schedules": {200, `{"id":"sub_sched_1","object":"subscription_schedule"}`},
+		"GET /v1/subscription_schedules/sub_sched_1": {200, `{"id":"sub_sched_1","object":"subscription_schedule","status":"active",
+			"current_phase":{"start_date":1791371583,"end_date":1794049978}}`},
+		"POST /v1/subscription_schedules/sub_sched_1": {200, `{"id":"sub_sched_1","object":"subscription_schedule"}`},
+		"GET /v1/subscriptions/sub_1":                 {200, scheduledSubJSON},
+	})
+
+	got, err := NewSubscriptions(c).ScheduleChange(context.Background(), model.StripeScheduleChange{
+		SubscriptionID: "sub_1",
+		CurrentItems:   []model.StripeSubscriptionItem{{StripePriceID: "price_month", Quantity: 3}},
+		NextItems:      []model.StripeSubscriptionItem{{StripePriceID: "price_year", Quantity: 3}},
+		NextInterval:   model.IntervalYear,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "sub_1", f.find(t, "POST /v1/subscription_schedules").Form.Get("from_subscription"))
+	u := f.find(t, "POST /v1/subscription_schedules/sub_sched_1").Form
+	assert.Equal(t, "release", u.Get("end_behavior"), "after the new plan's first period, the subscription runs on normally")
+	assert.Equal(t, "none", u.Get("proration_behavior"), "switching exactly at the renewal: nothing to prorate")
+	assert.Equal(t, "1791371583", u.Get("phases[0][start_date]"), "from the CURRENT phase's real start")
+	assert.Equal(t, "1794049978", u.Get("phases[0][end_date]"))
+	assert.Equal(t, "price_month", u.Get("phases[0][items][0][price]"))
+	assert.Equal(t, "price_year", u.Get("phases[1][items][0][price]"))
+	assert.Equal(t, "3", u.Get("phases[1][items][0][quantity]"))
+	assert.Equal(t, "year", u.Get("phases[1][duration][interval]"))
+	assert.Equal(t, "1", u.Get("phases[1][duration][interval_count]"))
+	require.NotNil(t, got.Schedule, "returns the subscription as it is now")
+}
+
+func TestSubscriptions_ScheduleChange_ReusesTheSchedule(t *testing.T) {
+	f, c := newRoutedFake(t, map[string]reply{
+		"GET /v1/subscription_schedules/sub_sched_1": {200, `{"id":"sub_sched_1","object":"subscription_schedule","status":"active",
+			"current_phase":{"start_date":1,"end_date":2}}`},
+		"POST /v1/subscription_schedules/sub_sched_1": {200, `{"id":"sub_sched_1","object":"subscription_schedule"}`},
+		"GET /v1/subscriptions/sub_1":                 {200, scheduledSubJSON},
+	})
+
+	_, err := NewSubscriptions(c).ScheduleChange(context.Background(), model.StripeScheduleChange{
+		SubscriptionID: "sub_1", ScheduleID: "sub_sched_1", NextInterval: model.IntervalMonth,
+	})
+
+	require.NoError(t, err)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.reqs {
+		assert.NotEqual(t, "POST /v1/subscription_schedules", r.Method+" "+r.Path, "no second schedule")
+	}
+}
+
+func TestSubscriptions_ReleaseSchedule(t *testing.T) {
+	f, c := newRoutedFake(t, map[string]reply{
+		"POST /v1/subscription_schedules/sub_sched_1/release": {200, `{"id":"sub_sched_1","object":"subscription_schedule","status":"released"}`},
+		"GET /v1/subscriptions/sub_1":                         {200, stripeSubJSON},
+	})
+
+	got, err := NewSubscriptions(c).ReleaseSchedule(context.Background(), "sub_sched_1", "sub_1")
+
+	require.NoError(t, err)
+	f.find(t, "POST /v1/subscription_schedules/sub_sched_1/release")
+	assert.Nil(t, got.Schedule)
+}

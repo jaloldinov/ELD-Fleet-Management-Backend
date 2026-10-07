@@ -207,3 +207,37 @@ func TestSubscriptionRepository_GetByStripeID(t *testing.T) {
 	_, err = f.repo.GetByStripeID(ctx, "sub_unknown")
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
+
+func TestSubscriptionRepository_ScheduledChange(t *testing.T) {
+	f := newSubscriptionFixture(t)
+	ctx := context.Background()
+	yearly := createPrice(t, f.products, f.perTruck.ProductID, 25000, model.IntervalYear, model.BillingUnitTruck)
+
+	in := f.sub("sub_1", model.SubscriptionActive, item("si_1", f.perTruck, 3), item("si_2", f.flat, 1))
+	schedule := "sub_sched_1"
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	in.StripeScheduleID, in.ScheduledChangeAt = &schedule, &at
+	in.ScheduledItems = []model.SubscriptionItem{{Price: *yearly, Quantity: 3}}
+
+	got, err := f.repo.Upsert(ctx, in)
+	require.NoError(t, err)
+	require.NotNil(t, got.StripeScheduleID)
+	assert.Equal(t, "sub_sched_1", *got.StripeScheduleID)
+	assert.True(t, at.Equal(*got.ScheduledChangeAt))
+	require.Len(t, got.ScheduledItems, 1)
+	assert.Equal(t, int64(25000), got.ScheduledItems[0].Price.UnitAmount)
+	assert.Equal(t, "ELD Fleet plan", got.ScheduledItems[0].ProductName)
+	assert.Len(t, got.Items, 2, "the current plan is unchanged until then")
+
+	// The scheduled change is cancelled: it disappears.
+	in.StripeScheduleID, in.ScheduledChangeAt, in.ScheduledItems = nil, nil, nil
+	got, err = f.repo.Upsert(ctx, in)
+	require.NoError(t, err)
+	assert.Nil(t, got.StripeScheduleID)
+	assert.Nil(t, got.ScheduledChangeAt)
+	assert.Empty(t, got.ScheduledItems)
+
+	list, _, err := f.repo.List(ctx, model.SubscriptionFilter{}, 10, 0)
+	require.NoError(t, err)
+	assert.NotNil(t, list[0].ScheduledItems, "[] not null")
+}

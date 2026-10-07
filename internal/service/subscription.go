@@ -62,6 +62,8 @@ type SubscriptionGateway interface {
 	SetQuantities(ctx context.Context, subscriptionID string, items []model.StripeItemChange) (*model.StripeSubscription, error)
 	SetCancelAtPeriodEnd(ctx context.Context, subscriptionID string, cancel bool) (*model.StripeSubscription, error)
 	CancelNow(ctx context.Context, subscriptionID string) (*model.StripeSubscription, error)
+	ScheduleChange(ctx context.Context, in model.StripeScheduleChange) (*model.StripeSubscription, error)
+	ReleaseSchedule(ctx context.Context, scheduleID, subscriptionID string) (*model.StripeSubscription, error)
 }
 
 // Stripe allows at most 20 items per subscription.
@@ -308,6 +310,9 @@ func (s *SubscriptionService) Change(ctx context.Context, p auth.Principal, comp
 		date = *in.ProrationDate
 	}
 
+	if current, err = s.releaseIdleSchedule(ctx, p, current); err != nil {
+		return nil, err
+	}
 	snap, err := s.gateway.ChangeItems(ctx, current.StripeSubscriptionID, items, date)
 	if err != nil {
 		return nil, err
@@ -347,6 +352,10 @@ func (s *SubscriptionService) planChange(ctx context.Context, p auth.Principal, 
 	default: // past_due, unpaid, paused
 		return nil, nil, &validation.ValidationError{Fields: map[string]string{
 			"subscription": "a payment is overdue: pay the open invoice before changing the plan"}}
+	}
+
+	if err := refuseIfChangeScheduled(current); err != nil {
+		return nil, nil, err
 	}
 
 	desired, err := s.quantities(ctx, companyID, prices)
@@ -410,6 +419,16 @@ func (s *SubscriptionService) Cancel(ctx context.Context, p auth.Principal, comp
 		return nil, err
 	}
 
+	if atPeriodEnd {
+		// "Change at the renewal" and "end at the renewal" contradict each other.
+		if err := refuseIfChangeScheduled(current); err != nil {
+			return nil, err
+		}
+		if current, err = s.releaseIdleSchedule(ctx, p, current); err != nil {
+			return nil, err
+		}
+	}
+
 	var snap *model.StripeSubscription
 	if atPeriodEnd {
 		if current.Status == model.SubscriptionIncomplete {
@@ -449,6 +468,110 @@ func (s *SubscriptionService) Resume(ctx context.Context, p auth.Principal, comp
 	return s.save(ctx, p, companyID, current.ID, snap, current)
 }
 
+// ---------- scheduled changes ----------
+
+// ScheduleChange switches the company to the given plan at the next
+// renewal ("from next period: yearly"; "drop Support from next month").
+// Nothing is charged or credited now: at the renewal Stripe simply bills
+// the new plan. Scheduling again replaces the previous scheduled plan.
+func (s *SubscriptionService) ScheduleChange(ctx context.Context, p auth.Principal, companyID uuid.UUID, in ChangeSubscriptionInput) (*model.Subscription, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, model.ErrNotFound
+	}
+	prices, err := s.validatePrices(ctx, in.PriceIDs)
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case current.Status != model.SubscriptionActive && current.Status != model.SubscriptionTrialing:
+		return nil, &validation.ValidationError{Fields: map[string]string{
+			"subscription": "only a paid-up subscription can schedule a change"}}
+	case current.CancelAtPeriodEnd:
+		return nil, &validation.ValidationError{Fields: map[string]string{
+			"subscription": "the subscription ends at the renewal; resume it before scheduling a change"}}
+	}
+
+	next, err := s.quantities(ctx, companyID, prices)
+	if err != nil {
+		return nil, err
+	}
+	if len(diffItems(current.Items, next)) == 0 {
+		return nil, &validation.ValidationError{Fields: map[string]string{"price_ids": "this is already the current plan"}}
+	}
+
+	in2 := model.StripeScheduleChange{
+		SubscriptionID: current.StripeSubscriptionID,
+		CurrentItems:   stripeItems(current.Items),
+		NextItems:      next,
+		NextInterval:   prices[0].Interval,
+	}
+	if current.StripeScheduleID != nil {
+		in2.ScheduleID = *current.StripeScheduleID
+	}
+	snap, err := s.gateway.ScheduleChange(ctx, in2)
+	if err != nil {
+		return nil, err
+	}
+	return s.save(ctx, p, companyID, current.ID, snap, current)
+}
+
+// CancelScheduledChange drops the plan change scheduled for the renewal:
+// the subscription renews with its current plan.
+func (s *SubscriptionService) CancelScheduledChange(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, model.ErrNotFound
+	}
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+	if current.StripeScheduleID == nil || current.ScheduledChangeAt == nil {
+		return nil, &validation.ValidationError{Fields: map[string]string{"subscription": "no change is scheduled"}}
+	}
+	snap, err := s.gateway.ReleaseSchedule(ctx, *current.StripeScheduleID, current.StripeSubscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.save(ctx, p, companyID, current.ID, snap, current)
+}
+
+// refuseIfChangeScheduled: while a change waits for the renewal, other
+// changes must not compete with it. The user cancels it first.
+func refuseIfChangeScheduled(current *model.Subscription) error {
+	if current.ScheduledChangeAt == nil {
+		return nil
+	}
+	return &validation.ValidationError{Fields: map[string]string{
+		"subscription": "a plan change is scheduled for " + current.ScheduledChangeAt.Format("2 Jan 2006") +
+			"; cancel it first"}}
+}
+
+// releaseIdleSchedule detaches a schedule that has nothing left to do (its
+// last phase is running), so the subscription can be changed directly.
+func (s *SubscriptionService) releaseIdleSchedule(ctx context.Context, p auth.Principal, current *model.Subscription) (*model.Subscription, error) {
+	if current.StripeScheduleID == nil || current.ScheduledChangeAt != nil {
+		return current, nil
+	}
+	snap, err := s.gateway.ReleaseSchedule(ctx, *current.StripeScheduleID, current.StripeSubscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.save(ctx, p, current.CompanyID, current.ID, snap, current)
+}
+
+// stripeItems is the plan of items as Stripe prices and quantities.
+func stripeItems(items []model.SubscriptionItem) []model.StripeSubscriptionItem {
+	out := make([]model.StripeSubscriptionItem, 0, len(items))
+	for _, it := range items {
+		out = append(out, model.StripeSubscriptionItem{StripePriceID: it.Price.StripePriceID, Quantity: it.Quantity})
+	}
+	return out
+}
+
 // ---------- truck count ----------
 
 // SyncTruckQuantity makes the company's per-truck items match its active
@@ -469,28 +592,52 @@ func (s *SubscriptionService) SyncTruckQuantity(ctx context.Context, companyID u
 		return false, nil // not running (unpaid first invoice, suspended, ...)
 	}
 
-	trucks := -1
+	trucks, err := s.trucks.CountActive(ctx, companyID)
+	if err != nil {
+		return false, err
+	}
+
+	// The current plan...
 	var items []model.StripeItemChange
 	for _, it := range current.Items {
-		if it.Price.BillingUnit != model.BillingUnitTruck {
-			continue
-		}
-		if trucks < 0 {
-			if trucks, err = s.trucks.CountActive(ctx, companyID); err != nil {
-				return false, err
-			}
-		}
-		if it.Quantity != trucks {
+		if it.Price.BillingUnit == model.BillingUnitTruck && it.Quantity != trucks {
 			items = append(items, model.StripeItemChange{ID: it.StripeSubscriptionItemID, Quantity: trucks})
 		}
 	}
-	if len(items) == 0 {
+	// ...and the plan scheduled for the renewal: Stripe updates only the
+	// current phase, so without this the fleet would "shrink back" then.
+	nextNeedsUpdate := false
+	next := make([]model.StripeSubscriptionItem, 0, len(current.ScheduledItems))
+	for _, it := range current.ScheduledItems {
+		qty := it.Quantity
+		if it.Price.BillingUnit == model.BillingUnitTruck && qty != trucks {
+			qty, nextNeedsUpdate = trucks, true
+		}
+		next = append(next, model.StripeSubscriptionItem{StripePriceID: it.Price.StripePriceID, Quantity: qty})
+	}
+	if len(items) == 0 && !nextNeedsUpdate {
 		return false, nil
 	}
 
-	snap, err := s.gateway.SetQuantities(ctx, current.StripeSubscriptionID, items)
-	if err != nil {
-		return false, err
+	var snap *model.StripeSubscription
+	if len(items) > 0 {
+		if snap, err = s.gateway.SetQuantities(ctx, current.StripeSubscriptionID, items); err != nil {
+			return false, err
+		}
+	}
+	if nextNeedsUpdate {
+		currentItems := stripeItems(current.Items)
+		for i := range currentItems {
+			if current.Items[i].Price.BillingUnit == model.BillingUnitTruck {
+				currentItems[i].Quantity = trucks
+			}
+		}
+		if snap, err = s.gateway.ScheduleChange(ctx, model.StripeScheduleChange{
+			SubscriptionID: current.StripeSubscriptionID, ScheduleID: *current.StripeScheduleID,
+			CurrentItems: currentItems, NextItems: next, NextInterval: current.ScheduledItems[0].Price.Interval,
+		}); err != nil {
+			return false, err
+		}
 	}
 	if _, err := s.save(ctx, auth.SystemPrincipal(), companyID, current.ID, snap, current); err != nil {
 		return false, err
@@ -693,6 +840,11 @@ func (s *SubscriptionService) fromStripe(ctx context.Context, companyID, id uuid
 	for _, it := range snap.Items {
 		stripeIDs = append(stripeIDs, it.StripePriceID)
 	}
+	if snap.Schedule != nil {
+		for _, it := range snap.Schedule.NextItems {
+			stripeIDs = append(stripeIDs, it.StripePriceID)
+		}
+	}
 	found, err := s.prices.GetCatalogPricesByStripeIDs(ctx, stripeIDs)
 	if err != nil {
 		return nil, err
@@ -719,6 +871,20 @@ func (s *SubscriptionService) fromStripe(ctx context.Context, companyID, id uuid
 		sub.Items = append(sub.Items, model.SubscriptionItem{
 			StripeSubscriptionItemID: it.ID, Price: cp.Price, ProductName: cp.ProductName, Quantity: it.Quantity,
 		})
+	}
+
+	if sch := snap.Schedule; sch != nil {
+		sub.StripeScheduleID = &sch.ID
+		sub.ScheduledChangeAt = sch.NextAt
+		for _, it := range sch.NextItems {
+			cp, ok := byStripe[it.StripePriceID]
+			if !ok {
+				return nil, fmt.Errorf("schedule %s uses price %s, which is not in our catalog", sch.ID, it.StripePriceID)
+			}
+			sub.ScheduledItems = append(sub.ScheduledItems, model.SubscriptionItem{
+				Price: cp.Price, ProductName: cp.ProductName, Quantity: it.Quantity,
+			})
+		}
 	}
 	return sub, nil
 }
@@ -752,6 +918,8 @@ func subscriptionChanges(before, after model.Subscription) model.AuditChanges {
 	ch.Set("interval", before.Interval, after.Interval)
 	ch.Set("cancel_at_period_end", before.CancelAtPeriodEnd, after.CancelAtPeriodEnd)
 	ch.Set("items", describeItems(before.Items), describeItems(after.Items))
+	ch.Set("scheduled_items", describeItems(before.ScheduledItems), describeItems(after.ScheduledItems))
+	ch.Set("scheduled_change_at", before.ScheduledChangeAt, after.ScheduledChangeAt)
 	return ch
 }
 

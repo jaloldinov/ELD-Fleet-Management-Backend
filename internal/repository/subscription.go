@@ -12,7 +12,8 @@ import (
 )
 
 const subscriptionColumns = `id, company_id, stripe_subscription_id, status, billing_interval,
-	current_period_start, current_period_end, cancel_at_period_end, canceled_at, created_at, updated_at`
+	current_period_start, current_period_end, cancel_at_period_end, canceled_at, created_at, updated_at,
+	stripe_schedule_id, scheduled_change_at`
 
 // SubscriptionRepository stores our copy of companies' Stripe subscriptions.
 type SubscriptionRepository struct {
@@ -39,18 +40,22 @@ func (r *SubscriptionRepository) Upsert(ctx context.Context, s model.Subscriptio
 		// company_id is never updated: a subscription cannot move.
 		err := tx.QueryRow(ctx, `
 			INSERT INTO subscriptions (id, company_id, stripe_subscription_id, status, billing_interval,
-			                           current_period_start, current_period_end, cancel_at_period_end, canceled_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			                           current_period_start, current_period_end, cancel_at_period_end, canceled_at,
+			                           stripe_schedule_id, scheduled_change_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT (stripe_subscription_id) DO UPDATE SET
 				status               = EXCLUDED.status,
 				billing_interval     = EXCLUDED.billing_interval,
 				current_period_start = EXCLUDED.current_period_start,
 				current_period_end   = EXCLUDED.current_period_end,
 				cancel_at_period_end = EXCLUDED.cancel_at_period_end,
-				canceled_at          = EXCLUDED.canceled_at
+				canceled_at          = EXCLUDED.canceled_at,
+				stripe_schedule_id   = EXCLUDED.stripe_schedule_id,
+				scheduled_change_at  = EXCLUDED.scheduled_change_at
 			RETURNING id`,
 			s.ID, s.CompanyID, s.StripeSubscriptionID, s.Status, s.Interval,
 			s.CurrentPeriodStart, s.CurrentPeriodEnd, s.CancelAtPeriodEnd, s.CanceledAt,
+			s.StripeScheduleID, s.ScheduledChangeAt,
 		).Scan(&id)
 		if err != nil {
 			return err
@@ -64,6 +69,18 @@ func (r *SubscriptionRepository) Upsert(ctx context.Context, s model.Subscriptio
 				INSERT INTO subscription_items (subscription_id, stripe_subscription_item_id, price_id, quantity)
 				VALUES ($1, $2, $3, $4)`,
 				id, it.StripeSubscriptionItemID, it.Price.ID, it.Quantity,
+			); err != nil {
+				return err
+			}
+		}
+
+		if _, err := tx.Exec(ctx, `DELETE FROM subscription_scheduled_items WHERE subscription_id = $1`, id); err != nil {
+			return err
+		}
+		for _, it := range s.ScheduledItems {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO subscription_scheduled_items (subscription_id, price_id, quantity) VALUES ($1, $2, $3)`,
+				id, it.Price.ID, it.Quantity,
 			); err != nil {
 				return err
 			}
@@ -134,8 +151,13 @@ func (r *SubscriptionRepository) List(ctx context.Context, f model.SubscriptionF
 	if err != nil {
 		return nil, 0, err
 	}
+	scheduled, err := r.scheduledItemsOf(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
 	for i := range subs {
 		subs[i].Items = items[subs[i].ID]
+		subs[i].ScheduledItems = scheduled[subs[i].ID]
 	}
 	return subs, total, nil
 }
@@ -149,8 +171,53 @@ func (r *SubscriptionRepository) one(ctx context.Context, row pgx.Row, op string
 	if err != nil {
 		return nil, err
 	}
-	s.Items = items[s.ID]
+	scheduled, err := r.scheduledItemsOf(ctx, []uuid.UUID{s.ID})
+	if err != nil {
+		return nil, err
+	}
+	s.Items, s.ScheduledItems = items[s.ID], scheduled[s.ID]
 	return s, nil
+}
+
+// scheduledItemsOf loads the scheduled plan of several subscriptions in one
+// query (same shape as itemsOf, without Stripe item ids: they do not exist
+// until the plan starts).
+func (r *SubscriptionRepository) scheduledItemsOf(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]model.SubscriptionItem, error) {
+	out := make(map[uuid.UUID][]model.SubscriptionItem, len(subIDs))
+	for _, id := range subIDs {
+		out[id] = []model.SubscriptionItem{}
+	}
+	if len(subIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.q(ctx).Query(ctx, `
+		SELECT ss.subscription_id, ss.id, ss.quantity, pr.name,
+		       p.id, p.product_id, p.stripe_price_id, p.nickname, p.currency, p.unit_amount,
+		       p.billing_interval, p.billing_unit, p.is_active, p.created_at, p.updated_at
+		FROM subscription_scheduled_items ss
+		JOIN prices p    ON p.id = ss.price_id
+		JOIN products pr ON pr.id = p.product_id
+		WHERE ss.subscription_id = ANY($1)
+		ORDER BY ss.subscription_id, pr.name, ss.id`, subIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list scheduled items: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var subID uuid.UUID
+		var it model.SubscriptionItem
+		p := &it.Price
+		if err := rows.Scan(&subID, &it.ID, &it.Quantity, &it.ProductName,
+			&p.ID, &p.ProductID, &p.StripePriceID, &p.Nickname, &p.Currency, &p.UnitAmount,
+			&p.Interval, &p.BillingUnit, &p.IsActive, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan scheduled item: %w", err)
+		}
+		out[subID] = append(out[subID], it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list scheduled items: %w", err)
+	}
+	return out, nil
 }
 
 // itemsOf loads the items of several subscriptions in one query, each with
@@ -197,7 +264,8 @@ func (r *SubscriptionRepository) itemsOf(ctx context.Context, subIDs []uuid.UUID
 func scanSubscription(row pgx.Row) (*model.Subscription, error) {
 	var s model.Subscription
 	err := row.Scan(&s.ID, &s.CompanyID, &s.StripeSubscriptionID, &s.Status, &s.Interval,
-		&s.CurrentPeriodStart, &s.CurrentPeriodEnd, &s.CancelAtPeriodEnd, &s.CanceledAt, &s.CreatedAt, &s.UpdatedAt)
+		&s.CurrentPeriodStart, &s.CurrentPeriodEnd, &s.CancelAtPeriodEnd, &s.CanceledAt, &s.CreatedAt, &s.UpdatedAt,
+		&s.StripeScheduleID, &s.ScheduledChangeAt)
 	if err != nil {
 		return nil, err
 	}

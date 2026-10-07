@@ -784,6 +784,33 @@ definitions:
         example: pX3k9Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t2u3
         type: string
     type: object
+  handler.ScheduleChangeRequest:
+    properties:
+      price_ids:
+        description: The WHOLE plan wanted from the next renewal.
+        example:
+        - 0199a1b2-0000-7000-8000-0000000000b1
+        items:
+          type: string
+        type: array
+    type: object
+  handler.ScheduledChangeResponse:
+    properties:
+      at:
+        example: "2026-11-07T00:00:00Z"
+        type: string
+      interval:
+        example: year
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/handler.SubscriptionItemResponse'
+        type: array
+      total_amount:
+        description: What one interval of the new plan costs, in cents.
+        example: 75000
+        type: integer
+    type: object
   handler.SetPasswordRequest:
     properties:
       new_password:
@@ -861,6 +888,10 @@ definitions:
         items:
           $ref: '#/definitions/handler.SubscriptionItemResponse'
         type: array
+      scheduled_change:
+        allOf:
+        - $ref: '#/definitions/handler.ScheduledChangeResponse'
+        description: The plan that starts at the next renewal; null = no change scheduled.
       status:
         description: incomplete (not paid yet), active, past_due, unpaid, canceled,
           incomplete_expired, trialing, paused.
@@ -2280,6 +2311,102 @@ paths:
       security:
       - BearerAuth: []
       summary: Undo a scheduled cancellation
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/subscription/schedule:
+    delete:
+      description: 'Requires permission: subscription:manage. The subscription renews
+        with its current plan.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.SubscriptionResponse'
+        "400":
+          description: no change is scheduled
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Cancel the scheduled plan change
+      tags:
+      - billing
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: subscription:manage. Body = the WHOLE plan wanted from the next renewal.
+        Nothing is charged or credited now: at the renewal the new plan is billed as usual. Scheduling again replaces the previous scheduled plan.
+        While a change is scheduled, immediate changes and cancel-at-period-end are refused (cancel the scheduled change first).
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The plan from the next renewal
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ScheduleChangeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.SubscriptionResponse'
+        "400":
+          description: validation failed (same plan, not paid up, cancelled at period
+            end)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Change the plan at the next renewal
       tags:
       - billing
   /api/v1/drivers:

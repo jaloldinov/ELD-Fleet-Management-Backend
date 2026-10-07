@@ -1683,6 +1683,146 @@
                 }
             }
         },
+        "/api/v1/companies/{id}/billing/subscription/schedule": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:manage. Body = the WHOLE plan wanted from the next renewal.\nNothing is charged or credited now: at the renewal the new plan is billed as usual. Scheduling again replaces the previous scheduled plan.\nWhile a change is scheduled, immediate changes and cancel-at-period-end are refused (cancel the scheduled change first).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Change the plan at the next renewal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The plan from the next renewal",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.ScheduleChangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed (same plan, not paid up, cancelled at period end)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:manage. The subscription renews with its current plan.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Cancel the scheduled plan change",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "no change is scheduled",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers": {
             "get": {
                 "security": [
@@ -5293,6 +5433,45 @@
                 }
             }
         },
+        "handler.ScheduleChangeRequest": {
+            "type": "object",
+            "properties": {
+                "price_ids": {
+                    "description": "The WHOLE plan wanted from the next renewal.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "0199a1b2-0000-7000-8000-0000000000b1"
+                    ]
+                }
+            }
+        },
+        "handler.ScheduledChangeResponse": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string",
+                    "example": "2026-11-07T00:00:00Z"
+                },
+                "interval": {
+                    "type": "string",
+                    "example": "year"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.SubscriptionItemResponse"
+                    }
+                },
+                "total_amount": {
+                    "description": "What one interval of the new plan costs, in cents.",
+                    "type": "integer",
+                    "example": 75000
+                }
+            }
+        },
         "handler.SetPasswordRequest": {
             "type": "object",
             "properties": {
@@ -5395,6 +5574,14 @@
                     "items": {
                         "$ref": "#/definitions/handler.SubscriptionItemResponse"
                     }
+                },
+                "scheduled_change": {
+                    "description": "The plan that starts at the next renewal; null = no change scheduled.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.ScheduledChangeResponse"
+                        }
+                    ]
                 },
                 "status": {
                     "description": "incomplete (not paid yet), active, past_due, unpaid, canceled, incomplete_expired, trialing, paused.",

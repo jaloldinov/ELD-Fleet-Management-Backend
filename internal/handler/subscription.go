@@ -24,6 +24,8 @@ type SubscriptionService interface {
 	Change(ctx context.Context, p auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*service.SubscriptionState, error)
 	Cancel(ctx context.Context, p auth.Principal, companyID uuid.UUID, atPeriodEnd bool) (*model.Subscription, error)
 	Resume(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error)
+	ScheduleChange(ctx context.Context, p auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*model.Subscription, error)
+	CancelScheduledChange(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error)
 }
 
 // ---------- DTOs ----------
@@ -88,9 +90,24 @@ type SubscriptionResponse struct {
 	Items              []SubscriptionItemResponse `json:"items"`
 	// Sum of the items' amounts: what one interval costs, in cents (before
 	// proration, credits and tax).
-	TotalAmount          int64     `json:"total_amount" example:"40000"`
-	StripeSubscriptionID string    `json:"stripe_subscription_id" example:"sub_1QabcDEFghiJKL"`
-	CreatedAt            time.Time `json:"created_at" example:"2026-10-07T11:26:26Z"`
+	TotalAmount int64 `json:"total_amount" example:"40000"`
+	// The plan that starts at the next renewal; null = no change scheduled.
+	ScheduledChange      *ScheduledChangeResponse `json:"scheduled_change"`
+	StripeSubscriptionID string                   `json:"stripe_subscription_id" example:"sub_1QabcDEFghiJKL"`
+	CreatedAt            time.Time                `json:"created_at" example:"2026-10-07T11:26:26Z"`
+}
+
+type ScheduledChangeResponse struct {
+	At       *time.Time                 `json:"at" example:"2026-11-07T00:00:00Z"`
+	Interval string                     `json:"interval" example:"year"`
+	Items    []SubscriptionItemResponse `json:"items"`
+	// What one interval of the new plan costs, in cents.
+	TotalAmount int64 `json:"total_amount" example:"75000"`
+}
+
+type ScheduleChangeRequest struct {
+	// The WHOLE plan wanted from the next renewal.
+	PriceIDs []uuid.UUID `json:"price_ids" swaggertype:"array,string" example:"0199a1b2-0000-7000-8000-0000000000b1"`
 }
 
 type PaymentDueResponse struct {
@@ -115,10 +132,10 @@ type ListSubscriptionsResponse struct {
 	Total    int                    `json:"total" example:"4"`
 }
 
-func newSubscriptionResponse(s *model.Subscription) SubscriptionResponse {
-	items := make([]SubscriptionItemResponse, 0, len(s.Items))
-	var total int64
-	for _, it := range s.Items {
+// itemResponses converts items and sums their amounts.
+func itemResponses(in []model.SubscriptionItem) (items []SubscriptionItemResponse, total int64) {
+	items = make([]SubscriptionItemResponse, 0, len(in))
+	for _, it := range in {
 		amount := it.Price.UnitAmount * int64(it.Quantity)
 		total += amount
 		items = append(items, SubscriptionItemResponse{
@@ -126,11 +143,24 @@ func newSubscriptionResponse(s *model.Subscription) SubscriptionResponse {
 			UnitAmount: it.Price.UnitAmount, BillingUnit: it.Price.BillingUnit, Quantity: it.Quantity, Amount: amount,
 		})
 	}
+	return items, total
+}
+
+func newSubscriptionResponse(s *model.Subscription) SubscriptionResponse {
+	items, total := itemResponses(s.Items)
+	var scheduled *ScheduledChangeResponse
+	if s.ScheduledChangeAt != nil && len(s.ScheduledItems) > 0 {
+		sItems, sTotal := itemResponses(s.ScheduledItems)
+		scheduled = &ScheduledChangeResponse{
+			At: utc(s.ScheduledChangeAt), Interval: s.ScheduledItems[0].Price.Interval, Items: sItems, TotalAmount: sTotal,
+		}
+	}
 	return SubscriptionResponse{
 		ID: s.ID, CompanyID: s.CompanyID, Status: s.Status, Interval: s.Interval,
 		CurrentPeriodStart: utc(s.CurrentPeriodStart), CurrentPeriodEnd: utc(s.CurrentPeriodEnd),
 		CancelAtPeriodEnd: s.CancelAtPeriodEnd, CanceledAt: utc(s.CanceledAt),
-		Items: items, TotalAmount: total, StripeSubscriptionID: s.StripeSubscriptionID, CreatedAt: s.CreatedAt.UTC(),
+		Items: items, TotalAmount: total, ScheduledChange: scheduled,
+		StripeSubscriptionID: s.StripeSubscriptionID, CreatedAt: s.CreatedAt.UTC(),
 	}
 }
 
@@ -491,6 +521,78 @@ func (h *SubscriptionHandler) Resume(c *gin.Context) {
 		return
 	}
 	sub, err := h.svc.Resume(c.Request.Context(), p, companyID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newSubscriptionResponse(sub))
+}
+
+// ScheduleChange handles PUT /api/v1/companies/:id/billing/subscription/schedule.
+//
+//	@Summary		Change the plan at the next renewal
+//	@Description	Requires permission: subscription:manage. Body = the WHOLE plan wanted from the next renewal.
+//	@Description	Nothing is charged or credited now: at the renewal the new plan is billed as usual. Scheduling again replaces the previous scheduled plan.
+//	@Description	While a change is scheduled, immediate changes and cancel-at-period-end are refused (cancel the scheduled change first).
+//	@Tags			billing
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string					true	"Company ID"	format(uuid)
+//	@Param			body	body		ScheduleChangeRequest	true	"The plan from the next renewal"
+//	@Success		200		{object}	SubscriptionResponse
+//	@Failure		400		{object}	apierror.Response	"validation failed (same plan, not paid up, cancelled at period end)"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission subscription:manage"
+//	@Failure		404		{object}	apierror.Response	"no current subscription (or company not found)"
+//	@Failure		502		{object}	apierror.Response	"Stripe refused the request or could not be reached"
+//	@Router			/api/v1/companies/{id}/billing/subscription/schedule [put]
+func (h *SubscriptionHandler) ScheduleChange(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	companyID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req ScheduleChangeRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	sub, err := h.svc.ScheduleChange(c.Request.Context(), p, companyID, service.ChangeSubscriptionInput{PriceIDs: req.PriceIDs})
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newSubscriptionResponse(sub))
+}
+
+// CancelScheduledChange handles DELETE /api/v1/companies/:id/billing/subscription/schedule.
+//
+//	@Summary		Cancel the scheduled plan change
+//	@Description	Requires permission: subscription:manage. The subscription renews with its current plan.
+//	@Tags			billing
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Company ID"	format(uuid)
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		400	{object}	apierror.Response	"no change is scheduled"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission subscription:manage"
+//	@Failure		404	{object}	apierror.Response	"no current subscription (or company not found)"
+//	@Failure		502	{object}	apierror.Response	"Stripe refused the request or could not be reached"
+//	@Router			/api/v1/companies/{id}/billing/subscription/schedule [delete]
+func (h *SubscriptionHandler) CancelScheduledChange(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	companyID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	sub, err := h.svc.CancelScheduledChange(c.Request.Context(), p, companyID)
 	if err != nil {
 		handleError(c, err)
 		return
