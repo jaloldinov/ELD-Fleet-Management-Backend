@@ -247,10 +247,16 @@ func run() error {
 	})
 
 	// Billing handlers stay nil without Stripe: the router skips their routes.
-	var productHandler *handler.ProductHandler
+	var (
+		productHandler       *handler.ProductHandler
+		paymentMethodHandler *handler.PaymentMethodHandler
+	)
 	if stripeClient != nil {
 		productHandler = handler.NewProductHandler(service.NewCatalogService(
 			repository.NewProductRepository(pool), stripegw.NewCatalog(stripeClient), auditor))
+		customerSvc := service.NewCustomerService(companyRepo, stripegw.NewCustomers(stripeClient), auditor,
+			cfg.StripePublishableKey)
+		paymentMethodHandler = handler.NewPaymentMethodHandler(customerSvc)
 	}
 
 	router := handler.NewRouter(log, handler.RouterOptions{
@@ -262,17 +268,18 @@ func run() error {
 		Permissions: userSvc,
 		AuthLimiter: authIPLimiter,
 	}, handler.Handlers{
-		Health:    handler.NewHealthHandler(pool, log),
-		Auth:      handler.NewAuthHandler(authSvc, loginLimiter),
-		User:      handler.NewUserHandler(userSvc),
-		Company:   handler.NewCompanyHandler(companySvc),
-		Driver:    handler.NewDriverHandler(driverSvc),
-		Truck:     handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo, auditor)),
-		ELDDevice: handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo, auditor)),
-		RateLimit: handler.NewRateLimitHandler(rateLimitSvc),
-		Password:  handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
-		AuditLog:  handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),
-		Product:   productHandler,
+		Health:        handler.NewHealthHandler(pool, log),
+		Auth:          handler.NewAuthHandler(authSvc, loginLimiter),
+		User:          handler.NewUserHandler(userSvc),
+		Company:       handler.NewCompanyHandler(companySvc),
+		Driver:        handler.NewDriverHandler(driverSvc),
+		Truck:         handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo, auditor)),
+		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo, auditor)),
+		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),
+		Password:      handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
+		AuditLog:      handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),
+		Product:       productHandler,
+		PaymentMethod: paymentMethodHandler,
 	})
 
 	srv := &http.Server{

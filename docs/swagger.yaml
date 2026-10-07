@@ -419,6 +419,13 @@ definitions:
         example: 14
         type: integer
     type: object
+  handler.ListPaymentMethodsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.PaymentMethodResponse'
+        type: array
+    type: object
   handler.ListProductsResponse:
     properties:
       items:
@@ -528,6 +535,27 @@ definitions:
         type: array
       username:
         example: jane.smith
+        type: string
+    type: object
+  handler.PaymentMethodResponse:
+    properties:
+      brand:
+        example: visa
+        type: string
+      exp_month:
+        example: 12
+        type: integer
+      exp_year:
+        example: 2030
+        type: integer
+      id:
+        example: pm_1QabcDEFghiJKL
+        type: string
+      is_default:
+        example: true
+        type: boolean
+      last4:
+        example: "4242"
         type: string
     type: object
   handler.PriceResponse:
@@ -646,6 +674,19 @@ definitions:
       new_password:
         description: At least 8 characters, at most 72 bytes.
         example: correct horse battery staple
+        type: string
+    type: object
+  handler.SetupIntentResponse:
+    properties:
+      client_secret:
+        description: |-
+          Give it to Stripe.js (elements + confirmSetup). Single use; it lets the
+          browser save ONE card for this company, nothing else.
+        example: seti_1Qabc_secret_xyz
+        type: string
+      publishable_key:
+        description: Public key of our Stripe account, for Stripe("pk_...").
+        example: pk_test_51Qabc
         type: string
     type: object
   handler.TokenResponse:
@@ -1468,6 +1509,199 @@ paths:
       summary: Update a company
       tags:
       - companies
+  /api/v1/companies/{id}/billing/payment-methods:
+    get:
+      description: |-
+        Requires permission: payment_method:manage. Company users: own company only.
+        Only brand, last 4 digits and expiry: card numbers never reach this API.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListPaymentMethodsResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission payment_method:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: List saved cards
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/payment-methods/{pm}:
+    delete:
+      description: 'Requires permission: payment_method:manage. The card is detached
+        in Stripe and cannot be used again.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Payment method ID (pm_...)
+        in: path
+        name: pm
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission payment_method:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company or card not found (or the card is another company's)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Remove a card
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/payment-methods/{pm}/default:
+    put:
+      description: 'Requires permission: payment_method:manage. The default card is
+        charged for invoices.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Payment method ID (pm_...)
+        in: path
+        name: pm
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission payment_method:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company or card not found (or the card is another company's)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Make a card the default
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/setup-intent:
+    post:
+      description: |-
+        Requires permission: payment_method:manage. Company users: own company only.
+        Returns a one-time client secret for Stripe.js: the browser sends the card straight to Stripe, never to this API.
+        Creates the company's Stripe customer on first use.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.SetupIntentResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission payment_method:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Start adding a card
+      tags:
+      - billing
   /api/v1/drivers:
     get:
       description: |-

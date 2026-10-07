@@ -13,7 +13,7 @@ import (
 
 // companyColumns is shared by every SELECT/RETURNING so the column order always
 // matches scanCompany.
-const companyColumns = `id, name, dot_number, timezone, is_active, created_at, updated_at, deleted_at`
+const companyColumns = `id, name, dot_number, timezone, is_active, stripe_customer_id, created_at, updated_at, deleted_at`
 
 type CompanyRepository struct {
 	db DBTX
@@ -145,12 +145,30 @@ func (r *CompanyRepository) SoftDelete(ctx context.Context, id uuid.UUID) error 
 	return nil
 }
 
+// SetStripeCustomerID links the company to its Stripe Customer, only if it
+// has none yet, and returns the id that is linked afterwards. When two
+// requests race, both get the same answer: the first one saved wins.
+func (r *CompanyRepository) SetStripeCustomerID(ctx context.Context, id uuid.UUID, customerID string) (string, error) {
+	var linked string
+	err := r.q(ctx).QueryRow(ctx, `
+		UPDATE companies
+		SET stripe_customer_id = COALESCE(stripe_customer_id, $2)
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING stripe_customer_id`,
+		id, customerID,
+	).Scan(&linked)
+	if err != nil {
+		return "", mapCompanyError("set stripe customer", err)
+	}
+	return linked, nil
+}
+
 // scanCompany reads one row in companyColumns order.
 // pgx.Row is satisfied by both QueryRow's result and rows inside CollectRows.
 func scanCompany(row pgx.Row) (*model.Company, error) {
 	var c model.Company
 	err := row.Scan(
-		&c.ID, &c.Name, &c.DOTNumber, &c.Timezone, &c.IsActive,
+		&c.ID, &c.Name, &c.DOTNumber, &c.Timezone, &c.IsActive, &c.StripeCustomerID,
 		&c.CreatedAt, &c.UpdatedAt, &c.DeletedAt,
 	)
 	if err != nil {

@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -13,6 +14,7 @@ import (
 	_ "github.com/jaloldinov/ELD-learning/docs"
 	"github.com/jaloldinov/ELD-learning/internal/middleware"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/web"
 )
 
 // RouterOptions turns optional router features on or off.
@@ -46,7 +48,8 @@ type Handlers struct {
 	AuditLog  *AuditLogHandler
 
 	// Billing (nil when Stripe is not configured: the routes do not exist).
-	Product *ProductHandler
+	Product       *ProductHandler
+	PaymentMethod *PaymentMethodHandler
 }
 
 // RouterSecurity holds what the router needs to protect routes.
@@ -93,6 +96,12 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	secHeaders := middleware.SecurityHeaders(opts.HSTS)
 	r.GET("/health", secHeaders, h.Health.Live)
 	r.GET("/ready", secHeaders, h.Health.Ready)
+
+	// The browser frontend (plain HTML/CSS/JS embedded in the binary), with
+	// its own CSP that lets Stripe.js run. "/" sends browsers to it.
+	app := r.Group("/app", middleware.AppSecurityHeaders(opts.HSTS))
+	app.StaticFS("/", http.FS(web.Files()))
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/app/") })
 
 	if opts.EnableSwagger {
 		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -188,6 +197,15 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 		products.DELETE("/:id", perm.Require(model.PermProductDelete), h.Product.Archive)
 		products.POST("/:id/prices", perm.Require(model.PermProductCreate), h.Product.CreatePrice)
 		protected.PATCH("/prices/:id", perm.Require(model.PermProductUpdate), h.Product.UpdatePrice)
+	}
+	if h.PaymentMethod != nil {
+		// A company's cards. Company admins: own company (the service turns
+		// any other id into 404); platform admins: any company.
+		billing := companies.Group("/:id/billing")
+		billing.POST("/setup-intent", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.CreateSetupIntent)
+		billing.GET("/payment-methods", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.List)
+		billing.PUT("/payment-methods/:pm/default", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.SetDefault)
+		billing.DELETE("/payment-methods/:pm", perm.Require(model.PermPaymentMethodManage), h.PaymentMethod.Remove)
 	}
 
 	return r

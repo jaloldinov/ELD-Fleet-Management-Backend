@@ -850,6 +850,292 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/companies/{id}/billing/payment-methods": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: payment_method:manage. Company users: own company only.\nOnly brand, last 4 digits and expiry: card numbers never reach this API.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "List saved cards",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListPaymentMethodsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission payment_method:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/payment-methods/{pm}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: payment_method:manage. The card is detached in Stripe and cannot be used again.",
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Remove a card",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Payment method ID (pm_...)",
+                        "name": "pm",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission payment_method:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company or card not found (or the card is another company's)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/payment-methods/{pm}/default": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: payment_method:manage. The default card is charged for invoices.",
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Make a card the default",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Payment method ID (pm_...)",
+                        "name": "pm",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission payment_method:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company or card not found (or the card is another company's)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/setup-intent": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: payment_method:manage. Company users: own company only.\nReturns a one-time client secret for Stripe.js: the browser sends the card straight to Stripe, never to this API.\nCreates the company's Stripe customer on first use.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Start adding a card",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SetupIntentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission payment_method:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers": {
             "get": {
                 "security": [
@@ -3832,6 +4118,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.ListPaymentMethodsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.PaymentMethodResponse"
+                    }
+                }
+            }
+        },
         "handler.ListProductsResponse": {
             "type": "object",
             "properties": {
@@ -3986,6 +4283,35 @@ const docTemplate = `{
                 "username": {
                     "type": "string",
                     "example": "jane.smith"
+                }
+            }
+        },
+        "handler.PaymentMethodResponse": {
+            "type": "object",
+            "properties": {
+                "brand": {
+                    "type": "string",
+                    "example": "visa"
+                },
+                "exp_month": {
+                    "type": "integer",
+                    "example": 12
+                },
+                "exp_year": {
+                    "type": "integer",
+                    "example": 2030
+                },
+                "id": {
+                    "type": "string",
+                    "example": "pm_1QabcDEFghiJKL"
+                },
+                "is_default": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "last4": {
+                    "type": "string",
+                    "example": "4242"
                 }
             }
         },
@@ -4146,6 +4472,21 @@ const docTemplate = `{
                     "description": "At least 8 characters, at most 72 bytes.",
                     "type": "string",
                     "example": "correct horse battery staple"
+                }
+            }
+        },
+        "handler.SetupIntentResponse": {
+            "type": "object",
+            "properties": {
+                "client_secret": {
+                    "description": "Give it to Stripe.js (elements + confirmSetup). Single use; it lets the\nbrowser save ONE card for this company, nothing else.",
+                    "type": "string",
+                    "example": "seti_1Qabc_secret_xyz"
+                },
+                "publishable_key": {
+                    "description": "Public key of our Stripe account, for Stripe(\"pk_...\").",
+                    "type": "string",
+                    "example": "pk_test_51Qabc"
                 }
             }
         },

@@ -59,3 +59,16 @@ type ProductFilter struct {
 	// (company users only see what they can still choose).
 	ActivePricesOnly bool
 }
+
+// PaymentMethod is a saved card, as Stripe describes it. Card numbers never
+// reach our server: we only ever see the brand and the last 4 digits.
+// Not stored in our database (read from Stripe when needed).
+type PaymentMethod struct {
+	ID         string // pm_...
+	CustomerID string // cus_... it is saved to; "" if none
+	Brand      string // visa, mastercard, amex, ...
+	Last4      string
+	ExpMonth   int
+	ExpYear    int
+	IsDefault  bool // charged for invoices unless another is chosen
+}

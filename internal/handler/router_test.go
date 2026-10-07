@@ -88,7 +88,8 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		Password:  handler.NewPasswordResetHandler(nil, nil),
 		AuditLog:  handler.NewAuditLogHandler(nil),
 		// Billing on, so the generic route checks below cover its routes too.
-		Product: handler.NewProductHandler(nil),
+		Product:       handler.NewProductHandler(nil),
+		PaymentMethod: handler.NewPaymentMethodHandler(nil),
 	})
 }
 
@@ -149,6 +150,11 @@ var publicRoutes = map[string]bool{
 	"POST /api/v1/auth/password/forgot": true,
 	"POST /api/v1/auth/password/verify": true,
 	"POST /api/v1/auth/password/reset":  true,
+
+	// The frontend's files: the page itself logs in, then calls the API.
+	"GET /":               true,
+	"GET /app/*filepath":  true,
+	"HEAD /app/*filepath": true,
 }
 
 func TestRouter_EveryNonPublicRouteRequiresAuthentication(t *testing.T) {
@@ -385,4 +391,33 @@ func TestRouter_BillingRoutesOnlyWhenEnabled(t *testing.T) {
 	for _, path := range []string{"/api/v1/products", "/api/v1/products/" + uuid.NewString()} {
 		assert.Equal(t, http.StatusNotFound, send(off, http.MethodGet, path, authHeader).Code, path)
 	}
+}
+
+func TestRouter_Frontend(t *testing.T) {
+	r := newTestRouter(&bytes.Buffer{})
+
+	rec := send(r, http.MethodGet, "/", nil)
+	assert.Equal(t, http.StatusFound, rec.Code)
+	assert.Equal(t, "/app/", rec.Header().Get("Location"))
+
+	rec = send(r, http.MethodGet, "/app/", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "js.stripe.com", "the page loads Stripe.js")
+	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "https://js.stripe.com",
+		"the page gets the frontend CSP, not the API's default-src 'none'")
+
+	rec = send(r, http.MethodGet, "/app/app.js", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Header().Get("Content-Type"), "javascript")
+
+	assert.Equal(t, http.StatusNotFound, send(r, http.MethodGet, "/app/nope.js", nil).Code)
+}
+
+func TestRouter_PaymentMethodRoutesRegistered(t *testing.T) {
+	r := newTestRouter(&bytes.Buffer{})
+
+	// Invalid company UUID: 400 from the handler proves the route exists.
+	rec := send(r, http.MethodGet, "/api/v1/companies/not-a-uuid/billing/payment-methods", authHeader)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }

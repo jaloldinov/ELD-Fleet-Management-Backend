@@ -13,9 +13,12 @@ type Company struct {
 	DOTNumber string // USDOT number
 	Timezone  string // home-terminal IANA time zone, e.g. America/Chicago
 	IsActive  bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt *time.Time // nil = not deleted (pointer because the column is nullable)
+	// StripeCustomerID (cus_...) is the company's Stripe Customer; nil
+	// until the company first needs billing.
+	StripeCustomerID *string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	DeletedAt        *time.Time // nil = not deleted (pointer because the column is nullable)
 }
 
 // CompanyFilter narrows a company list. The zero value means "no filter".

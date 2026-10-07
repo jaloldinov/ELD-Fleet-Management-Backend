@@ -191,3 +191,32 @@ func TestCompanyRepository_List_OnlyID(t *testing.T) {
 	require.Len(t, page, 1)
 	assert.Equal(t, b.ID, page[0].ID)
 }
+
+func TestCompanyRepository_SetStripeCustomerID(t *testing.T) {
+	repo := NewCompanyRepository(newTestDB(t))
+	ctx := context.Background()
+	c := createCompany(t, repo, "Acme", "1")
+	assert.Nil(t, c.StripeCustomerID, "no billing yet")
+
+	linked, err := repo.SetStripeCustomerID(ctx, c.ID, "cus_first")
+	require.NoError(t, err)
+	assert.Equal(t, "cus_first", linked)
+
+	// A second (racing) request does not overwrite: it learns the winner.
+	linked, err = repo.SetStripeCustomerID(ctx, c.ID, "cus_second")
+	require.NoError(t, err)
+	assert.Equal(t, "cus_first", linked)
+
+	got, err := repo.GetByID(ctx, c.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.StripeCustomerID)
+	assert.Equal(t, "cus_first", *got.StripeCustomerID)
+
+	// One customer belongs to one company.
+	other := createCompany(t, repo, "Other", "2")
+	_, err = repo.SetStripeCustomerID(ctx, other.ID, "cus_first")
+	assert.Error(t, err)
+
+	_, err = repo.SetStripeCustomerID(ctx, uuid.New(), "cus_x")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}

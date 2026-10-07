@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ELD Billing</title>
+  <link rel="stylesheet" href="app.css">
+  <!-- Stripe.js must be loaded from js.stripe.com, never bundled or copied
+       (PCI rule). "endive" matches the API version our server is pinned to. -->
+  <script src="https://js.stripe.com/endive/stripe.js"></script>
+  <!-- No inline scripts anywhere: the CSP forbids them. -->
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>ELD Billing</h1>
+    <div id="session" hidden>
+      <span id="who"></span>
+      <button id="logout" class="link">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Login -->
+    <section id="login-view" class="card narrow">
+      <h2>Log in</h2>
+      <form id="login-form">
+        <label>Email or username
+          <input name="login" autocomplete="username" required>
+        </label>
+        <label>Password
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Log in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <!-- Billing -->
+    <section id="billing-view" hidden>
+      <div class="card" id="company-picker" hidden>
+        <label>Company
+          <select id="company-select"></select>
+        </label>
+        <p class="hint">You are a platform admin: choose whose billing to manage.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Payment methods</h2>
+          <button id="add-card">Add card</button>
+        </div>
+        <p id="cards-message" class="hint"></p>
+        <ul id="card-list" class="cards"></ul>
+
+        <form id="card-form" hidden>
+          <h3>New card</h3>
+          <!-- Stripe.js puts its card form (an iframe from js.stripe.com) here.
+               What is typed inside it goes to Stripe, never to our server. -->
+          <div id="payment-element"></div>
+          <div class="actions">
+            <button type="submit" id="save-card">Save card</button>
+            <button type="button" id="cancel-card" class="secondary">Cancel</button>
+          </div>
+          <p id="card-error" class="error" role="alert"></p>
+          <p class="hint">Test mode: card 4242 4242 4242 4242, any future date, any CVC.
+            4000 0025 0000 3155 asks for 3-D Secure.</p>
+        </form>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

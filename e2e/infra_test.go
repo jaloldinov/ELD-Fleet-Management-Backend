@@ -146,3 +146,23 @@ func TestPagination(t *testing.T) {
 	require.Len(t, second.Items, 1)
 	assert.NotEqual(t, first.Items[0].ID, second.Items[0].ID, "pages do not overlap")
 }
+
+func TestFrontendServed(t *testing.T) {
+	// The http client follows the redirect from / to /app/.
+	r := anon.do(t, http.MethodGet, "/", nil, http.StatusOK, nil)
+	assert.Contains(t, string(r.Body), "<title>ELD Billing</title>")
+
+	csp := r.Header.Get("Content-Security-Policy")
+	assert.Contains(t, csp, "https://js.stripe.com")
+	assert.NotContains(t, csp, "unsafe-inline")
+
+	js := anon.do(t, http.MethodGet, "/app/app.js", nil, http.StatusOK, nil)
+	assert.Contains(t, js.Header.Get("Content-Type"), "javascript")
+}
+
+func TestBillingRoutesAbsentWithoutStripe(t *testing.T) {
+	// The e2e server runs without Stripe keys: billing does not exist.
+	p := platform(t)
+	e := p.fail(t, http.MethodGet, "/api/v1/products", nil, http.StatusNotFound)
+	assert.Equal(t, "route not found", e.Message)
+}
