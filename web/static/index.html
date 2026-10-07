@@ -56,6 +56,9 @@
           <p class="total">Total: <span id="sub-total"></span></p>
           <div class="actions">
             <button id="sub-pay" hidden>Pay now</button>
+            <button id="sub-change" class="secondary" hidden>Change plan</button>
+            <button id="sub-cancel" class="secondary" hidden>Cancel subscription</button>
+            <button id="sub-resume" class="secondary" hidden>Keep subscription</button>
             <button id="sub-refresh" class="secondary">Refresh</button>
           </div>
           <p id="sub-error" class="error" role="alert"></p>
@@ -69,9 +72,15 @@
             <label class="inline"><input type="radio" name="interval" value="year"> Yearly</label>
           </fieldset>
           <ul id="plan-list" class="lines"></ul>
-          <p class="total">Due now: <span id="plan-total">$0.00</span></p>
+          <p class="total" id="plan-total-line">Due now: <span id="plan-total">$0.00</span></p>
+          <!-- Plan change: Stripe's quote for switching right now. -->
+          <div id="plan-preview" hidden>
+            <ul id="preview-lines" class="lines"></ul>
+            <p class="total" id="preview-summary"></p>
+          </div>
           <div class="actions">
             <button type="submit" id="subscribe">Subscribe and pay</button>
+            <button type="button" id="plan-back" class="secondary" hidden>Back</button>
           </div>
           <p id="plan-error" class="error" role="alert"></p>
           <p class="hint">Per-truck prices are billed for your active trucks. You pay first; the subscription starts once the payment succeeds.</p>

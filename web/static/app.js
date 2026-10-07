@@ -311,9 +311,13 @@ function closeCardForm() {
 // ---------- subscription ----------
 
 const sub = {
-  products: [],  // the catalog (active products with active prices)
-  trucks: 0,     // active trucks: the quantity of per-truck prices
-  payment: null, // the unpaid first invoice, if any
+  products: [],     // the catalog (active products with active prices)
+  trucks: 0,        // active trucks: the quantity of per-truck prices
+  payment: null,    // an invoice waiting to be paid in the browser, if any
+  current: null,    // the current subscription
+  mode: "new",      // the picker: "new" (subscribe) or "change" (change plan)
+  prorationDate: 0, // from the last preview: confirm the quote the user saw
+  previewTimer: 0,
 };
 
 async function loadSubscription() {
@@ -324,13 +328,13 @@ async function loadSubscription() {
   if (!state.companyId) return;
   try {
     // POST refresh, not GET: it re-reads Stripe, and returns the payment
-    // still due if the first invoice is unpaid (e.g. the tab was closed).
+    // still due if an invoice is unpaid (e.g. the tab was closed).
     showSubscription(await api("POST", billingPath("/subscription/refresh")));
   } catch (err) {
     if (err.status === 404 && err.message === "route not found") {
       $("sub-message").textContent = "Billing is not enabled on this server.";
     } else if (err.status === 404) {
-      await showPicker(); // no subscription yet
+      await showPicker("new"); // no subscription yet
     } else {
       $("sub-message").textContent = `Could not load the subscription: ${err.message}`;
     }
@@ -339,6 +343,7 @@ async function loadSubscription() {
 
 function showSubscription(st) {
   const s = st.subscription;
+  sub.current = s;
   sub.payment = st.payment;
 
   const status = $("sub-status");
@@ -346,9 +351,10 @@ function showSubscription(st) {
   status.className = "status " + (["active", "trialing"].includes(s.status) ? "good"
     : ["past_due", "unpaid", "incomplete"].includes(s.status) ? "bad" : "");
 
-  $("sub-period").textContent = s.current_period_end
-    ? `${s.interval === "year" ? "Yearly" : "Monthly"}, renews ${new Date(s.current_period_end).toLocaleDateString()}`
-    : "";
+  const end = s.current_period_end ? new Date(s.current_period_end).toLocaleDateString() : "";
+  $("sub-period").textContent = !end ? ""
+    : s.cancel_at_period_end ? `Ends ${end}`
+    : `${s.interval === "year" ? "Yearly" : "Monthly"}, renews ${end}`;
 
   const list = $("sub-items");
   list.replaceChildren();
@@ -367,27 +373,54 @@ function showSubscription(st) {
   }
   $("sub-total").textContent = `${money(s.total_amount)} / ${s.interval}`;
 
+  const running = ["active", "trialing"].includes(s.status);
   const pay = $("sub-pay");
   pay.hidden = !sub.payment;
   if (sub.payment) pay.textContent = `Pay ${money(sub.payment.amount_due)} now`;
+  $("sub-change").hidden = !running || !!sub.payment;
+  $("sub-cancel").hidden = !(running || s.status === "past_due") || s.cancel_at_period_end;
+  $("sub-resume").hidden = !s.cancel_at_period_end;
+
   const messages = {
     incomplete: "Not active yet: the first invoice is waiting for payment.",
     past_due: "A payment failed. Stripe will retry the card over the next days; " +
       "add a working card and make it the default to avoid suspension.",
     unpaid: "Suspended: payments failed. Trucks, drivers and ELD devices are locked until the open invoice is paid.",
   };
-  $("sub-message").textContent = messages[s.status] || "";
+  $("sub-message").textContent = sub.payment && running
+    ? "A plan change is waiting for payment; the current plan stays until it is paid."
+    : s.cancel_at_period_end ? `Cancelled: the service continues until ${end}.`
+    : messages[s.status] || "";
   $("sub-current").hidden = false;
 }
 
-async function showPicker() {
+// showPicker shows the plan list: to subscribe ("new") or to change the
+// current plan ("change", with a live quote from Stripe).
+async function showPicker(mode) {
   const [catalog, trucks] = await Promise.all([
     api("GET", "/products?page_size=100"),
     api("GET", `/trucks?is_active=true&page_size=1&company_id=${encodeURIComponent(state.companyId)}`),
   ]);
   sub.products = catalog.items;
   sub.trucks = trucks.total;
+  sub.mode = mode;
+
+  const changing = mode === "change";
+  $("subscribe").textContent = changing ? "Confirm change" : "Subscribe and pay";
+  $("plan-back").hidden = !changing;
+  $("plan-total-line").hidden = changing;
+  $("plan-preview").hidden = true;
+  $("plan-error").textContent = "";
+  if (changing) {
+    $("sub-picker").interval.value = sub.current.interval;
+  }
   renderPlans();
+  if (changing) {
+    // Start from the current plan: the user ticks what they want after the change.
+    const current = new Set(sub.current.items.map((it) => it.price_id));
+    for (const box of $("plan-list").querySelectorAll("input")) box.checked = current.has(box.value);
+    updatePlanTotal();
+  }
   $("sub-picker").hidden = false;
   if (sub.products.length === 0) $("sub-message").textContent = "No plans are offered yet.";
 }
@@ -407,7 +440,7 @@ function renderPlans() {
     box.type = "checkbox";
     box.value = price.id;
     box.dataset.amount = price.billing_unit === "truck" ? price.unit_amount * sub.trucks : price.unit_amount;
-    box.addEventListener("change", updatePlanTotal);
+    box.addEventListener("change", onPlanEdited);
     const text = document.createElement("span");
     text.textContent = price.billing_unit === "truck"
       ? `${product.name}: ${money(price.unit_amount)} per truck × ${sub.trucks} active truck${sub.trucks === 1 ? "" : "s"}`
@@ -423,20 +456,78 @@ function renderPlans() {
   updatePlanTotal();
 }
 
+function chosenPrices() {
+  return [...$("plan-list").querySelectorAll("input:checked")].map((b) => b.value);
+}
+
 function updatePlanTotal() {
   let total = 0;
   for (const box of $("plan-list").querySelectorAll("input:checked")) total += Number(box.dataset.amount);
   $("plan-total").textContent = money(total);
 }
 
-for (const radio of document.querySelectorAll('#sub-picker input[name="interval"]')) {
-  radio.addEventListener("change", renderPlans);
+function onPlanEdited() {
+  updatePlanTotal();
+  if (sub.mode !== "change") return;
+  // Ask Stripe for a quote once the user stops clicking for a moment.
+  clearTimeout(sub.previewTimer);
+  sub.previewTimer = setTimeout(previewChange, 400);
 }
+
+for (const radio of document.querySelectorAll('#sub-picker input[name="interval"]')) {
+  radio.addEventListener("change", () => {
+    renderPlans();
+    onPlanEdited();
+  });
+}
+
+// previewChange shows what the change would cost right now.
+async function previewChange() {
+  const box = $("plan-preview");
+  const lines = $("preview-lines");
+  const summary = $("preview-summary");
+  lines.replaceChildren();
+  sub.prorationDate = 0;
+  if (chosenPrices().length === 0) {
+    box.hidden = true;
+    return;
+  }
+  try {
+    const pv = await api("POST", billingPath("/subscription/preview"), { price_ids: chosenPrices() });
+    sub.prorationDate = pv.proration_date;
+    for (const l of pv.lines) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = l.description;
+      const amount = document.createElement("span");
+      amount.className = "amount";
+      amount.textContent = money(l.amount);
+      li.append(name, amount);
+      lines.append(li);
+    }
+    summary.textContent = pv.amount_due > 0 ? `Charged now: ${money(pv.amount_due)}`
+      : pv.credit > 0 ? `Credit for unused time: ${money(pv.credit)} (pays your next invoices)`
+      : "Nothing to pay now";
+  } catch (err) {
+    const details = err.status === 400 ? Object.values(err.body?.error?.details || {}).join(" ") : err.message;
+    summary.textContent = details;
+  }
+  box.hidden = false;
+}
+
+$("sub-change").addEventListener("click", () => showPicker("change").catch((err) => {
+  $("sub-error").textContent = err.message;
+}));
+
+$("plan-back").addEventListener("click", () => {
+  $("sub-picker").hidden = true;
+});
 
 $("sub-picker").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const button = $("subscribe");
-  const priceIds = [...$("plan-list").querySelectorAll("input:checked")].map((b) => b.value);
+  const priceIds = chosenPrices();
   $("plan-error").textContent = "";
   if (priceIds.length === 0) {
     $("plan-error").textContent = "Choose at least one plan.";
@@ -444,12 +535,22 @@ $("sub-picker").addEventListener("submit", async (ev) => {
   }
   button.disabled = true;
   try {
-    // 1. Our API creates the subscription in Stripe: "incomplete", with
-    //    an open first invoice. Nothing is charged yet.
-    const st = await api("POST", billingPath("/subscription"), { price_ids: priceIds });
+    let st;
+    if (sub.mode === "change") {
+      // The difference is charged now (or credited), with the date of the
+      // quote the user saw, so the charge equals the quote.
+      const body = { price_ids: priceIds };
+      if (sub.prorationDate) body.proration_date = sub.prorationDate;
+      st = await api("PUT", billingPath("/subscription"), body);
+    } else {
+      // Our API creates the subscription in Stripe: "incomplete", with an
+      // open first invoice. Nothing is charged yet.
+      st = await api("POST", billingPath("/subscription"), { price_ids: priceIds });
+    }
     $("sub-picker").hidden = true;
     showSubscription(st);
-    // 2. Pay it right away.
+    // An invoice to pay in the browser: the first one, or a change for
+    // which the bank asks for 3-D Secure.
     if (st.payment) await payNow();
   } catch (err) {
     const details = err.status === 400 ? " " + Object.values(err.body?.error?.details || {}).join(" ") : "";
@@ -459,10 +560,30 @@ $("sub-picker").addEventListener("submit", async (ev) => {
   }
 });
 
+$("sub-cancel").addEventListener("click", async () => {
+  const end = sub.current.current_period_end ? new Date(sub.current.current_period_end).toLocaleDateString() : "the end of the period";
+  if (!confirm(`Cancel the subscription? The service continues until ${end}, then stops. You can undo this until then.`)) return;
+  try {
+    const s = await api("POST", billingPath("/subscription/cancel"), { at_period_end: true });
+    showSubscription({ subscription: s, payment: null });
+  } catch (err) {
+    $("sub-error").textContent = err.message;
+  }
+});
+
+$("sub-resume").addEventListener("click", async () => {
+  try {
+    const s = await api("POST", billingPath("/subscription/resume"));
+    showSubscription({ subscription: s, payment: null });
+  } catch (err) {
+    $("sub-error").textContent = err.message;
+  }
+});
+
 $("sub-pay").addEventListener("click", payNow);
 $("sub-refresh").addEventListener("click", loadSubscription);
 
-// payNow pays the first invoice with the default card. Stripe.js shows
+// payNow pays the waiting invoice with the default card. Stripe.js shows
 // the bank's 3-D Secure check if it asks for one; the card itself never
 // passes through our server.
 async function payNow() {
@@ -481,12 +602,12 @@ async function payNow() {
       $("sub-error").textContent = error.message;
       return;
     }
-    // 3. Paid. Stripe marks the subscription active right after the
-    //    invoice is paid; ask a few times in case it takes a moment.
+    // Paid. Stripe applies the subscription (or the change) right after the
+    // invoice is paid; ask a few times in case it takes a moment.
     for (let i = 0; i < 5; i++) {
       const st = await api("POST", billingPath("/subscription/refresh"));
       showSubscription(st);
-      if (st.subscription.status !== "incomplete") return;
+      if (!st.payment) return;
       await new Promise((r) => setTimeout(r, 1000));
     }
   } catch (err) {

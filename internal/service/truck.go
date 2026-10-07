@@ -75,10 +75,24 @@ type TruckService struct {
 	companies CompanyLookup
 	audit     *Auditor
 	now       func() time.Time // for the model-year rule; replaceable in tests
+
+	// fleetChanged is told (after the commit) when a company's number of
+	// active trucks may have changed, so per-truck billing can follow.
+	// Never nil (a no-op until OnFleetChange).
+	fleetChanged func(ctx context.Context, companyID uuid.UUID)
 }
 
 func NewTruckService(repo TruckRepository, companies CompanyLookup, audit *Auditor) *TruckService {
-	return &TruckService{repo: repo, companies: companies, audit: audit, now: time.Now}
+	return &TruckService{repo: repo, companies: companies, audit: audit, now: time.Now,
+		fleetChanged: func(context.Context, uuid.UUID) {}}
+}
+
+// OnFleetChange registers fn, called after a truck is added, removed,
+// deactivated or reactivated. fn runs after the change is committed and
+// cannot fail it: the truck change happened, billing catches up (and an
+// hourly job catches up if this call fails).
+func (s *TruckService) OnFleetChange(fn func(ctx context.Context, companyID uuid.UUID)) {
+	s.fleetChanged = fn
 }
 
 func (s *TruckService) Create(ctx context.Context, p auth.Principal, in CreateTruckInput) (*model.Truck, error) {
@@ -112,7 +126,11 @@ func (s *TruckService) Create(ctx context.Context, p auth.Principal, in CreateTr
 		}
 		return s.record(ctx, p, "truck.create", created, truckChanges(model.Truck{}, *created))
 	})
-	return created, err
+	if err != nil {
+		return nil, err
+	}
+	s.fleetChanged(ctx, created.CompanyID)
+	return created, nil
 }
 
 func (s *TruckService) Get(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.Truck, error) {
@@ -189,7 +207,13 @@ func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUI
 		}
 		return nil // nothing really changed: nothing to record
 	})
-	return updated, err
+	if err != nil {
+		return nil, err
+	}
+	if before.IsActive != updated.IsActive {
+		s.fleetChanged(ctx, updated.CompanyID)
+	}
+	return updated, nil
 }
 
 func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error {
@@ -197,12 +221,19 @@ func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUI
 	if err != nil {
 		return err
 	}
-	return s.audit.WithinTx(ctx, func(ctx context.Context) error {
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
 		if err := s.repo.SoftDelete(ctx, id); err != nil {
 			return err
 		}
 		return s.record(ctx, p, "truck.delete", t, nil)
 	})
+	if err != nil {
+		return err
+	}
+	if t.IsActive {
+		s.fleetChanged(ctx, t.CompanyID)
+	}
+	return nil
 }
 
 func (s *TruckService) record(ctx context.Context, p auth.Principal, action string, t *model.Truck, ch model.AuditChanges) error {

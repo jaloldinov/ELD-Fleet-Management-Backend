@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 type memSubscriptionStore struct {
 	subs  map[uuid.UUID]*model.Subscription
 	listF model.SubscriptionFilter
+	list  []model.Subscription // what List returns for status "active"
 }
 
 func (m *memSubscriptionStore) Upsert(_ context.Context, s model.Subscription) (*model.Subscription, error) {
@@ -52,9 +54,12 @@ func (m *memSubscriptionStore) GetCurrent(_ context.Context, companyID uuid.UUID
 	return nil, model.ErrNotFound
 }
 
-func (m *memSubscriptionStore) List(_ context.Context, f model.SubscriptionFilter, _, _ int) ([]model.Subscription, int, error) {
+func (m *memSubscriptionStore) List(_ context.Context, f model.SubscriptionFilter, _, offset int) ([]model.Subscription, int, error) {
 	m.listF = f
-	return nil, 0, nil
+	if f.Status != model.SubscriptionActive || offset > 0 {
+		return nil, 0, nil
+	}
+	return m.list, len(m.list), nil
 }
 
 // fakePrices: a catalog keyed by our id.
@@ -126,10 +131,14 @@ func (f *fakeSubCustomers) ListPaymentMethods(context.Context, auth.Principal, u
 // fakeSubGateway answers like Stripe: a new subscription is incomplete
 // with an open first invoice for sum(amount × quantity).
 type fakeSubGateway struct {
-	prices  fakePrices
-	created *model.StripeSubscriptionCreate
-	current *model.StripeSubscription // what GetSubscription returns
-	err     error
+	prices        fakePrices
+	created       *model.StripeSubscriptionCreate
+	current       *model.StripeSubscription // what GetSubscription returns
+	calls         []string
+	changed       []model.StripeItemChange
+	prorationDate int64
+	needs3DS      bool // the bank asks for 3-D Secure on the next charge
+	err           error
 }
 
 func (f *fakeSubGateway) CreateSubscription(_ context.Context, in model.StripeSubscriptionCreate) (*model.StripeSubscription, error) {
@@ -155,6 +164,80 @@ func (f *fakeSubGateway) CreateSubscription(_ context.Context, in model.StripeSu
 	snap.LatestInvoice = &model.StripeInvoice{ID: "in_1", Status: "open", AmountDue: due, ClientSecret: "pi_secret"}
 	f.current = snap
 	return snap, nil
+}
+
+// apply changes f.current's items like Stripe would.
+func (f *fakeSubGateway) apply(items []model.StripeItemChange) {
+	var kept []model.StripeSubscriptionItem
+	for _, it := range f.current.Items {
+		drop := false
+		for _, ch := range items {
+			if ch.ID == it.ID {
+				if ch.Deleted {
+					drop = true
+				} else {
+					it.Quantity = ch.Quantity
+				}
+			}
+		}
+		if !drop {
+			kept = append(kept, it)
+		}
+	}
+	for i, ch := range items {
+		if ch.ID == "" {
+			kept = append(kept, model.StripeSubscriptionItem{ID: fmt.Sprintf("si_new%d", i), StripePriceID: ch.StripePriceID, Quantity: ch.Quantity})
+		}
+	}
+	f.current.Items = kept
+}
+
+func (f *fakeSubGateway) PreviewChange(_ context.Context, subID, customerID string, items []model.StripeItemChange) (*model.ProrationPreview, error) {
+	f.calls = append(f.calls, "PreviewChange "+subID+" "+customerID)
+	f.changed = items
+	return &model.ProrationPreview{ProrationDate: 1, Total: 1234, AmountDue: 1234}, f.err
+}
+
+func (f *fakeSubGateway) ChangeItems(_ context.Context, subID string, items []model.StripeItemChange, date int64) (*model.StripeSubscription, error) {
+	f.calls = append(f.calls, "ChangeItems "+subID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.changed, f.prorationDate = items, date
+	if f.needs3DS {
+		// Stripe keeps the old items until the change's invoice is paid.
+		f.current.PendingUpdate = true
+		f.current.LatestInvoice = &model.StripeInvoice{ID: "in_2", Status: "open", AmountDue: 2500, ClientSecret: "pi_2_secret"}
+	} else {
+		f.apply(items)
+	}
+	c := *f.current
+	return &c, nil
+}
+
+func (f *fakeSubGateway) SetQuantities(_ context.Context, subID string, items []model.StripeItemChange) (*model.StripeSubscription, error) {
+	f.calls = append(f.calls, "SetQuantities "+subID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.changed = items
+	f.apply(items)
+	c := *f.current
+	return &c, nil
+}
+
+func (f *fakeSubGateway) SetCancelAtPeriodEnd(_ context.Context, subID string, cancel bool) (*model.StripeSubscription, error) {
+	f.calls = append(f.calls, fmt.Sprintf("SetCancelAtPeriodEnd %s %v", subID, cancel))
+	f.current.CancelAtPeriodEnd = cancel
+	c := *f.current
+	return &c, f.err
+}
+
+func (f *fakeSubGateway) CancelNow(_ context.Context, subID string) (*model.StripeSubscription, error) {
+	f.calls = append(f.calls, "CancelNow "+subID)
+	f.current.Status = model.SubscriptionCanceled
+	c := *f.current
+	return &c, f.err
 }
 
 func (f *fakeSubGateway) GetSubscription(_ context.Context, id string) (*model.StripeSubscription, error) {

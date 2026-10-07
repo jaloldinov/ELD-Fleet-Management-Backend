@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -17,11 +18,40 @@ import (
 )
 
 type fakeSubscriptionService struct {
-	gotCompany uuid.UUID
-	gotCreate  service.CreateSubscriptionInput
-	gotList    service.SubscriptionListParams
-	state      *service.SubscriptionState
-	err        error
+	gotCompany     uuid.UUID
+	gotCreate      service.CreateSubscriptionInput
+	gotChange      service.ChangeSubscriptionInput
+	gotAtPeriodEnd *bool
+	gotList        service.SubscriptionListParams
+	state          *service.SubscriptionState
+	preview        *model.ProrationPreview
+	err            error
+}
+
+func (f *fakeSubscriptionService) PreviewChange(_ context.Context, _ auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*model.ProrationPreview, error) {
+	f.gotCompany, f.gotChange = companyID, in
+	return f.preview, f.err
+}
+
+func (f *fakeSubscriptionService) Change(_ context.Context, _ auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*service.SubscriptionState, error) {
+	f.gotCompany, f.gotChange = companyID, in
+	return f.state, f.err
+}
+
+func (f *fakeSubscriptionService) Cancel(_ context.Context, _ auth.Principal, companyID uuid.UUID, atPeriodEnd bool) (*model.Subscription, error) {
+	f.gotCompany, f.gotAtPeriodEnd = companyID, &atPeriodEnd
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.state.Subscription, nil
+}
+
+func (f *fakeSubscriptionService) Resume(_ context.Context, _ auth.Principal, companyID uuid.UUID) (*model.Subscription, error) {
+	f.gotCompany = companyID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.state.Subscription, nil
 }
 
 func (f *fakeSubscriptionService) Create(_ context.Context, _ auth.Principal, companyID uuid.UUID, in service.CreateSubscriptionInput) (*service.SubscriptionState, error) {
@@ -74,6 +104,10 @@ func subscriptionRouter(svc SubscriptionService) *gin.Engine {
 	g.POST("", h.Create)
 	g.GET("", h.Current)
 	g.POST("/refresh", h.Refresh)
+	g.POST("/preview", h.Preview)
+	g.PUT("", h.Change)
+	g.POST("/cancel", h.Cancel)
+	g.POST("/resume", h.Resume)
 	r.GET("/api/v1/subscriptions", h.List)
 	return r
 }
@@ -145,4 +179,57 @@ func TestSubscriptionHandler_List(t *testing.T) {
 	assert.Equal(t, &testCompanyID, svc.gotList.CompanyID)
 
 	assert.Equal(t, http.StatusBadRequest, do(r, http.MethodGet, "/api/v1/subscriptions?status=happy", "").Code)
+}
+
+func TestSubscriptionHandler_Preview(t *testing.T) {
+	svc := &fakeSubscriptionService{preview: &model.ProrationPreview{ProrationDate: 1791331200, Total: -2500, AmountDue: 0,
+		Lines: []model.PreviewLine{{Description: "Unused time on Support", Amount: -2500, Proration: true}}}}
+
+	rec := do(subscriptionRouter(svc), http.MethodPost, "/api/v1/companies/"+testCompanyID.String()+"/billing/subscription/preview",
+		`{"price_ids":["`+testPriceID.String()+`"]}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"proration_date":1791331200,"amount_due":0,"credit":2500,
+		"lines":[{"description":"Unused time on Support","amount":-2500,"proration":true}]}`, rec.Body.String(),
+		"a negative total is shown as credit")
+}
+
+func TestSubscriptionHandler_Change(t *testing.T) {
+	svc := &fakeSubscriptionService{state: sampleSubscriptionState(false)}
+
+	rec := do(subscriptionRouter(svc), http.MethodPut, "/api/v1/companies/"+testCompanyID.String()+"/billing/subscription",
+		`{"price_ids":["`+testPriceID.String()+`"],"proration_date":1791331200}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotNil(t, svc.gotChange.ProrationDate)
+	assert.Equal(t, int64(1791331200), *svc.gotChange.ProrationDate)
+}
+
+func TestSubscriptionHandler_Change_CardDeclined(t *testing.T) {
+	svc := &fakeSubscriptionService{err: fmt.Errorf("%w: %s", model.ErrCardDeclined, "Your card has insufficient funds.")}
+
+	rec := do(subscriptionRouter(svc), http.MethodPut, "/api/v1/companies/"+testCompanyID.String()+"/billing/subscription",
+		`{"price_ids":["`+testPriceID.String()+`"]}`)
+
+	assert.Equal(t, http.StatusPaymentRequired, rec.Code)
+	body := decodeError(t, rec)
+	assert.Equal(t, "card_declined", body.Code)
+	assert.Equal(t, "Your card has insufficient funds.", body.Message, "the bank's words, for the person paying")
+}
+
+func TestSubscriptionHandler_CancelAndResume(t *testing.T) {
+	svc := &fakeSubscriptionService{state: sampleSubscriptionState(false)}
+	r := subscriptionRouter(svc)
+	base := "/api/v1/companies/" + testCompanyID.String() + "/billing/subscription"
+
+	require.Equal(t, http.StatusOK, do(r, http.MethodPost, base+"/cancel", "").Code)
+	assert.True(t, *svc.gotAtPeriodEnd, "no body: at the end of the period (the safe default)")
+
+	require.Equal(t, http.StatusOK, do(r, http.MethodPost, base+"/cancel", `{"at_period_end":false}`).Code)
+	assert.False(t, *svc.gotAtPeriodEnd)
+
+	assert.Equal(t, http.StatusOK, do(r, http.MethodPost, base+"/resume", "").Code)
+
+	svc.err = model.ErrForbidden
+	assert.Equal(t, http.StatusForbidden, do(r, http.MethodPost, base+"/cancel", `{"at_period_end":false}`).Code)
 }

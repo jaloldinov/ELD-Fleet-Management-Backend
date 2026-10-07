@@ -77,6 +77,190 @@ func (g *Subscriptions) GetSubscription(ctx context.Context, id string) (*model.
 	return toStripeSubscription(sub), nil
 }
 
+// PreviewChange asks Stripe what changing the subscription's items would
+// cost right now: Stripe builds the invoice the change would create (with
+// its proration lines) without creating anything.
+//
+// Stripe's preview also lists the PENDING invoice items (e.g. prorations
+// from trucks added this month, which wait for the next renewal invoice),
+// but the real change does not charge them now. So the quote counts only
+// the lines the change itself creates, then applies the customer's credit.
+func (g *Subscriptions) PreviewChange(ctx context.Context, subscriptionID, customerID string, items []model.StripeItemChange) (*model.ProrationPreview, error) {
+	pending, err := g.pendingInvoiceItems(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
+
+	prorationDate := time.Now().Unix()
+	details := &stripe.InvoiceCreatePreviewSubscriptionDetailsParams{
+		ProrationBehavior: stripe.String("always_invoice"),
+		ProrationDate:     stripe.Int64(prorationDate),
+	}
+	for _, it := range items {
+		details.Items = append(details.Items, previewItem(it))
+	}
+	inv, err := g.c.V1Invoices.CreatePreview(ctx, &stripe.InvoiceCreatePreviewParams{
+		Customer:            stripe.String(customerID),
+		Subscription:        stripe.String(subscriptionID),
+		SubscriptionDetails: details,
+	})
+	if err != nil {
+		return nil, wrap("preview subscription change", err)
+	}
+
+	out := &model.ProrationPreview{ProrationDate: prorationDate}
+	if inv.Lines != nil {
+		for _, l := range inv.Lines.Data {
+			if pending[invoiceItemID(l)] {
+				continue // already waiting for the renewal; not part of this change
+			}
+			out.Lines = append(out.Lines, model.PreviewLine{Description: l.Description, Amount: l.Amount, Proration: isProration(l)})
+			out.Total += l.Amount
+		}
+	}
+	// The customer's balance (negative = credit) pays first.
+	out.AmountDue = max(0, out.Total+inv.StartingBalance)
+	return out, nil
+}
+
+// pendingInvoiceItems returns the ids of the customer's invoice items that
+// wait for the next invoice.
+func (g *Subscriptions) pendingInvoiceItems(ctx context.Context, customerID string) (map[string]bool, error) {
+	params := &stripe.InvoiceItemListParams{Customer: stripe.String(customerID), Pending: stripe.Bool(true)}
+	out := map[string]bool{}
+	for ii, err := range g.c.V1InvoiceItems.List(ctx, params).All(ctx) {
+		if err != nil {
+			return nil, wrap("list pending invoice items", err)
+		}
+		out[ii.ID] = true
+	}
+	return out, nil
+}
+
+// invoiceItemID is the invoice item (ii_...) a line comes from, if any.
+func invoiceItemID(l *stripe.InvoiceLineItem) string {
+	if l.Parent == nil {
+		return ""
+	}
+	if d := l.Parent.SubscriptionItemDetails; d != nil {
+		return d.InvoiceItem
+	}
+	if d := l.Parent.InvoiceItemDetails; d != nil {
+		return d.InvoiceItem
+	}
+	return ""
+}
+
+// ChangeItems applies a plan change.
+//
+//   - proration_behavior=always_invoice: the difference is invoiced (and
+//     charged) at once; a negative difference becomes customer credit.
+//   - payment_behavior=pending_if_incomplete: pay first, for upgrades too.
+//     If the charge fails or needs 3-D Secure, Stripe keeps the OLD items
+//     and holds the change as a "pending update" until the invoice is
+//     paid (or for 23 hours).
+//   - proration_date: the moment the preview was computed for, so the
+//     charge equals what the user saw.
+func (g *Subscriptions) ChangeItems(ctx context.Context, subscriptionID string, items []model.StripeItemChange, prorationDate int64) (*model.StripeSubscription, error) {
+	params := &stripe.SubscriptionUpdateParams{
+		ProrationBehavior: stripe.String("always_invoice"),
+		PaymentBehavior:   stripe.String("pending_if_incomplete"),
+		ProrationDate:     stripe.Int64(prorationDate),
+	}
+	for _, it := range items {
+		params.Items = append(params.Items, updateItem(it))
+	}
+	params.AddExpand(expandConfirmationSecret)
+
+	sub, err := g.c.V1Subscriptions.Update(ctx, subscriptionID, params)
+	if err != nil {
+		return nil, wrap("change subscription", err)
+	}
+	return toStripeSubscription(sub), nil
+}
+
+// SetQuantities changes item quantities (the truck count) without charging
+// now: create_prorations puts the prorated difference on the NEXT invoice,
+// so adding three trucks does not mean three card charges.
+func (g *Subscriptions) SetQuantities(ctx context.Context, subscriptionID string, items []model.StripeItemChange) (*model.StripeSubscription, error) {
+	params := &stripe.SubscriptionUpdateParams{ProrationBehavior: stripe.String("create_prorations")}
+	for _, it := range items {
+		params.Items = append(params.Items, updateItem(it))
+	}
+	params.AddExpand(expandConfirmationSecret)
+	sub, err := g.c.V1Subscriptions.Update(ctx, subscriptionID, params)
+	if err != nil {
+		return nil, wrap("update subscription quantities", err)
+	}
+	return toStripeSubscription(sub), nil
+}
+
+// SetCancelAtPeriodEnd schedules (true) or withdraws (false) the end of
+// the subscription at the end of the paid period. Nothing is charged or
+// refunded: the company keeps what it paid for.
+func (g *Subscriptions) SetCancelAtPeriodEnd(ctx context.Context, subscriptionID string, cancel bool) (*model.StripeSubscription, error) {
+	params := &stripe.SubscriptionUpdateParams{CancelAtPeriodEnd: stripe.Bool(cancel)}
+	params.AddExpand(expandConfirmationSecret)
+	sub, err := g.c.V1Subscriptions.Update(ctx, subscriptionID, params)
+	if err != nil {
+		return nil, wrap("set cancel at period end", err)
+	}
+	return toStripeSubscription(sub), nil
+}
+
+// CancelNow ends the subscription immediately. The unused time is prorated
+// and invoiced at once (invoice_now), which turns it into customer credit.
+func (g *Subscriptions) CancelNow(ctx context.Context, subscriptionID string) (*model.StripeSubscription, error) {
+	params := &stripe.SubscriptionCancelParams{Prorate: stripe.Bool(true), InvoiceNow: stripe.Bool(true)}
+	params.AddExpand(expandConfirmationSecret)
+	sub, err := g.c.V1Subscriptions.Cancel(ctx, subscriptionID, params)
+	if err != nil {
+		return nil, wrap("cancel subscription", err)
+	}
+	return toStripeSubscription(sub), nil
+}
+
+func previewItem(it model.StripeItemChange) *stripe.InvoiceCreatePreviewSubscriptionDetailsItemParams {
+	p := &stripe.InvoiceCreatePreviewSubscriptionDetailsItemParams{}
+	switch {
+	case it.Deleted:
+		p.ID, p.Deleted = stripe.String(it.ID), stripe.Bool(true)
+	case it.ID != "":
+		p.ID, p.Quantity = stripe.String(it.ID), stripe.Int64(int64(it.Quantity))
+	default:
+		p.Price, p.Quantity = stripe.String(it.StripePriceID), stripe.Int64(int64(it.Quantity))
+	}
+	return p
+}
+
+func updateItem(it model.StripeItemChange) *stripe.SubscriptionUpdateItemParams {
+	p := &stripe.SubscriptionUpdateItemParams{}
+	switch {
+	case it.Deleted:
+		p.ID, p.Deleted = stripe.String(it.ID), stripe.Bool(true)
+	case it.ID != "":
+		p.ID, p.Quantity = stripe.String(it.ID), stripe.Int64(int64(it.Quantity))
+	default:
+		p.Price, p.Quantity = stripe.String(it.StripePriceID), stripe.Int64(int64(it.Quantity))
+	}
+	return p
+}
+
+// isProration: the line is part of a change (credit for unused time, or
+// charge for the rest of the period), not a regular period charge.
+func isProration(l *stripe.InvoiceLineItem) bool {
+	if l.Parent == nil {
+		return false
+	}
+	if d := l.Parent.SubscriptionItemDetails; d != nil && d.Proration {
+		return true
+	}
+	if d := l.Parent.InvoiceItemDetails; d != nil && d.Proration {
+		return true
+	}
+	return false
+}
+
 // InvoiceSubscriptionID returns the id of the subscription an invoice
 // belongs to; "" for an invoice that is not a subscription's (a one-off
 // charge).
@@ -102,6 +286,7 @@ func toStripeSubscription(sub *stripe.Subscription) *model.StripeSubscription {
 		CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
 		CanceledAt:        unixTime(sub.CanceledAt),
 		Items:             []model.StripeSubscriptionItem{},
+		PendingUpdate:     sub.PendingUpdate != nil,
 	}
 	if sub.Customer != nil {
 		out.CustomerID = sub.Customer.ID

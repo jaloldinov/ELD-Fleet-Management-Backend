@@ -12,7 +12,10 @@
 package stripegw
 
 import (
+	"errors"
 	"fmt"
+
+	"github.com/stripe/stripe-go/v87"
 
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
@@ -25,7 +28,13 @@ const (
 )
 
 // wrap marks err as a payment-provider failure while keeping the Stripe
-// error inside (for logs and errors.As).
+// error inside (for logs and errors.As). A card declined by the bank is not
+// a provider failure but an answer for the user: model.ErrCardDeclined,
+// with the bank's message (e.g. "Your card has insufficient funds.").
 func wrap(op string, err error) error {
+	var sErr *stripe.Error
+	if errors.As(err, &sErr) && sErr.Type == stripe.ErrorTypeCard {
+		return fmt.Errorf("%w: %s", model.ErrCardDeclined, sErr.Msg)
+	}
 	return fmt.Errorf("%w: %s: %w", model.ErrPaymentProvider, op, err)
 }

@@ -135,6 +135,9 @@ type StripeSubscription struct {
 	CanceledAt        *time.Time
 	Items             []StripeSubscriptionItem
 	LatestInvoice     *StripeInvoice // nil if Stripe has none
+	// PendingUpdate: a plan change is waiting for its invoice to be paid
+	// (pay first applies to upgrades too). Until then the old items stay.
+	PendingUpdate bool
 }
 
 type StripeSubscriptionItem struct {
@@ -220,4 +223,38 @@ type StripeEvent struct {
 	ObjectID   string // id of the object it is about: sub_..., in_..., ...
 	ObjectType string // subscription, invoice, ...
 	Livemode   bool
+}
+
+// StripeItemChange is one line of a plan change sent to Stripe:
+//   - ID set, Deleted:  remove that item
+//   - ID set:           keep that item, with Quantity
+//   - ID empty:         add StripePriceID with Quantity
+type StripeItemChange struct {
+	ID            string // si_... of an existing item
+	StripePriceID string
+	Quantity      int
+	Deleted       bool
+}
+
+// ProrationPreview is what a plan change would cost, as Stripe computes it.
+type ProrationPreview struct {
+	// ProrationDate is the moment the preview was computed for (Unix
+	// seconds). Confirming the change with the same date charges exactly
+	// the previewed amount.
+	ProrationDate int64
+	// Total of what the change itself costs, in cents: positive = a
+	// charge; negative = credit for unused time, added to the customer
+	// balance (it pays the next invoices). Prorations already waiting for
+	// the next renewal (e.g. trucks added this month) are not included.
+	Total int64
+	// AmountDue is what the card is charged now: Total minus the credit the
+	// customer already has, never negative.
+	AmountDue int64
+	Lines     []PreviewLine
+}
+
+type PreviewLine struct {
+	Description string // "Unused time on ELD Fleet plan after 7 Oct 2026"
+	Amount      int64  // cents; negative = credit
+	Proration   bool   // part of the change, not a regular period charge
 }

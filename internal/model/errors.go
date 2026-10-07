@@ -51,6 +51,10 @@ var (
 	// has not ended. Change it instead of starting another one.
 	ErrSubscriptionExists = errors.New("the company already has a subscription")
 
+	// ErrCardDeclined: the bank refused a payment. Wrapped with the bank's
+	// message, which is written for the card holder. Becomes HTTP 402.
+	ErrCardDeclined = errors.New("the card was declined")
+
 	// ErrBillingInactive: the company's subscription does not allow using
 	// the product (not paid yet, or Stripe gave up). Becomes HTTP 402.
 	ErrBillingInactive = errors.New("the company's subscription is not active")

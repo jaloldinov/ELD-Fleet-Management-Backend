@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -56,6 +57,11 @@ type SubscriptionCustomers interface {
 type SubscriptionGateway interface {
 	CreateSubscription(ctx context.Context, in model.StripeSubscriptionCreate) (*model.StripeSubscription, error)
 	GetSubscription(ctx context.Context, id string) (*model.StripeSubscription, error)
+	PreviewChange(ctx context.Context, subscriptionID, customerID string, items []model.StripeItemChange) (*model.ProrationPreview, error)
+	ChangeItems(ctx context.Context, subscriptionID string, items []model.StripeItemChange, prorationDate int64) (*model.StripeSubscription, error)
+	SetQuantities(ctx context.Context, subscriptionID string, items []model.StripeItemChange) (*model.StripeSubscription, error)
+	SetCancelAtPeriodEnd(ctx context.Context, subscriptionID string, cancel bool) (*model.StripeSubscription, error)
+	CancelNow(ctx context.Context, subscriptionID string) (*model.StripeSubscription, error)
 }
 
 // Stripe allows at most 20 items per subscription.
@@ -64,6 +70,19 @@ const subscriptionMaxItems = 20
 type CreateSubscriptionInput struct {
 	PriceIDs []uuid.UUID // one per product the company wants
 }
+
+// ChangeSubscriptionInput is the WHOLE new plan: every price the company
+// wants after the change (prices left out are removed).
+type ChangeSubscriptionInput struct {
+	PriceIDs []uuid.UUID
+	// ProrationDate from the preview the user saw (Unix seconds); nil =
+	// now. Reusing it makes the charge equal the previewed amount.
+	ProrationDate *int64
+}
+
+// prorationDateMaxAge: a preview older than this must be redone, so the
+// user never confirms a quote that no longer matches.
+const prorationDateMaxAge = time.Hour
 
 type SubscriptionListParams struct {
 	CompanyID *uuid.UUID // platform users only
@@ -251,6 +270,262 @@ func (s *SubscriptionService) SyncByStripeID(ctx context.Context, stripeID strin
 		}
 	}
 	return s.save(ctx, auth.SystemPrincipal(), company.ID, id, snap, nil)
+}
+
+// ---------- plan changes ----------
+
+// PreviewChange says what changing to the given plan would cost now:
+// a charge for an upgrade, a credit for a downgrade. Nothing is changed.
+func (s *SubscriptionService) PreviewChange(ctx context.Context, p auth.Principal, companyID uuid.UUID, in ChangeSubscriptionInput) (*model.ProrationPreview, error) {
+	current, items, err := s.planChange(ctx, p, companyID, in.PriceIDs)
+	if err != nil {
+		return nil, err
+	}
+	customerID, err := s.customers.EnsureCustomer(ctx, p, companyID)
+	if err != nil {
+		return nil, err
+	}
+	return s.gateway.PreviewChange(ctx, current.StripeSubscriptionID, customerID, items)
+}
+
+// Change moves the company to the given plan. The difference is charged
+// (or credited) now; for a charge, the change applies only once it is paid
+// (pay first). If the bank wants 3-D Secure, Payment says how to pay in the
+// browser, and the old plan stays until then.
+func (s *SubscriptionService) Change(ctx context.Context, p auth.Principal, companyID uuid.UUID, in ChangeSubscriptionInput) (*SubscriptionState, error) {
+	current, items, err := s.planChange(ctx, p, companyID, in.PriceIDs)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	date := now.Unix()
+	if in.ProrationDate != nil {
+		d := time.Unix(*in.ProrationDate, 0)
+		if d.After(now) || now.Sub(d) > prorationDateMaxAge {
+			return nil, &validation.ValidationError{Fields: map[string]string{
+				"proration_date": "the preview has expired; preview the change again"}}
+		}
+		date = *in.ProrationDate
+	}
+
+	snap, err := s.gateway.ChangeItems(ctx, current.StripeSubscriptionID, items, date)
+	if err != nil {
+		return nil, err
+	}
+	sub, err := s.save(ctx, p, companyID, current.ID, snap, current)
+	if err != nil {
+		return nil, err
+	}
+	var card string
+	if snap.PendingUpdate {
+		if card, err = s.defaultCard(ctx, p, companyID); err != nil && !isValidation(err) {
+			return nil, err
+		}
+	}
+	return &SubscriptionState{Subscription: sub, Payment: paymentDue(snap, card)}, nil
+}
+
+// planChange checks a new plan against the current subscription and
+// returns the item changes to send to Stripe.
+func (s *SubscriptionService) planChange(ctx context.Context, p auth.Principal, companyID uuid.UUID, priceIDs []uuid.UUID) (*model.Subscription, []model.StripeItemChange, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, nil, model.ErrNotFound
+	}
+	prices, err := s.validatePrices(ctx, priceIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	switch current.Status {
+	case model.SubscriptionActive, model.SubscriptionTrialing:
+	case model.SubscriptionIncomplete:
+		return nil, nil, &validation.ValidationError{Fields: map[string]string{
+			"subscription": "the first invoice is not paid yet: pay it before changing the plan"}}
+	default: // past_due, unpaid, paused
+		return nil, nil, &validation.ValidationError{Fields: map[string]string{
+			"subscription": "a payment is overdue: pay the open invoice before changing the plan"}}
+	}
+
+	desired, err := s.quantities(ctx, companyID, prices)
+	if err != nil {
+		return nil, nil, err
+	}
+	items := diffItems(current.Items, desired)
+	if len(items) == 0 {
+		return nil, nil, &validation.ValidationError{Fields: map[string]string{
+			"price_ids": "this is already the current plan"}}
+	}
+	return current, items, nil
+}
+
+// diffItems turns "current items" and "desired prices with quantities"
+// into Stripe item changes. Unchanged items are left out; an empty result
+// means nothing changes.
+func diffItems(current []model.SubscriptionItem, desired []model.StripeSubscriptionItem) []model.StripeItemChange {
+	want := make(map[string]int, len(desired))
+	for _, d := range desired {
+		want[d.StripePriceID] = d.Quantity
+	}
+	have := make(map[string]bool, len(current))
+
+	var out []model.StripeItemChange
+	for _, it := range current {
+		have[it.Price.StripePriceID] = true
+		qty, keep := want[it.Price.StripePriceID]
+		switch {
+		case !keep:
+			out = append(out, model.StripeItemChange{ID: it.StripeSubscriptionItemID, Deleted: true})
+		case qty != it.Quantity:
+			out = append(out, model.StripeItemChange{ID: it.StripeSubscriptionItemID, Quantity: qty})
+		}
+	}
+	for _, d := range desired {
+		if !have[d.StripePriceID] {
+			out = append(out, model.StripeItemChange{StripePriceID: d.StripePriceID, Quantity: d.Quantity})
+		}
+	}
+	return out
+}
+
+// ---------- cancel and resume ----------
+
+// Cancel ends the company's subscription.
+//
+//   - atPeriodEnd: the company keeps everything until the end of the period
+//     it already paid for, and can change its mind (Resume).
+//   - now: ends at once; the unused time becomes customer credit. Platform
+//     only: ending service today is a support decision.
+func (s *SubscriptionService) Cancel(ctx context.Context, p auth.Principal, companyID uuid.UUID, atPeriodEnd bool) (*model.Subscription, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, model.ErrNotFound
+	}
+	if !atPeriodEnd && !p.IsPlatformUser() {
+		return nil, model.ErrForbidden
+	}
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+
+	var snap *model.StripeSubscription
+	if atPeriodEnd {
+		if current.Status == model.SubscriptionIncomplete {
+			return nil, &validation.ValidationError{Fields: map[string]string{
+				"subscription": "not started yet: there is no paid period to end"}}
+		}
+		if current.CancelAtPeriodEnd {
+			return current, nil // already scheduled
+		}
+		snap, err = s.gateway.SetCancelAtPeriodEnd(ctx, current.StripeSubscriptionID, true)
+	} else {
+		snap, err = s.gateway.CancelNow(ctx, current.StripeSubscriptionID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.save(ctx, p, companyID, current.ID, snap, current)
+}
+
+// Resume withdraws a cancellation scheduled for the end of the period.
+func (s *SubscriptionService) Resume(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error) {
+	if !canAccessCompany(p, companyID) {
+		return nil, model.ErrNotFound
+	}
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if err != nil {
+		return nil, err
+	}
+	if !current.CancelAtPeriodEnd {
+		return nil, &validation.ValidationError{Fields: map[string]string{
+			"subscription": "no cancellation is scheduled"}}
+	}
+	snap, err := s.gateway.SetCancelAtPeriodEnd(ctx, current.StripeSubscriptionID, false)
+	if err != nil {
+		return nil, err
+	}
+	return s.save(ctx, p, companyID, current.ID, snap, current)
+}
+
+// ---------- truck count ----------
+
+// SyncTruckQuantity makes the company's per-truck items match its active
+// truck count. The difference is prorated onto the next invoice (no charge
+// now). Called after every fleet change, and hourly for every company
+// (ReconcileTruckQuantities) in case a call to Stripe failed.
+func (s *SubscriptionService) SyncTruckQuantity(ctx context.Context, companyID uuid.UUID) (changed bool, err error) {
+	current, err := s.store.GetCurrent(ctx, companyID)
+	if errors.Is(err, model.ErrNotFound) {
+		return false, nil // no subscription: nothing to bill
+	}
+	if err != nil {
+		return false, err
+	}
+	switch current.Status {
+	case model.SubscriptionActive, model.SubscriptionTrialing, model.SubscriptionPastDue:
+	default:
+		return false, nil // not running (unpaid first invoice, suspended, ...)
+	}
+
+	trucks := -1
+	var items []model.StripeItemChange
+	for _, it := range current.Items {
+		if it.Price.BillingUnit != model.BillingUnitTruck {
+			continue
+		}
+		if trucks < 0 {
+			if trucks, err = s.trucks.CountActive(ctx, companyID); err != nil {
+				return false, err
+			}
+		}
+		if it.Quantity != trucks {
+			items = append(items, model.StripeItemChange{ID: it.StripeSubscriptionItemID, Quantity: trucks})
+		}
+	}
+	if len(items) == 0 {
+		return false, nil
+	}
+
+	snap, err := s.gateway.SetQuantities(ctx, current.StripeSubscriptionID, items)
+	if err != nil {
+		return false, err
+	}
+	if _, err := s.save(ctx, auth.SystemPrincipal(), companyID, current.ID, snap, current); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ReconcileTruckQuantities runs SyncTruckQuantity for every running
+// subscription: the safety net behind the immediate sync. One failing
+// company does not stop the others; their errors are returned together.
+func (s *SubscriptionService) ReconcileTruckQuantities(ctx context.Context) (updated int, err error) {
+	const pageSize = 100
+	var errs []error
+	for _, status := range []string{model.SubscriptionActive, model.SubscriptionTrialing, model.SubscriptionPastDue} {
+		for offset := 0; ; offset += pageSize {
+			subs, _, err := s.store.List(ctx, model.SubscriptionFilter{Status: status}, pageSize, offset)
+			if err != nil {
+				return updated, err
+			}
+			for _, sub := range subs {
+				changed, err := s.SyncTruckQuantity(ctx, sub.CompanyID)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("company %s: %w", sub.CompanyID, err))
+					continue
+				}
+				if changed {
+					updated++
+				}
+			}
+			if len(subs) < pageSize {
+				break
+			}
+		}
+	}
+	return updated, errors.Join(errs...)
 }
 
 // List returns subscriptions, newest first, history included. Company
@@ -448,10 +723,12 @@ func (s *SubscriptionService) fromStripe(ctx context.Context, companyID, id uuid
 	return sub, nil
 }
 
-// paymentDue: the open first invoice the browser still has to pay, if any.
+// paymentDue: the open invoice the browser still has to pay, if any: the
+// first one, or the one of a plan change waiting for payment.
 func paymentDue(snap *model.StripeSubscription, card string) *PaymentDue {
 	inv := snap.LatestInvoice
-	if snap.Status != model.SubscriptionIncomplete || inv == nil || inv.Status != "open" ||
+	waiting := snap.Status == model.SubscriptionIncomplete || snap.PendingUpdate
+	if !waiting || inv == nil || inv.Status != "open" ||
 		inv.AmountDue == 0 || inv.ClientSecret == "" {
 		return nil
 	}

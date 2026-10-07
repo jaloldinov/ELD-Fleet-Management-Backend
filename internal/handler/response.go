@@ -58,6 +58,11 @@ func handleError(c *gin.Context, err error) {
 		apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden, err.Error(), nil)
 	case errors.Is(err, model.ErrUserInactive):
 		apierror.Respond(c, http.StatusForbidden, apierror.CodeForbidden, err.Error(), nil)
+	case errors.Is(err, model.ErrCardDeclined):
+		// The bank's own words ("Your card has insufficient funds."), meant
+		// for the person paying; nothing internal.
+		msg := strings.TrimPrefix(err.Error(), model.ErrCardDeclined.Error()+": ")
+		apierror.Respond(c, http.StatusPaymentRequired, apierror.CodeCardDeclined, msg, nil)
 	case errors.Is(err, model.ErrPaymentProvider):
 		// 502 Bad Gateway: "a server we depend on failed", not our bug. The
 		// Stripe error is logged; the client gets no Stripe internals.

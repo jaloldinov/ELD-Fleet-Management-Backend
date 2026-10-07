@@ -80,6 +80,31 @@ definitions:
         example: pk_test_51Qabc
         type: string
     type: object
+  handler.CancelSubscriptionRequest:
+    properties:
+      at_period_end:
+        description: |-
+          true (default): keep the service until the end of the paid period.
+          false: end now, unused time becomes credit (platform only).
+        example: true
+        type: boolean
+    type: object
+  handler.ChangeSubscriptionRequest:
+    properties:
+      price_ids:
+        description: 'The WHOLE new plan: every price wanted after the change. Left
+          out = removed.'
+        example:
+        - 0199a1b2-0000-7000-8000-0000000000b1
+        items:
+          type: string
+        type: array
+      proration_date:
+        description: 'From the preview: charges exactly what it showed. Omit to use
+          "now".'
+        example: 1791331200
+        type: integer
+    type: object
   handler.CompanyResponse:
     properties:
       billing_status:
@@ -615,6 +640,19 @@ definitions:
         example: "4242"
         type: string
     type: object
+  handler.PreviewLineResponse:
+    properties:
+      amount:
+        description: Cents; negative = credit.
+        example: -5000
+        type: integer
+      description:
+        example: Unused time on Support after 07 Oct 2026
+        type: string
+      proration:
+        example: true
+        type: boolean
+    type: object
   handler.PriceResponse:
     properties:
       billing_unit:
@@ -676,6 +714,26 @@ definitions:
       updated_at:
         example: "2026-10-06T11:26:26Z"
         type: string
+    type: object
+  handler.ProrationPreviewResponse:
+    properties:
+      amount_due:
+        description: Charged to the card now, in cents.
+        example: 2500
+        type: integer
+      credit:
+        description: Credit for unused time added to the balance (pays the next invoices),
+          in cents.
+        example: 0
+        type: integer
+      lines:
+        items:
+          $ref: '#/definitions/handler.PreviewLineResponse'
+        type: array
+      proration_date:
+        description: Send back with the change to be charged exactly this.
+        example: 1791331200
+        type: integer
     type: object
   handler.RateLimitResponse:
     properties:
@@ -1970,6 +2028,169 @@ paths:
       summary: Subscribe (pay first)
       tags:
       - billing
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: subscription:manage. Body = the WHOLE new plan.
+        Upgrades are charged now (prorated) and applied only once paid; downgrades leave credit for the unused time.
+        If payment is not null, the bank asks for 3-D Secure: pay in the browser, then refresh. The old plan stays until then.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The new plan
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ChangeSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.SubscriptionStateResponse'
+        "400":
+          description: validation failed, or the preview expired (proration_date)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: 'card_declined: the bank refused the payment; the plan did
+            not change'
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Change the plan
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/subscription/cancel:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: subscription:manage.
+        Default: at the end of the paid period (the company keeps service until then and can resume).
+        at_period_end=false ends it now (platform only); unused time becomes credit.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: When
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handler.CancelSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.SubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:manage, or immediate cancel
+            by a company user
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Cancel the subscription
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/subscription/preview:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: subscription:manage. Nothing changes.
+        What switching to the given plan (the WHOLE new plan) costs now: amount_due is charged, credit goes to the balance.
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The new plan (proration_date is ignored here)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ChangeSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ProrationPreviewResponse'
+        "400":
+          description: validation failed (same plan, archived price, mixed intervals,
+            unpaid subscription)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Preview a plan change
+      tags:
+      - billing
   /api/v1/companies/{id}/billing/subscription/refresh:
     post:
       description: |-
@@ -2016,6 +2237,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Re-read the subscription from Stripe
+      tags:
+      - billing
+  /api/v1/companies/{id}/billing/subscription/resume:
+    post:
+      description: 'Requires permission: subscription:manage. Only while cancel_at_period_end
+        is true.'
+      parameters:
+      - description: Company ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.SubscriptionResponse'
+        "400":
+          description: no cancellation is scheduled
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission subscription:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no current subscription (or company not found)
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "502":
+          description: Stripe refused the request or could not be reached
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Undo a scheduled cancellation
       tags:
       - billing
   /api/v1/drivers:

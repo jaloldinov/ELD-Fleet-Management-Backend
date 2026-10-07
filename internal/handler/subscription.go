@@ -20,6 +20,10 @@ type SubscriptionService interface {
 	Current(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error)
 	Refresh(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*service.SubscriptionState, error)
 	List(ctx context.Context, p auth.Principal, params service.SubscriptionListParams) (*service.SubscriptionPage, error)
+	PreviewChange(ctx context.Context, p auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*model.ProrationPreview, error)
+	Change(ctx context.Context, p auth.Principal, companyID uuid.UUID, in service.ChangeSubscriptionInput) (*service.SubscriptionState, error)
+	Cancel(ctx context.Context, p auth.Principal, companyID uuid.UUID, atPeriodEnd bool) (*model.Subscription, error)
+	Resume(ctx context.Context, p auth.Principal, companyID uuid.UUID) (*model.Subscription, error)
 }
 
 // ---------- DTOs ----------
@@ -27,6 +31,36 @@ type SubscriptionService interface {
 type CreateSubscriptionRequest struct {
 	// One price per product, all with the same interval (all monthly or all yearly).
 	PriceIDs []uuid.UUID `json:"price_ids" swaggertype:"array,string" example:"0199a1b2-0000-7000-8000-0000000000b1"`
+}
+
+type ChangeSubscriptionRequest struct {
+	// The WHOLE new plan: every price wanted after the change. Left out = removed.
+	PriceIDs []uuid.UUID `json:"price_ids" swaggertype:"array,string" example:"0199a1b2-0000-7000-8000-0000000000b1"`
+	// From the preview: charges exactly what it showed. Omit to use "now".
+	ProrationDate *int64 `json:"proration_date,omitempty" example:"1791331200"`
+}
+
+type PreviewLineResponse struct {
+	Description string `json:"description" example:"Unused time on Support after 07 Oct 2026"`
+	// Cents; negative = credit.
+	Amount    int64 `json:"amount" example:"-5000"`
+	Proration bool  `json:"proration" example:"true"`
+}
+
+type ProrationPreviewResponse struct {
+	// Send back with the change to be charged exactly this.
+	ProrationDate int64 `json:"proration_date" example:"1791331200"`
+	// Charged to the card now, in cents.
+	AmountDue int64 `json:"amount_due" example:"2500"`
+	// Credit for unused time added to the balance (pays the next invoices), in cents.
+	Credit int64                 `json:"credit" example:"0"`
+	Lines  []PreviewLineResponse `json:"lines"`
+}
+
+type CancelSubscriptionRequest struct {
+	// true (default): keep the service until the end of the paid period.
+	// false: end now, unused time becomes credit (platform only).
+	AtPeriodEnd *bool `json:"at_period_end,omitempty" example:"true"`
 }
 
 type SubscriptionItemResponse struct {
@@ -299,4 +333,167 @@ var validSubscriptionStatus = map[string]bool{
 	model.SubscriptionIncomplete: true, model.SubscriptionIncompleteExpired: true, model.SubscriptionTrialing: true,
 	model.SubscriptionActive: true, model.SubscriptionPastDue: true, model.SubscriptionUnpaid: true,
 	model.SubscriptionCanceled: true, model.SubscriptionPaused: true,
+}
+
+// Preview handles POST /api/v1/companies/:id/billing/subscription/preview.
+//
+//	@Summary		Preview a plan change
+//	@Description	Requires permission: subscription:manage. Nothing changes.
+//	@Description	What switching to the given plan (the WHOLE new plan) costs now: amount_due is charged, credit goes to the balance.
+//	@Tags			billing
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string						true	"Company ID"	format(uuid)
+//	@Param			body	body		ChangeSubscriptionRequest	true	"The new plan (proration_date is ignored here)"
+//	@Success		200		{object}	ProrationPreviewResponse
+//	@Failure		400		{object}	apierror.Response	"validation failed (same plan, archived price, mixed intervals, unpaid subscription)"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission subscription:manage"
+//	@Failure		404		{object}	apierror.Response	"no current subscription (or company not found)"
+//	@Failure		502		{object}	apierror.Response	"Stripe refused the request or could not be reached"
+//	@Router			/api/v1/companies/{id}/billing/subscription/preview [post]
+func (h *SubscriptionHandler) Preview(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	companyID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req ChangeSubscriptionRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	pv, err := h.svc.PreviewChange(c.Request.Context(), p, companyID, service.ChangeSubscriptionInput{PriceIDs: req.PriceIDs})
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	lines := make([]PreviewLineResponse, 0, len(pv.Lines))
+	for _, l := range pv.Lines {
+		lines = append(lines, PreviewLineResponse{Description: l.Description, Amount: l.Amount, Proration: l.Proration})
+	}
+	var credit int64
+	if pv.Total < 0 {
+		credit = -pv.Total
+	}
+	c.JSON(http.StatusOK, ProrationPreviewResponse{ProrationDate: pv.ProrationDate, AmountDue: pv.AmountDue, Credit: credit, Lines: lines})
+}
+
+// Change handles PUT /api/v1/companies/:id/billing/subscription.
+//
+//	@Summary		Change the plan
+//	@Description	Requires permission: subscription:manage. Body = the WHOLE new plan.
+//	@Description	Upgrades are charged now (prorated) and applied only once paid; downgrades leave credit for the unused time.
+//	@Description	If payment is not null, the bank asks for 3-D Secure: pay in the browser, then refresh. The old plan stays until then.
+//	@Tags			billing
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string						true	"Company ID"	format(uuid)
+//	@Param			body	body		ChangeSubscriptionRequest	true	"The new plan"
+//	@Success		200		{object}	SubscriptionStateResponse
+//	@Failure		400		{object}	apierror.Response	"validation failed, or the preview expired (proration_date)"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402		{object}	apierror.Response	"card_declined: the bank refused the payment; the plan did not change"
+//	@Failure		403		{object}	apierror.Response	"missing permission subscription:manage"
+//	@Failure		404		{object}	apierror.Response	"no current subscription (or company not found)"
+//	@Failure		502		{object}	apierror.Response	"Stripe refused the request or could not be reached"
+//	@Router			/api/v1/companies/{id}/billing/subscription [put]
+func (h *SubscriptionHandler) Change(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	companyID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req ChangeSubscriptionRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	st, err := h.svc.Change(c.Request.Context(), p, companyID, service.ChangeSubscriptionInput{
+		PriceIDs: req.PriceIDs, ProrationDate: req.ProrationDate,
+	})
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newSubscriptionStateResponse(st))
+}
+
+// Cancel handles POST /api/v1/companies/:id/billing/subscription/cancel.
+//
+//	@Summary		Cancel the subscription
+//	@Description	Requires permission: subscription:manage.
+//	@Description	Default: at the end of the paid period (the company keeps service until then and can resume).
+//	@Description	at_period_end=false ends it now (platform only); unused time becomes credit.
+//	@Tags			billing
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string						true	"Company ID"	format(uuid)
+//	@Param			body	body		CancelSubscriptionRequest	false	"When"
+//	@Success		200		{object}	SubscriptionResponse
+//	@Failure		400		{object}	apierror.Response
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403		{object}	apierror.Response	"missing permission subscription:manage, or immediate cancel by a company user"
+//	@Failure		404		{object}	apierror.Response	"no current subscription (or company not found)"
+//	@Failure		502		{object}	apierror.Response	"Stripe refused the request or could not be reached"
+//	@Router			/api/v1/companies/{id}/billing/subscription/cancel [post]
+func (h *SubscriptionHandler) Cancel(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	companyID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req CancelSubscriptionRequest
+	if c.Request.ContentLength != 0 && !bindJSON(c, &req) {
+		return
+	}
+	atPeriodEnd := req.AtPeriodEnd == nil || *req.AtPeriodEnd
+	sub, err := h.svc.Cancel(c.Request.Context(), p, companyID, atPeriodEnd)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newSubscriptionResponse(sub))
+}
+
+// Resume handles POST /api/v1/companies/:id/billing/subscription/resume.
+//
+//	@Summary		Undo a scheduled cancellation
+//	@Description	Requires permission: subscription:manage. Only while cancel_at_period_end is true.
+//	@Tags			billing
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Company ID"	format(uuid)
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		400	{object}	apierror.Response	"no cancellation is scheduled"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission subscription:manage"
+//	@Failure		404	{object}	apierror.Response	"no current subscription (or company not found)"
+//	@Failure		502	{object}	apierror.Response	"Stripe refused the request or could not be reached"
+//	@Router			/api/v1/companies/{id}/billing/subscription/resume [post]
+func (h *SubscriptionHandler) Resume(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	companyID, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	sub, err := h.svc.Resume(c.Request.Context(), p, companyID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newSubscriptionResponse(sub))
 }

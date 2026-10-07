@@ -37,8 +37,8 @@ func newRoutedFake(t *testing.T, routes map[string]reply) (*routedFake, *stripe.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		form, _ := url.ParseQuery(string(raw))
-		if r.Method == http.MethodGet {
-			form = r.URL.Query()
+		if r.Method == http.MethodGet || r.Method == http.MethodDelete {
+			form = r.URL.Query() // these send their parameters in the URL
 		}
 		f.mu.Lock()
 		f.reqs = append(f.reqs, recorded{r.Method, r.URL.Path, form, r.Header.Get("Idempotency-Key")})

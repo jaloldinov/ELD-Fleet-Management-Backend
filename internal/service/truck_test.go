@@ -275,3 +275,34 @@ func TestTruckService_NoAuditWhenRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, store.entries)
 }
+
+func TestTruckService_TellsBillingWhenTheFleetChanges(t *testing.T) {
+	svc, repo := newTruckSvc()
+	var told []uuid.UUID
+	svc.OnFleetChange(func(_ context.Context, companyID uuid.UUID) { told = append(told, companyID) })
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, companyAUser, validTruckInput())
+	require.NoError(t, err)
+	assert.Equal(t, []uuid.UUID{companyA}, told, "a new active truck")
+
+	_, err = svc.Update(ctx, companyAUser, created.ID, UpdateTruckInput{Make: ptr("Volvo")})
+	require.NoError(t, err)
+	assert.Len(t, told, 1, "a rename does not change the count")
+
+	_, err = svc.Update(ctx, companyAUser, created.ID, UpdateTruckInput{IsActive: ptr(false)})
+	require.NoError(t, err)
+	assert.Len(t, told, 2, "deactivated: one truck fewer to bill")
+
+	parked := repo.add(companyA)
+	parked.IsActive = false
+	require.NoError(t, svc.Delete(ctx, companyAUser, parked.ID))
+	assert.Len(t, told, 2, "deleting an inactive truck changes nothing billed")
+
+	require.NoError(t, svc.Delete(ctx, companyAUser, repo.add(companyA).ID))
+	assert.Len(t, told, 3)
+
+	_, err = svc.Create(ctx, companyAUser, CreateTruckInput{UnitNumber: "bad unit!", VIN: validVIN})
+	require.Error(t, err)
+	assert.Len(t, told, 3, "a failed change tells nobody")
+}

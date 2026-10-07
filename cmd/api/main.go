@@ -15,6 +15,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stripe/stripe-go/v87"
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
@@ -136,6 +137,7 @@ func run() error {
 
 	// Shared: TruckService manages trucks; ELDDeviceService looks them up.
 	truckRepo := repository.NewTruckRepository(pool)
+	truckSvc := service.NewTruckService(truckRepo, companyRepo, auditor)
 
 	// Background jobs run until jobsCtx is cancelled (when run returns).
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
@@ -269,6 +271,28 @@ func run() error {
 		// Pay first, then use: fleet routes need a paid-up subscription.
 		billingGate = companyRepo
 
+		// Per-truck prices follow the fleet: after a truck is added, removed,
+		// deactivated or reactivated, update the quantity in Stripe (the
+		// difference goes on the next invoice). A failure here does not undo
+		// the truck change; the hourly job below catches up.
+		truckSvc.OnFleetChange(func(ctx context.Context, companyID uuid.UUID) {
+			// Detached from the request: a client that hangs up must not
+			// cancel the Stripe call halfway.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer cancel()
+			if _, err := subscriptionSvc.SyncTruckQuantity(ctx, companyID); err != nil {
+				log.Warn("truck count not synced to stripe; the hourly job will retry",
+					"company_id", companyID, "error", err)
+			}
+		})
+		go jobs.Every(jobsCtx, log, "truck-quantity-reconcile", time.Hour, func(ctx context.Context) error {
+			n, err := subscriptionSvc.ReconcileTruckQuantities(ctx)
+			if n > 0 {
+				log.Info("truck counts synced to stripe", "subscriptions", n)
+			}
+			return err
+		})
+
 		if cfg.StripeWebhookSecret != "" {
 			webhookHandler = handler.NewWebhookHandler(service.NewWebhookService(
 				stripegw.NewWebhooks(cfg.StripeWebhookSecret), repository.NewStripeEventRepository(pool),
@@ -294,7 +318,7 @@ func run() error {
 		User:          handler.NewUserHandler(userSvc),
 		Company:       handler.NewCompanyHandler(companySvc),
 		Driver:        handler.NewDriverHandler(driverSvc),
-		Truck:         handler.NewTruckHandler(service.NewTruckService(truckRepo, companyRepo, auditor)),
+		Truck:         handler.NewTruckHandler(truckSvc),
 		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo, auditor)),
 		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),
 		Password:      handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),

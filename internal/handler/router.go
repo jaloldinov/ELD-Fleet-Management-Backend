@@ -237,6 +237,10 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 		sub.POST("", perm.Require(model.PermSubscriptionManage), h.Subscription.Create)
 		sub.GET("", perm.Require(model.PermSubscriptionRead), h.Subscription.Current)
 		sub.POST("/refresh", perm.Require(model.PermSubscriptionRead), h.Subscription.Refresh)
+		sub.POST("/preview", perm.Require(model.PermSubscriptionManage), h.Subscription.Preview)
+		sub.PUT("", perm.Require(model.PermSubscriptionManage), h.Subscription.Change)
+		sub.POST("/cancel", perm.Require(model.PermSubscriptionManage), h.Subscription.Cancel)
+		sub.POST("/resume", perm.Require(model.PermSubscriptionManage), h.Subscription.Resume)
 		protected.GET("/subscriptions", perm.Require(model.PermSubscriptionRead), h.Subscription.List)
 	}
 

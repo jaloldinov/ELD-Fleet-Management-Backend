@@ -32,6 +32,9 @@ const (
 	CodePaymentProvider = "payment_provider_error"
 	// The company's subscription does not allow using the product (HTTP 402).
 	CodeBillingInactive = "billing_inactive"
+	// The bank refused the payment (HTTP 402); the message is the bank's,
+	// written for the card holder.
+	CodeCardDeclined = "card_declined"
 
 	// Password reset: "wrong or expired code, try again" vs "the reset
 	// token is no longer valid, start over".

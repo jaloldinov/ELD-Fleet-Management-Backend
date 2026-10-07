@@ -1225,6 +1225,87 @@
                     }
                 }
             },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:manage. Body = the WHOLE new plan.\nUpgrades are charged now (prorated) and applied only once paid; downgrades leave credit for the unused time.\nIf payment is not null, the bank asks for 3-D Secure: pay in the browser, then refresh. The old plan stays until then.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Change the plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new plan",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.ChangeSubscriptionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionStateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed, or the preview expired (proration_date)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "card_declined: the bank refused the payment; the plan did not change",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -1313,6 +1394,159 @@
                 }
             }
         },
+        "/api/v1/companies/{id}/billing/subscription/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:manage.\nDefault: at the end of the paid period (the company keeps service until then and can resume).\nat_period_end=false ends it now (platform only); unused time becomes credit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Cancel the subscription",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "When",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handler.CancelSubscriptionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:manage, or immediate cancel by a company user",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/subscription/preview": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:manage. Nothing changes.\nWhat switching to the given plan (the WHOLE new plan) costs now: amount_due is charged, credit goes to the balance.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Preview a plan change",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new plan (proration_date is ignored here)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.ChangeSubscriptionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ProrationPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed (same plan, archived price, mixed intervals, unpaid subscription)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/companies/{id}/billing/subscription/refresh": {
             "post": {
                 "security": [
@@ -1371,6 +1605,71 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "502": {
+                        "description": "Stripe refused the request or could not be reached",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/companies/{id}/billing/subscription/resume": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: subscription:manage. Only while cancel_at_period_end is true.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Undo a scheduled cancellation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Company ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.SubscriptionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "no cancellation is scheduled",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission subscription:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no current subscription (or company not found)",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -4046,6 +4345,36 @@
                 }
             }
         },
+        "handler.CancelSubscriptionRequest": {
+            "type": "object",
+            "properties": {
+                "at_period_end": {
+                    "description": "true (default): keep the service until the end of the paid period.\nfalse: end now, unused time becomes credit (platform only).",
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "handler.ChangeSubscriptionRequest": {
+            "type": "object",
+            "properties": {
+                "price_ids": {
+                    "description": "The WHOLE new plan: every price wanted after the change. Left out = removed.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "0199a1b2-0000-7000-8000-0000000000b1"
+                    ]
+                },
+                "proration_date": {
+                    "description": "From the preview: charges exactly what it showed. Omit to use \"now\".",
+                    "type": "integer",
+                    "example": 1791331200
+                }
+            }
+        },
         "handler.CompanyResponse": {
             "type": "object",
             "properties": {
@@ -4770,6 +5099,24 @@
                 }
             }
         },
+        "handler.PreviewLineResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Cents; negative = credit.",
+                    "type": "integer",
+                    "example": -5000
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Unused time on Support after 07 Oct 2026"
+                },
+                "proration": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
         "handler.PriceResponse": {
             "type": "object",
             "properties": {
@@ -4852,6 +5199,32 @@
                 "updated_at": {
                     "type": "string",
                     "example": "2026-10-06T11:26:26Z"
+                }
+            }
+        },
+        "handler.ProrationPreviewResponse": {
+            "type": "object",
+            "properties": {
+                "amount_due": {
+                    "description": "Charged to the card now, in cents.",
+                    "type": "integer",
+                    "example": 2500
+                },
+                "credit": {
+                    "description": "Credit for unused time added to the balance (pays the next invoices), in cents.",
+                    "type": "integer",
+                    "example": 0
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.PreviewLineResponse"
+                    }
+                },
+                "proration_date": {
+                    "description": "Send back with the change to be charged exactly this.",
+                    "type": "integer",
+                    "example": 1791331200
                 }
             }
         },
