@@ -464,14 +464,22 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		ELDDevice: handler.NewELDDeviceHandler(nil), Company: handler.NewCompanyHandler(nil),
 		RateLimit: handler.NewRateLimitHandler(nil), Password: handler.NewPasswordResetHandler(nil, nil),
 		AuditLog: handler.NewAuditLogHandler(nil), PaymentMethod: handler.NewPaymentMethodHandler(nil),
-		Subscription: handler.NewSubscriptionHandler(nil),
+		Subscription: handler.NewSubscriptionHandler(nil), Assignment: handler.NewAssignmentHandler(nil),
 	})
 	h := map[string]string{"Authorization": "Bearer company-token"}
 
 	// The fleet: 402 for a company without a paid-up subscription.
-	for _, path := range []string{"/api/v1/trucks", "/api/v1/drivers", "/api/v1/drivers/me", "/api/v1/eld-devices/" + uuid.NewString()} {
+	id := uuid.NewString()
+	for _, path := range []string{"/api/v1/trucks", "/api/v1/drivers", "/api/v1/drivers/me", "/api/v1/eld-devices/" + id,
+		// Phase 3: the dispatch board and its history are fleet routes too.
+		"/api/v1/trucks/" + id + "/current", "/api/v1/drivers/" + id + "/truck", "/api/v1/drivers/me/truck",
+		"/api/v1/driver-assignments", "/api/v1/eld-assignments"} {
 		rec := send(r, http.MethodGet, path, h)
 		assert.Equal(t, http.StatusPaymentRequired, rec.Code, path)
+	}
+	for _, path := range []string{"/api/v1/drivers/" + id + "/truck", "/api/v1/drivers/me/truck", "/api/v1/drivers/" + id + "/dispatcher"} {
+		rec := send(r, http.MethodPut, path, h)
+		assert.Equal(t, http.StatusPaymentRequired, rec.Code, "PUT "+path)
 	}
 
 	// Billing and the company itself stay reachable, or a blocked company
