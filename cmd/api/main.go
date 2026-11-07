@@ -133,11 +133,14 @@ func run() error {
 	}
 
 	userSvc := service.NewUserService(userRepo, companyRepo, sessionRepo, hasher, auditor)
-	driverSvc := service.NewDriverService(txManager, userSvc, repository.NewDriverRepository(pool), auditor)
+	driverRepo := repository.NewDriverRepository(pool)
+	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)
 
 	// Shared: TruckService manages trucks; ELDDeviceService looks them up.
 	truckRepo := repository.NewTruckRepository(pool)
 	truckSvc := service.NewTruckService(truckRepo, companyRepo, auditor)
+
+	assignmentSvc := service.NewAssignmentService(repository.NewDriverAssignmentRepository(pool), driverRepo, truckRepo, auditor)
 
 	// Background jobs run until jobsCtx is cancelled (when run returns).
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
@@ -327,6 +330,7 @@ func run() error {
 		Driver:        handler.NewDriverHandler(driverSvc),
 		Truck:         handler.NewTruckHandler(truckSvc),
 		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo, auditor)),
+		Assignment:    handler.NewAssignmentHandler(assignmentSvc),
 		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),
 		Password:      handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
 		AuditLog:      handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),

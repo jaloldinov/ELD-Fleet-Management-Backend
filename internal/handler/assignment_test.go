@@ -1,0 +1,157 @@
+package handler
+
+import (
+	"context"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jaloldinov/ELD-learning/internal/auth"
+	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
+)
+
+type fakeAssignmentService struct {
+	gotPrincipal auth.Principal
+	gotDriverID  uuid.UUID
+	gotInput     service.AssignDriverInput
+	calls        []string
+	assignment   *model.DriverAssignment
+	err          error
+}
+
+func (f *fakeAssignmentService) AssignDriver(_ context.Context, p auth.Principal, driverID uuid.UUID, in service.AssignDriverInput) (*model.DriverAssignment, error) {
+	f.gotPrincipal, f.gotDriverID, f.gotInput = p, driverID, in
+	f.calls = append(f.calls, "AssignDriver")
+	return f.assignment, f.err
+}
+func (f *fakeAssignmentService) AssignMe(_ context.Context, p auth.Principal, in service.AssignDriverInput) (*model.DriverAssignment, error) {
+	f.gotPrincipal, f.gotInput = p, in
+	f.calls = append(f.calls, "AssignMe")
+	return f.assignment, f.err
+}
+func (f *fakeAssignmentService) UnassignDriver(_ context.Context, p auth.Principal, driverID uuid.UUID) error {
+	f.gotPrincipal, f.gotDriverID = p, driverID
+	f.calls = append(f.calls, "UnassignDriver")
+	return f.err
+}
+func (f *fakeAssignmentService) UnassignMe(_ context.Context, p auth.Principal) error {
+	f.gotPrincipal = p
+	f.calls = append(f.calls, "UnassignMe")
+	return f.err
+}
+
+func sampleAssignment() *model.DriverAssignment {
+	return &model.DriverAssignment{ID: uuid.New(), CompanyID: testCompanyID, DriverID: uuid.New(), TruckID: uuid.New(),
+		Role: model.AssignmentPrimary, StartedAt: time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC), StartedBy: &testUserID}
+}
+
+// assignmentRouter registers the routes like NewRouter: "me" next to ":id".
+func assignmentRouter(svc AssignmentService) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	h := NewAssignmentHandler(svc)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(auth.WithPrincipal(c.Request.Context(), testCaller))
+	})
+	g := r.Group("/api/v1/drivers")
+	g.PUT("/me/truck", h.AssignMe)
+	g.DELETE("/me/truck", h.UnassignMe)
+	g.PUT("/:id/truck", h.Assign)
+	g.DELETE("/:id/truck", h.Unassign)
+	return r
+}
+
+func TestAssignmentHandler_Assign(t *testing.T) {
+	svc := &fakeAssignmentService{assignment: sampleAssignment()}
+	driverID, truckID := uuid.New(), uuid.New()
+
+	rec := do(assignmentRouter(svc), http.MethodPut, "/api/v1/drivers/"+driverID.String()+"/truck",
+		`{"truck_id":"`+truckID.String()+`","role":"co_driver"}`)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, testCaller, svc.gotPrincipal)
+	assert.Equal(t, driverID, svc.gotDriverID)
+	assert.Equal(t, service.AssignDriverInput{TruckID: truckID, Role: model.AssignmentCoDriver}, svc.gotInput)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"role":"primary"`)
+	assert.Contains(t, body, `"ended_at":null`, "current stint: explicit null")
+	assert.Contains(t, body, `"started_at":"2026-11-07T08:00:00Z"`)
+}
+
+func TestAssignmentHandler_Assign_RoleOptional(t *testing.T) {
+	svc := &fakeAssignmentService{assignment: sampleAssignment()}
+
+	rec := do(assignmentRouter(svc), http.MethodPut, "/api/v1/drivers/"+uuid.NewString()+"/truck",
+		`{"truck_id":"`+uuid.NewString()+`"}`)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, svc.gotInput.Role, "the service picks the default")
+}
+
+func TestAssignmentHandler_Assign_MissingTruckID(t *testing.T) {
+	svc := &fakeAssignmentService{}
+
+	rec := do(assignmentRouter(svc), http.MethodPut, "/api/v1/drivers/"+uuid.NewString()+"/truck", `{"role":"primary"}`)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, decodeError(t, rec).Details, "truck_id")
+	assert.Empty(t, svc.calls)
+}
+
+func TestAssignmentHandler_MeRoutesAreNotMistakenForAnID(t *testing.T) {
+	svc := &fakeAssignmentService{assignment: sampleAssignment()}
+	r := assignmentRouter(svc)
+
+	rec := do(r, http.MethodPut, "/api/v1/drivers/me/truck", `{"truck_id":"`+uuid.NewString()+`"}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	rec = do(r, http.MethodDelete, "/api/v1/drivers/me/truck", "")
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+
+	assert.Equal(t, []string{"AssignMe", "UnassignMe"}, svc.calls)
+}
+
+func TestAssignmentHandler_Unassign(t *testing.T) {
+	svc := &fakeAssignmentService{}
+	driverID := uuid.New()
+
+	rec := do(assignmentRouter(svc), http.MethodDelete, "/api/v1/drivers/"+driverID.String()+"/truck", "")
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, []string{"UnassignDriver"}, svc.calls)
+	assert.Equal(t, driverID, svc.gotDriverID)
+}
+
+func TestAssignmentHandler_Errors(t *testing.T) {
+	id := uuid.NewString()
+	body := `{"truck_id":"` + id + `"}`
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		err    error
+		want   int
+	}{
+		{"seat taken", http.MethodPut, "/api/v1/drivers/" + id + "/truck", body, model.ErrSeatTaken, http.StatusConflict},
+		{"driver on truck", http.MethodPut, "/api/v1/drivers/" + id + "/truck", body, model.ErrDriverOnTruck, http.StatusConflict},
+		{"not a driver", http.MethodPut, "/api/v1/drivers/me/truck", body, model.ErrNotFound, http.StatusNotFound},
+		{"truck out of service", http.MethodPut, "/api/v1/drivers/" + id + "/truck", body,
+			&validation.ValidationError{Fields: map[string]string{"truck_id": "x"}}, http.StatusBadRequest},
+		{"bad id", http.MethodDelete, "/api/v1/drivers/xyz/truck", "", nil, http.StatusBadRequest},
+		{"unknown field", http.MethodPut, "/api/v1/drivers/" + id + "/truck", `{"truck":"x"}`, nil, http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := do(assignmentRouter(&fakeAssignmentService{assignment: sampleAssignment(), err: tt.err}), tt.method, tt.path, tt.body)
+			assert.Equal(t, tt.want, rec.Code)
+		})
+	}
+}

@@ -77,16 +77,17 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 	log := logger.New(buf, true, "debug")
 	sec := handler.RouterSecurity{Tokens: fakeTokens{}, Permissions: fakePermissions(perms), AuthLimiter: ratelimit.New(1000, time.Minute)}
 	return handler.NewRouter(log, opts, sec, handler.Handlers{
-		Health:    handler.NewHealthHandler(okPinger{}, log),
-		Auth:      handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
-		User:      handler.NewUserHandler(nil),
-		Driver:    handler.NewDriverHandler(nil),
-		Truck:     handler.NewTruckHandler(nil),
-		ELDDevice: handler.NewELDDeviceHandler(nil),
-		Company:   handler.NewCompanyHandler(failingCompanyService{}),
-		RateLimit: handler.NewRateLimitHandler(nil),
-		Password:  handler.NewPasswordResetHandler(nil, nil),
-		AuditLog:  handler.NewAuditLogHandler(nil),
+		Health:     handler.NewHealthHandler(okPinger{}, log),
+		Auth:       handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
+		User:       handler.NewUserHandler(nil),
+		Driver:     handler.NewDriverHandler(nil),
+		Truck:      handler.NewTruckHandler(nil),
+		ELDDevice:  handler.NewELDDeviceHandler(nil),
+		Assignment: handler.NewAssignmentHandler(nil),
+		Company:    handler.NewCompanyHandler(failingCompanyService{}),
+		RateLimit:  handler.NewRateLimitHandler(nil),
+		Password:   handler.NewPasswordResetHandler(nil, nil),
+		AuditLog:   handler.NewAuditLogHandler(nil),
 		// Billing on, so the generic route checks below cover its routes too.
 		Product:       handler.NewProductHandler(nil),
 		PaymentMethod: handler.NewPaymentMethodHandler(nil),
@@ -186,9 +187,12 @@ func TestRouter_EveryNonPublicRouteRequiresAuthentication(t *testing.T) {
 
 // authenticatedOnlyRoutes need a login but no specific permission.
 var authenticatedOnlyRoutes = map[string]bool{
-	"GET /api/v1/auth/me":        true,
-	"GET /api/v1/drivers/me":     true,
-	"GET /api/v1/billing/config": true,
+	"GET /api/v1/auth/me":    true,
+	"GET /api/v1/drivers/me": true,
+	// A driver picks / leaves their own truck: identity, not a permission.
+	"PUT /api/v1/drivers/me/truck":    true,
+	"DELETE /api/v1/drivers/me/truck": true,
+	"GET /api/v1/billing/config":      true,
 }
 
 // A logged-in user with NO permissions must be denied (403) everywhere except

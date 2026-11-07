@@ -2347,6 +2347,122 @@
                 }
             }
         },
+        "/api/v1/drivers/me/truck": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the driver app: the caller (a driver) picks the truck they drive. Needs a login, no extra permission. Moves the driver if they were on another truck.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Pick my truck",
+                "parameters": [
+                    {
+                        "description": "Truck and role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.AssignDriverRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DriverAssignmentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "truck not found or out of service, or invalid role",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "the truck already has a driver in that role",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the driver app: ends the caller's current stint. Needs a login, no extra permission. Succeeds also when on no truck.",
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Leave my truck",
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers/{id}": {
             "get": {
                 "security": [
@@ -2537,6 +2653,158 @@
                     },
                     "409": {
                         "description": "license already used",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/drivers/{id}/truck": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:manage\nPuts the driver on a truck of the same company, or moves them there from their current truck (the old stint ends). Sending what is already true changes nothing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Put a driver on a truck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Driver ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Truck and role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.AssignDriverRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DriverAssignmentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "truck not found or out of service, invalid role, or driver account disabled",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "driver not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "the truck already has a driver in that role",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:manage\nEnds the driver's current stint. Succeeds also when the driver is on no truck.",
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Take a driver off their truck",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Driver ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "driver not found",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -5235,6 +5503,24 @@
                 }
             }
         },
+        "handler.AssignDriverRequest": {
+            "type": "object",
+            "properties": {
+                "role": {
+                    "description": "Omit for primary. A truck has at most one of each.",
+                    "type": "string",
+                    "enum": [
+                        "primary",
+                        "co_driver"
+                    ],
+                    "example": "primary"
+                },
+                "truck_id": {
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "handler.AssignTruckRequest": {
             "type": "object",
             "properties": {
@@ -5812,6 +6098,53 @@
                 "refund_amount": {
                     "type": "integer",
                     "example": 5000
+                }
+            }
+        },
+        "handler.DriverAssignmentResponse": {
+            "type": "object",
+            "properties": {
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ended_at": {
+                    "description": "null = current",
+                    "type": "string",
+                    "example": "2026-11-07T17:30:00Z"
+                },
+                "ended_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "primary",
+                        "co_driver"
+                    ],
+                    "example": "primary"
+                },
+                "started_at": {
+                    "type": "string",
+                    "example": "2026-11-07T08:00:00Z"
+                },
+                "started_by": {
+                    "description": "null = the system",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "truck_id": {
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },

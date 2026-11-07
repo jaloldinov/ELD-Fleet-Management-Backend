@@ -27,6 +27,19 @@ definitions:
         example: Service outage on 3 Oct
         type: string
     type: object
+  handler.AssignDriverRequest:
+    properties:
+      role:
+        description: Omit for primary. A truck has at most one of each.
+        enum:
+        - primary
+        - co_driver
+        example: primary
+        type: string
+      truck_id:
+        format: uuid
+        type: string
+    type: object
   handler.AssignTruckRequest:
     properties:
       truck_id:
@@ -473,6 +486,41 @@ definitions:
       refund_amount:
         example: 5000
         type: integer
+    type: object
+  handler.DriverAssignmentResponse:
+    properties:
+      company_id:
+        format: uuid
+        type: string
+      driver_id:
+        format: uuid
+        type: string
+      ended_at:
+        description: null = current
+        example: "2026-11-07T17:30:00Z"
+        type: string
+      ended_by:
+        format: uuid
+        type: string
+      id:
+        format: uuid
+        type: string
+      role:
+        enum:
+        - primary
+        - co_driver
+        example: primary
+        type: string
+      started_at:
+        example: "2026-11-07T08:00:00Z"
+        type: string
+      started_by:
+        description: null = the system
+        format: uuid
+        type: string
+      truck_id:
+        format: uuid
+        type: string
     type: object
   handler.DriverResponse:
     properties:
@@ -3182,6 +3230,110 @@ paths:
       summary: Update a driver's license
       tags:
       - drivers
+  /api/v1/drivers/{id}/truck:
+    delete:
+      description: |-
+        Requires permission: assignment:manage
+        Ends the driver's current stint. Succeeds also when the driver is on no truck.
+      parameters:
+      - description: Driver ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: no content
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: driver not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Take a driver off their truck
+      tags:
+      - assignments
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: assignment:manage
+        Puts the driver on a truck of the same company, or moves them there from their current truck (the old stint ends). Sending what is already true changes nothing.
+      parameters:
+      - description: Driver ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Truck and role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.AssignDriverRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DriverAssignmentResponse'
+        "400":
+          description: truck not found or out of service, invalid role, or driver
+            account disabled
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: driver not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "409":
+          description: the truck already has a driver in that role
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Put a driver on a truck
+      tags:
+      - assignments
   /api/v1/drivers/me:
     get:
       description: 'For the driver app: the caller''s own driver profile. Needs a
@@ -3210,6 +3362,83 @@ paths:
       summary: My driver profile
       tags:
       - drivers
+  /api/v1/drivers/me/truck:
+    delete:
+      description: 'For the driver app: ends the caller''s current stint. Needs a
+        login, no extra permission. Succeeds also when on no truck.'
+      responses:
+        "204":
+          description: no content
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Leave my truck
+      tags:
+      - assignments
+    put:
+      consumes:
+      - application/json
+      description: 'For the driver app: the caller (a driver) picks the truck they
+        drive. Needs a login, no extra permission. Moves the driver if they were on
+        another truck.'
+      parameters:
+      - description: Truck and role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.AssignDriverRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DriverAssignmentResponse'
+        "400":
+          description: truck not found or out of service, or invalid role
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "409":
+          description: the truck already has a driver in that role
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Pick my truck
+      tags:
+      - assignments
   /api/v1/eld-devices:
     get:
       description: |-

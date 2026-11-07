@@ -43,9 +43,11 @@ type Handlers struct {
 	Driver    *DriverHandler
 	Truck     *TruckHandler
 	ELDDevice *ELDDeviceHandler
-	RateLimit *RateLimitHandler
-	Password  *PasswordResetHandler
-	AuditLog  *AuditLogHandler
+	// Driver ↔ truck assignments (Phase 3).
+	Assignment *AssignmentHandler
+	RateLimit  *RateLimitHandler
+	Password   *PasswordResetHandler
+	AuditLog   *AuditLogHandler
 
 	// Billing (nil when Stripe is not configured: the routes do not exist).
 	Product       *ProductHandler
@@ -181,6 +183,13 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	drivers.GET("/:id", perm.Require(model.PermDriverRead), h.Driver.Get)
 	drivers.PATCH("/:id", perm.Require(model.PermDriverUpdate), h.Driver.Update)
 	drivers.DELETE("/:id", perm.Require(model.PermDriverDelete), h.Driver.Delete)
+
+	// Which truck a driver drives. The office assigns any driver of the
+	// company; a driver picks their own truck (login only, like /me).
+	drivers.PUT("/me/truck", h.Assignment.AssignMe)
+	drivers.DELETE("/me/truck", h.Assignment.UnassignMe)
+	drivers.PUT("/:id/truck", perm.Require(model.PermAssignmentManage), h.Assignment.Assign)
+	drivers.DELETE("/:id/truck", perm.Require(model.PermAssignmentManage), h.Assignment.Unassign)
 
 	trucks := product.Group("/trucks")
 	trucks.POST("", perm.Require(model.PermTruckCreate), h.Truck.Create)

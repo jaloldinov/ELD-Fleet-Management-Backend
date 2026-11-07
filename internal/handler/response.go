@@ -39,6 +39,8 @@ func handleError(c *gin.Context, err error) {
 		errors.Is(err, model.ErrUnitNumberTaken),
 		errors.Is(err, model.ErrSerialTaken),
 		errors.Is(err, model.ErrTruckHasELD),
+		errors.Is(err, model.ErrDriverOnTruck),
+		errors.Is(err, model.ErrSeatTaken),
 		errors.Is(err, model.ErrSubscriptionExists):
 		apierror.Respond(c, http.StatusConflict, apierror.CodeConflict, err.Error(), nil)
 	case errors.Is(err, model.ErrInvalidCredentials):
