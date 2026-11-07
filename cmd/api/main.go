@@ -145,6 +145,7 @@ func run() error {
 		Drivers:      driverRepo,
 		Devices:      eldRepo,
 		Trucks:       truckRepo,
+		Users:        userRepo,
 		Audit:        auditor,
 	})
 

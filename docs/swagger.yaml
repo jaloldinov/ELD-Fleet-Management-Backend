@@ -616,6 +616,10 @@ definitions:
       created_at:
         example: "2026-10-02T11:26:26Z"
         type: string
+      dispatcher_id:
+        description: The user who dispatches this driver; null = nobody.
+        format: uuid
+        type: string
       email:
         example: bob@acme.com
         type: string
@@ -1346,6 +1350,13 @@ definitions:
         description: What one interval of the new plan costs, in cents.
         example: 75000
         type: integer
+    type: object
+  handler.SetDispatcherRequest:
+    properties:
+      dispatcher_id:
+        description: A user of the same company who holds assignment:manage.
+        format: uuid
+        type: string
     type: object
   handler.SetPasswordRequest:
     properties:
@@ -3275,6 +3286,10 @@ paths:
         in: query
         name: company_id
         type: string
+      - description: Drivers of this dispatcher (a user id, or \
+        in: query
+        name: dispatcher_id
+        type: string
       - default: 1
         description: Page number (1-based)
         in: query
@@ -3501,6 +3516,109 @@ paths:
       summary: Update a driver's license
       tags:
       - drivers
+  /api/v1/drivers/{id}/dispatcher:
+    delete:
+      description: |-
+        Requires permission: assignment:manage
+        Succeeds also when the driver has no dispatcher.
+      parameters:
+      - description: Driver ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DriverResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: driver not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Unlink a driver from their dispatcher
+      tags:
+      - assignments
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Requires permission: assignment:manage
+        Links the driver to the dispatcher who looks after them (GET /drivers?dispatcher_id=me lists "my drivers"). The dispatcher must be an active user of the same company who holds assignment:manage. Informational: it does not limit who may see or assign the driver.
+      parameters:
+      - description: Driver ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The dispatcher
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.SetDispatcherRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DriverResponse'
+        "400":
+          description: dispatcher not found, disabled or not allowed to dispatch
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:manage
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: driver not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Set a driver's dispatcher
+      tags:
+      - assignments
   /api/v1/drivers/{id}/truck:
     delete:
       description: |-

@@ -44,6 +44,14 @@ type AssignmentDrivers interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error)
 	LockByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*model.DriverDetails, error)
+	SetDispatcher(ctx context.Context, driverID uuid.UUID, dispatcherID *uuid.UUID) error
+	ClearDispatcher(ctx context.Context, dispatcherID uuid.UUID) ([]model.Driver, error)
+}
+
+// AssignmentUsers checks who may be a dispatcher (repository.UserRepository).
+type AssignmentUsers interface {
+	LockForShare(ctx context.Context, id uuid.UUID) (*model.User, error)
+	GetPermissions(ctx context.Context, userID uuid.UUID) ([]model.Permission, error)
 }
 
 // AssignmentTrucks finds and locks trucks (repository.TruckRepository).
@@ -83,6 +91,7 @@ type AssignmentService struct {
 	drivers     AssignmentDrivers
 	devices     DeviceLocker
 	trucks      AssignmentTrucks
+	users       AssignmentUsers
 	audit       *Auditor
 }
 
@@ -95,12 +104,13 @@ type AssignmentDeps struct {
 	Drivers      AssignmentDrivers
 	Devices      DeviceLocker
 	Trucks       AssignmentTrucks
+	Users        AssignmentUsers
 	Audit        *Auditor
 }
 
 func NewAssignmentService(d AssignmentDeps) *AssignmentService {
 	return &AssignmentService{tx: d.Tx, assignments: d.DriverStints, elds: d.ELDStints,
-		drivers: d.Drivers, devices: d.Devices, trucks: d.Trucks, audit: d.Audit}
+		drivers: d.Drivers, devices: d.Devices, trucks: d.Trucks, users: d.Users, audit: d.Audit}
 }
 
 // ---------- reading the board ----------
@@ -127,13 +137,10 @@ func (s *AssignmentService) TruckBoard(ctx context.Context, p auth.Principal, tr
 func (s *AssignmentService) DriverTruck(ctx context.Context, p auth.Principal, driverID uuid.UUID) (*model.DriverTruck, error) {
 	var dt *model.DriverTruck
 	err := s.tx.WithinSnapshot(ctx, func(ctx context.Context) error {
-		dd, err := s.drivers.GetByID(ctx, driverID)
-		if err != nil {
+		if _, err := s.driverInScope(ctx, p, driverID); err != nil {
 			return err
 		}
-		if !p.IsPlatformUser() && dd.Driver.CompanyID != *p.CompanyID {
-			return model.ErrNotFound
-		}
+		var err error
 		dt, err = s.driverTruck(ctx, driverID)
 		return err
 	})
@@ -188,6 +195,105 @@ func (s *AssignmentService) board(ctx context.Context, t model.Truck) (*model.Tr
 		return nil, err
 	}
 	return b, nil
+}
+
+// ---------- dispatchers ----------
+
+// SetDispatcher links a driver to the dispatcher who looks after them (nil:
+// unlinks). The dispatcher must be an active user of the driver's company
+// who holds assignment:manage, i.e. who can really dispatch. The permission,
+// not a role name: companies may give it to managers or custom roles too.
+//
+// Lock order: the dispatcher's user row FIRST, then the driver. Deactivating
+// a dispatcher locks their user row and then the rows of their drivers
+// (ReleaseUser); locking the driver first here would let each wait for the
+// other forever (a deadlock).
+func (s *AssignmentService) SetDispatcher(ctx context.Context, p auth.Principal, driverID uuid.UUID, dispatcherID *uuid.UUID) (*model.DriverDetails, error) {
+	// A plain read first, for the 404 (and the company) before any lock.
+	if _, err := s.driverInScope(ctx, p, driverID); err != nil {
+		return nil, err
+	}
+
+	var result *model.DriverDetails
+	err := s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var dispatcher *model.User
+		if dispatcherID != nil {
+			u, err := s.users.LockForShare(ctx, *dispatcherID)
+			if errors.Is(err, model.ErrNotFound) {
+				return dispatcherInvalid("user not found")
+			} else if err != nil {
+				return err
+			}
+			dispatcher = u
+		}
+
+		dd, err := s.lockDriverInScope(ctx, p, driverID)
+		if err != nil {
+			return err
+		}
+		if dispatcher != nil {
+			if err := s.checkDispatcher(ctx, dd.Driver, dispatcher); err != nil {
+				return err
+			}
+		}
+
+		before := dd.Driver.DispatcherID
+		dd.Driver.DispatcherID = dispatcherID
+		result = dd
+		ch := model.AuditChanges{}
+		ch.Set("dispatcher_id", before, dispatcherID)
+		if len(ch) == 0 {
+			return nil // already so: nothing to change or record
+		}
+		if err := s.drivers.SetDispatcher(ctx, driverID, dispatcherID); err != nil {
+			return err
+		}
+		return s.record(ctx, p, "driver.set_dispatcher", dd.Driver, ch)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *AssignmentService) checkDispatcher(ctx context.Context, d model.Driver, u *model.User) error {
+	// Another company's user gets the same answer as a missing one.
+	if u.CompanyID == nil || *u.CompanyID != d.CompanyID {
+		return dispatcherInvalid("user not found")
+	}
+	if u.ID == d.UserID {
+		return dispatcherInvalid("a driver cannot be their own dispatcher")
+	}
+	if !u.IsActive {
+		return dispatcherInvalid("the user's account is disabled")
+	}
+	perms, err := s.users.GetPermissions(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	for _, perm := range perms {
+		if perm == model.PermAssignmentManage {
+			return nil
+		}
+	}
+	return dispatcherInvalid("this user cannot dispatch (needs permission assignment:manage)")
+}
+
+func dispatcherInvalid(msg string) error {
+	return &validation.ValidationError{Fields: map[string]string{"dispatcher_id": msg}}
+}
+
+// driverInScope reads a driver without locking; other companies' drivers
+// "do not exist" for company users.
+func (s *AssignmentService) driverInScope(ctx context.Context, p auth.Principal, driverID uuid.UUID) (*model.DriverDetails, error) {
+	dd, err := s.drivers.GetByID(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	if !p.IsPlatformUser() && dd.Driver.CompanyID != *p.CompanyID {
+		return nil, model.ErrNotFound
+	}
+	return dd, nil
 }
 
 // ---------- history ----------
@@ -423,12 +529,28 @@ func (s *AssignmentService) ReleaseTruck(ctx context.Context, p auth.Principal, 
 // It runs in the CALLER's transaction, AFTER the caller updated the users
 // row: that UPDATE waited for any assignment holding the account (see
 // DriverRepository.LockByID), so its stint is visible and ended here.
+//
+// A leaving dispatcher's drivers are unlinked too (they need a new one).
 func (s *AssignmentService) ReleaseUser(ctx context.Context, p auth.Principal, userID uuid.UUID) error {
 	ended, err := s.assignments.EndOpenByDriverUser(ctx, userID, actorID(p))
 	if err != nil {
 		return err
 	}
-	return s.recordReleased(ctx, p, ended)
+	if err := s.recordReleased(ctx, p, ended); err != nil {
+		return err
+	}
+	unlinked, err := s.drivers.ClearDispatcher(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, d := range unlinked {
+		ch := model.AuditChanges{}
+		ch.Set("dispatcher_id", &userID, nil)
+		if err := s.record(ctx, p, "driver.set_dispatcher", d, ch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---------- ELD devices ----------

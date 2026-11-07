@@ -62,9 +62,10 @@ type UpdateDriverInput struct {
 }
 
 type DriverListParams struct {
-	CompanyID *uuid.UUID // platform users only; ignored for company users
-	Page      int
-	PageSize  int
+	CompanyID    *uuid.UUID // platform users only; ignored for company users
+	DispatcherID *uuid.UUID // "my drivers"
+	Page         int
+	PageSize     int
 }
 
 type DriverPage struct {
@@ -152,7 +153,7 @@ func (s *DriverService) Me(ctx context.Context, p auth.Principal) (*model.Driver
 func (s *DriverService) List(ctx context.Context, p auth.Principal, params DriverListParams) (*DriverPage, error) {
 	page, size := normalizePage(ListParams{Page: params.Page, PageSize: params.PageSize})
 
-	f := model.DriverFilter{CompanyID: params.CompanyID}
+	f := model.DriverFilter{CompanyID: params.CompanyID, DispatcherID: params.DispatcherID}
 	if !p.IsPlatformUser() {
 		f.CompanyID = p.CompanyID // tenant scope, applied in SQL
 	}

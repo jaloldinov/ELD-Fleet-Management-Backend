@@ -15,7 +15,7 @@ import (
 // everything a client shows in a driver list (no N+1).
 const driverDetailsSelect = `
 	SELECT d.id, d.user_id, d.company_id, d.license_number, d.license_state,
-	       d.license_expires_at, d.created_at, d.updated_at, d.deleted_at,
+	       d.license_expires_at, d.dispatcher_id, d.created_at, d.updated_at, d.deleted_at,
 	       u.email, u.username, u.first_name, u.last_name, u.is_active, u.last_login_at
 	FROM drivers d
 	JOIN users u ON u.id = d.user_id`
@@ -98,19 +98,20 @@ func (r *DriverRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*
 func (r *DriverRepository) List(ctx context.Context, f model.DriverFilter, limit, offset int) ([]model.DriverDetails, int, error) {
 	const where = `
 		WHERE d.deleted_at IS NULL AND u.deleted_at IS NULL
-		  AND ($1::uuid IS NULL OR d.company_id = $1)`
+		  AND ($1::uuid IS NULL OR d.company_id = $1)
+		  AND ($2::uuid IS NULL OR d.dispatcher_id = $2)`
 
 	var total int
 	if err := r.q(ctx).QueryRow(ctx,
-		`SELECT count(*) FROM drivers d JOIN users u ON u.id = d.user_id`+where, f.CompanyID,
+		`SELECT count(*) FROM drivers d JOIN users u ON u.id = d.user_id`+where, f.CompanyID, f.DispatcherID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count drivers: %w", err)
 	}
 
 	rows, err := r.q(ctx).Query(ctx, driverDetailsSelect+where+`
 		ORDER BY d.id
-		LIMIT $2 OFFSET $3`,
-		f.CompanyID, limit, offset,
+		LIMIT $3 OFFSET $4`,
+		f.CompanyID, f.DispatcherID, limit, offset,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list drivers: %w", err)
@@ -145,6 +146,41 @@ func (r *DriverRepository) UpdateLicense(ctx context.Context, d model.Driver) er
 	return nil
 }
 
+// SetDispatcher links the driver to a dispatcher (nil: unlinks).
+func (r *DriverRepository) SetDispatcher(ctx context.Context, driverID uuid.UUID, dispatcherID *uuid.UUID) error {
+	tag, err := r.q(ctx).Exec(ctx, `
+		UPDATE drivers SET dispatcher_id = $2
+		WHERE id = $1 AND deleted_at IS NULL`, driverID, dispatcherID)
+	if err != nil {
+		return mapDriverError("set dispatcher", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return model.ErrNotFound
+	}
+	return nil
+}
+
+// ClearDispatcher unlinks every driver of a dispatcher who is leaving
+// (deactivated or deleted) and returns those drivers (ID and company).
+func (r *DriverRepository) ClearDispatcher(ctx context.Context, dispatcherID uuid.UUID) ([]model.Driver, error) {
+	rows, err := r.q(ctx).Query(ctx, `
+		UPDATE drivers SET dispatcher_id = NULL
+		WHERE dispatcher_id = $1 AND deleted_at IS NULL
+		RETURNING id, company_id`, dispatcherID)
+	if err != nil {
+		return nil, fmt.Errorf("clear dispatcher: %w", err)
+	}
+	drivers, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.Driver, error) {
+		var d model.Driver
+		err := row.Scan(&d.ID, &d.CompanyID)
+		return d, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan cleared drivers: %w", err)
+	}
+	return drivers, nil
+}
+
 // SoftDelete marks a driver profile as deleted.
 func (r *DriverRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	tag, err := r.q(ctx).Exec(ctx, `
@@ -164,7 +200,7 @@ func scanDriverDetails(row pgx.Row) (*model.DriverDetails, error) {
 	d, u := &dd.Driver, &dd.User
 	err := row.Scan(
 		&d.ID, &d.UserID, &d.CompanyID, &d.LicenseNumber, &d.LicenseState,
-		&d.LicenseExpiresAt, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt,
+		&d.LicenseExpiresAt, &d.DispatcherID, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt,
 		&u.Email, &u.Username, &u.FirstName, &u.LastName, &u.IsActive, &u.LastLoginAt,
 	)
 	if err != nil {

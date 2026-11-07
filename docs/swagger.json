@@ -2291,6 +2291,12 @@
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "Drivers of this dispatcher (a user id, or \\",
+                        "name": "dispatcher_id",
+                        "in": "query"
+                    },
+                    {
                         "minimum": 1,
                         "type": "integer",
                         "default": 1,
@@ -2811,6 +2817,158 @@
                     },
                     "409": {
                         "description": "license already used",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/drivers/{id}/dispatcher": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:manage\nLinks the driver to the dispatcher who looks after them (GET /drivers?dispatcher_id=me lists \"my drivers\"). The dispatcher must be an active user of the same company who holds assignment:manage. Informational: it does not limit who may see or assign the driver.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Set a driver's dispatcher",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Driver ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The dispatcher",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.SetDispatcherRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DriverResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "dispatcher not found, disabled or not allowed to dispatch",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "driver not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:manage\nSucceeds also when the driver has no dispatcher.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Unlink a driver from their dispatcher",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Driver ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DriverResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "driver not found",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -6694,6 +6852,11 @@
                     "type": "string",
                     "example": "2026-10-02T11:26:26Z"
                 },
+                "dispatcher_id": {
+                    "description": "The user who dispatches this driver; null = nobody.",
+                    "type": "string",
+                    "format": "uuid"
+                },
                 "email": {
                     "type": "string",
                     "example": "bob@acme.com"
@@ -7704,6 +7867,16 @@
                     "description": "What one interval of the new plan costs, in cents.",
                     "type": "integer",
                     "example": 75000
+                }
+            }
+        },
+        "handler.SetDispatcherRequest": {
+            "type": "object",
+            "properties": {
+                "dispatcher_id": {
+                    "description": "A user of the same company who holds assignment:manage.",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },

@@ -15,9 +15,11 @@ type Driver struct {
 	LicenseNumber    string
 	LicenseState     string    // two-letter US state code, e.g. TX
 	LicenseExpiresAt time.Time // a calendar day (DATE); time part is zero
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	DeletedAt        *time.Time
+	// The user (dispatcher) who looks after this driver; nil = nobody.
+	DispatcherID *uuid.UUID
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DeletedAt    *time.Time
 }
 
 // DriverDetails is a driver with the user fields clients need to display it.
@@ -28,5 +30,6 @@ type DriverDetails struct {
 
 // DriverFilter narrows a driver list. The zero value means "no filter".
 type DriverFilter struct {
-	CompanyID *uuid.UUID
+	CompanyID    *uuid.UUID
+	DispatcherID *uuid.UUID
 }

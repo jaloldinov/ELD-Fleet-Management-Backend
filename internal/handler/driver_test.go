@@ -156,3 +156,41 @@ func TestDriverHandler_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestDriverHandler_List_ByDispatcher(t *testing.T) {
+	t.Run(`"me" is the caller`, func(t *testing.T) {
+		svc := &fakeDriverService{page: onePage()}
+
+		rec := do(driverRouter(svc), http.MethodGet, "/api/v1/drivers?dispatcher_id=me", "")
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.NotNil(t, svc.gotList.DispatcherID)
+		assert.Equal(t, testCaller.UserID, *svc.gotList.DispatcherID)
+	})
+
+	t.Run("a user id", func(t *testing.T) {
+		svc := &fakeDriverService{page: onePage()}
+		id := uuid.New()
+
+		rec := do(driverRouter(svc), http.MethodGet, "/api/v1/drivers?dispatcher_id="+id.String(), "")
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, id, *svc.gotList.DispatcherID)
+	})
+
+	t.Run("anything else", func(t *testing.T) {
+		rec := do(driverRouter(&fakeDriverService{}), http.MethodGet, "/api/v1/drivers?dispatcher_id=you", "")
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, decodeError(t, rec).Details, "dispatcher_id")
+	})
+
+	t.Run("no dispatcher is an explicit null", func(t *testing.T) {
+		rec := do(driverRouter(&fakeDriverService{page: onePage()}), http.MethodGet, "/api/v1/drivers", "")
+		assert.Contains(t, rec.Body.String(), `"dispatcher_id":null`)
+	})
+}
+
+func onePage() *service.DriverPage {
+	return &service.DriverPage{Items: []model.DriverDetails{*sampleDriver()}, Total: 1, Page: 1, PageSize: 20}
+}

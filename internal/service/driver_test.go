@@ -124,6 +124,26 @@ func (m *memDriverRepo) UpdateLicense(_ context.Context, d model.Driver) error {
 	return nil
 }
 
+func (m *memDriverRepo) SetDispatcher(_ context.Context, driverID uuid.UUID, dispatcherID *uuid.UUID) error {
+	dd, ok := m.drivers[driverID]
+	if !ok {
+		return model.ErrNotFound
+	}
+	dd.Driver.DispatcherID = dispatcherID
+	return nil
+}
+
+func (m *memDriverRepo) ClearDispatcher(_ context.Context, dispatcherID uuid.UUID) ([]model.Driver, error) {
+	var out []model.Driver
+	for _, dd := range m.drivers {
+		if dd.Driver.DispatcherID != nil && *dd.Driver.DispatcherID == dispatcherID {
+			dd.Driver.DispatcherID = nil
+			out = append(out, dd.Driver)
+		}
+	}
+	return out, nil
+}
+
 func (m *memDriverRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	m.deletedInTx = inTx(ctx)
 	delete(m.drivers, id)

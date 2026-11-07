@@ -87,6 +87,26 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 	return u, nil
 }
 
+// LockForShare reads an alive user and share-locks the row until the
+// transaction ends (ctx must carry one): others may read it, nobody may
+// change it (deactivate, delete) before we commit. Use it before deciding
+// from the user's state, e.g. "this user may be a dispatcher".
+func (r *UserRepository) LockForShare(ctx context.Context, id uuid.UUID) (*model.User, error) {
+	if err := requireTx(ctx); err != nil {
+		return nil, err
+	}
+	row := r.q(ctx).QueryRow(ctx, `
+		SELECT `+userColumns+`
+		FROM users
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR SHARE`, id)
+	u, err := scanUser(row)
+	if err != nil {
+		return nil, mapUserError("lock user", err)
+	}
+	return u, nil
+}
+
 // GetByLogin finds an alive user by email OR username, case-insensitively.
 // Used by login. An email can never match a username, because usernames
 // cannot contain "@".

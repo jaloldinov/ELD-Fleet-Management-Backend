@@ -192,3 +192,76 @@ func TestDriverRepository_DeletedUserHidesDriver(t *testing.T) {
 	_, err = f.drivers.GetByID(ctx, id)
 	assert.ErrorIs(t, err, model.ErrNotFound, "a driver whose user is deleted is not shown")
 }
+
+func TestDriverRepository_Dispatcher(t *testing.T) {
+	f := newDriverFixture(t)
+	ctx := context.Background()
+	ali, err := f.createDriver(ctx, f.alpha.ID, "TX", "L1")
+	require.NoError(t, err)
+	bob, err := f.createDriver(ctx, f.alpha.ID, "TX", "L2")
+	require.NoError(t, err)
+	disp, err := f.users.Create(ctx, newUser(f.alpha.ID, "disp@alpha.com"), []string{model.RoleDispatcher})
+	require.NoError(t, err)
+	stranger, err := f.users.Create(ctx, newUser(f.bravo.ID, "disp@bravo.com"), []string{model.RoleDispatcher})
+	require.NoError(t, err)
+
+	require.NoError(t, f.drivers.SetDispatcher(ctx, ali, &disp.ID))
+
+	got, err := f.drivers.GetByID(ctx, ali)
+	require.NoError(t, err)
+	require.NotNil(t, got.Driver.DispatcherID)
+	assert.Equal(t, disp.ID, *got.Driver.DispatcherID)
+
+	mine, total, err := f.drivers.List(ctx, model.DriverFilter{CompanyID: &f.alpha.ID, DispatcherID: &disp.ID}, 20, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total, `"my drivers"`)
+	assert.Equal(t, ali, mine[0].Driver.ID)
+
+	t.Run("a dispatcher of another company is refused by the database", func(t *testing.T) {
+		err := f.drivers.SetDispatcher(ctx, bob, &stranger.ID)
+		assert.ErrorContains(t, err, "drivers_dispatcher_company_fkey")
+	})
+
+	t.Run("a driver is not their own dispatcher", func(t *testing.T) {
+		b, err := f.drivers.GetByID(ctx, bob)
+		require.NoError(t, err)
+		err = f.drivers.SetDispatcher(ctx, bob, &b.User.ID)
+		assert.ErrorContains(t, err, "drivers_dispatcher_not_self")
+	})
+
+	t.Run("unknown driver", func(t *testing.T) {
+		assert.ErrorIs(t, f.drivers.SetDispatcher(ctx, uuid.New(), nil), model.ErrNotFound)
+	})
+
+	t.Run("a leaving dispatcher's drivers are unlinked", func(t *testing.T) {
+		require.NoError(t, f.drivers.SetDispatcher(ctx, bob, &disp.ID))
+
+		cleared, err := f.drivers.ClearDispatcher(ctx, disp.ID)
+
+		require.NoError(t, err)
+		assert.Len(t, cleared, 2)
+		_, total, err := f.drivers.List(ctx, model.DriverFilter{DispatcherID: &disp.ID}, 20, 0)
+		require.NoError(t, err)
+		assert.Zero(t, total)
+	})
+}
+
+func TestUserRepository_LockForShare(t *testing.T) {
+	f := newDriverFixture(t)
+	ctx := context.Background()
+	u, err := f.users.Create(ctx, newUser(f.alpha.ID, "disp@alpha.com"), []string{model.RoleDispatcher})
+	require.NoError(t, err)
+
+	_, err = f.users.LockForShare(ctx, u.ID)
+	assert.ErrorIs(t, err, errNoTx)
+
+	err = f.tx.WithinTx(ctx, func(ctx context.Context) error {
+		got, err := f.users.LockForShare(ctx, u.ID)
+		require.NoError(t, err)
+		assert.Equal(t, u.ID, got.ID)
+		_, err = f.users.LockForShare(ctx, uuid.New())
+		assert.ErrorIs(t, err, model.ErrNotFound)
+		return nil
+	})
+	require.NoError(t, err)
+}

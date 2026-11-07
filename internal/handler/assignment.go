@@ -27,6 +27,7 @@ type AssignmentService interface {
 	MyTruck(ctx context.Context, p auth.Principal) (*model.DriverTruck, error)
 	DriverHistory(ctx context.Context, p auth.Principal, params service.AssignmentHistoryParams) (*service.DriverAssignmentPage, error)
 	ELDHistory(ctx context.Context, p auth.Principal, params service.AssignmentHistoryParams) (*service.ELDAssignmentPage, error)
+	SetDispatcher(ctx context.Context, p auth.Principal, driverID uuid.UUID, dispatcherID *uuid.UUID) (*model.DriverDetails, error)
 }
 
 // ---------- DTOs ----------
@@ -42,6 +43,11 @@ type AssignTruckRequest struct {
 	// true: if the truck already has another device, take it out (e.g. it
 	// broke and this one replaces it). false/omitted: 409 in that case.
 	Replace bool `json:"replace,omitempty" example:"false"`
+}
+
+type SetDispatcherRequest struct {
+	// A user of the same company who holds assignment:manage.
+	DispatcherID *uuid.UUID `json:"dispatcher_id" swaggertype:"string" format:"uuid"`
 }
 
 // DriverAssignmentResponse is one stint of a driver on a truck.
@@ -608,6 +614,84 @@ func (h *AssignmentHandler) ListELDAssignments(c *gin.Context) {
 		items = append(items, newELDAssignmentResponse(&res.Items[i]))
 	}
 	c.JSON(http.StatusOK, ListELDAssignmentsResponse{Items: items, Page: res.Page, PageSize: res.PageSize, Total: res.Total})
+}
+
+// SetDispatcher handles PUT /api/v1/drivers/:id/dispatcher.
+//
+//	@Summary		Set a driver's dispatcher
+//	@Description	Requires permission: assignment:manage
+//	@Description	Links the driver to the dispatcher who looks after them (GET /drivers?dispatcher_id=me lists "my drivers"). The dispatcher must be an active user of the same company who holds assignment:manage. Informational: it does not limit who may see or assign the driver.
+//	@Tags			assignments
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string					true	"Driver ID"	format(uuid)
+//	@Param			body	body		SetDispatcherRequest	true	"The dispatcher"
+//	@Success		200		{object}	DriverResponse
+//	@Failure		400		{object}	apierror.Response	"dispatcher not found, disabled or not allowed to dispatch"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402		{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403		{object}	apierror.Response	"missing permission assignment:manage"
+//	@Failure		404		{object}	apierror.Response	"driver not found"
+//	@Failure		500		{object}	apierror.Response
+//	@Router			/api/v1/drivers/{id}/dispatcher [put]
+func (h *AssignmentHandler) SetDispatcher(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req SetDispatcherRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if req.DispatcherID == nil {
+		handleError(c, &validation.ValidationError{Fields: map[string]string{
+			"dispatcher_id": "is required (use DELETE to unlink)"}})
+		return
+	}
+	h.setDispatcher(c, p, id, req.DispatcherID)
+}
+
+// RemoveDispatcher handles DELETE /api/v1/drivers/:id/dispatcher.
+//
+//	@Summary		Unlink a driver from their dispatcher
+//	@Description	Requires permission: assignment:manage
+//	@Description	Succeeds also when the driver has no dispatcher.
+//	@Tags			assignments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Driver ID"	format(uuid)
+//	@Success		200	{object}	DriverResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402	{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403	{object}	apierror.Response	"missing permission assignment:manage"
+//	@Failure		404	{object}	apierror.Response	"driver not found"
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/drivers/{id}/dispatcher [delete]
+func (h *AssignmentHandler) RemoveDispatcher(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	h.setDispatcher(c, p, id, nil)
+}
+
+func (h *AssignmentHandler) setDispatcher(c *gin.Context, p auth.Principal, driverID uuid.UUID, dispatcherID *uuid.UUID) {
+	dd, err := h.svc.SetDispatcher(c.Request.Context(), p, driverID, dispatcherID)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newDriverResponse(dd))
 }
 
 // historyParams reads the query parameters both histories share; problems

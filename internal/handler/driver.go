@@ -60,11 +60,13 @@ type DriverResponse struct {
 	FirstName string    `json:"first_name" example:"Bob"`
 	LastName  string    `json:"last_name" example:"Lee"`
 	// Follows the user account: a deactivated user is an inactive driver.
-	IsActive         bool      `json:"is_active" example:"true"`
-	LicenseNumber    string    `json:"license_number" example:"D1234567"`
-	LicenseState     string    `json:"license_state" example:"TX"`
-	LicenseExpiresAt string    `json:"license_expires_at" example:"2028-05-31"`
-	CreatedAt        time.Time `json:"created_at" example:"2026-10-02T11:26:26Z"`
+	IsActive         bool   `json:"is_active" example:"true"`
+	LicenseNumber    string `json:"license_number" example:"D1234567"`
+	LicenseState     string `json:"license_state" example:"TX"`
+	LicenseExpiresAt string `json:"license_expires_at" example:"2028-05-31"`
+	// The user who dispatches this driver; null = nobody.
+	DispatcherID *uuid.UUID `json:"dispatcher_id" swaggertype:"string" format:"uuid"`
+	CreatedAt    time.Time  `json:"created_at" example:"2026-10-02T11:26:26Z"`
 }
 
 func newDriverResponse(dd *model.DriverDetails) DriverResponse {
@@ -75,6 +77,7 @@ func newDriverResponse(dd *model.DriverDetails) DriverResponse {
 		IsActive:      u.IsActive,
 		LicenseNumber: d.LicenseNumber, LicenseState: d.LicenseState,
 		LicenseExpiresAt: d.LicenseExpiresAt.Format(time.DateOnly),
+		DispatcherID:     d.DispatcherID,
 		CreatedAt:        d.CreatedAt.UTC(),
 	}
 }
@@ -162,14 +165,15 @@ func (h *DriverHandler) Create(c *gin.Context) {
 //	@Tags			drivers
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			company_id	query		string	false	"Filter by company (platform users only)"	format(uuid)
-//	@Param			page		query		int		false	"Page number (1-based)"						default(1)	minimum(1)
-//	@Param			page_size	query		int		false	"Items per page"							default(20)	minimum(1)	maximum(100)
-//	@Success		200			{object}	ListDriversResponse
-//	@Failure		400			{object}	apierror.Response
-//	@Failure		401			{object}	apierror.Response	"missing or invalid access token"
-//	@Failure		403			{object}	apierror.Response	"missing permission driver:read"
-//	@Failure		500			{object}	apierror.Response
+//	@Param			company_id		query		string	false	"Filter by company (platform users only)"	format(uuid)
+//	@Param			dispatcher_id	query		string	false	"Drivers of this dispatcher (a user id, or \"me\")"
+//	@Param			page			query		int		false	"Page number (1-based)"	default(1)	minimum(1)
+//	@Param			page_size		query		int		false	"Items per page"		default(20)	minimum(1)	maximum(100)
+//	@Success		200				{object}	ListDriversResponse
+//	@Failure		400				{object}	apierror.Response
+//	@Failure		401				{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403				{object}	apierror.Response	"missing permission driver:read"
+//	@Failure		500				{object}	apierror.Response
 //	@Router			/api/v1/drivers [get]
 func (h *DriverHandler) List(c *gin.Context) {
 	p, ok := principal(c)
@@ -187,12 +191,22 @@ func (h *DriverHandler) List(c *gin.Context) {
 		v.Check(err == nil, "company_id", "must be a valid UUID")
 		companyID = &id
 	}
+	// "me": the caller's own drivers, without having to know their user id.
+	var dispatcherID *uuid.UUID
+	if s := c.Query("dispatcher_id"); s == "me" {
+		dispatcherID = &p.UserID
+	} else if s != "" {
+		id, err := uuid.Parse(s)
+		v.Check(err == nil, "dispatcher_id", `must be a valid UUID or "me"`)
+		dispatcherID = &id
+	}
 	if err := v.Err(); err != nil {
 		handleError(c, err)
 		return
 	}
 
-	res, err := h.svc.List(c.Request.Context(), p, service.DriverListParams{CompanyID: companyID, Page: page, PageSize: size})
+	res, err := h.svc.List(c.Request.Context(), p, service.DriverListParams{
+		CompanyID: companyID, DispatcherID: dispatcherID, Page: page, PageSize: size})
 	if err != nil {
 		handleError(c, err)
 		return

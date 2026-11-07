@@ -79,6 +79,7 @@ func run() error {
 			Drivers:      repository.NewDriverRepository(pool),
 			Devices:      repository.NewELDDeviceRepository(pool),
 			Trucks:       repository.NewTruckRepository(pool),
+			Users:        repository.NewUserRepository(pool),
 			Audit:        auditor,
 		}),
 		repository.NewCompanyRepository(pool),

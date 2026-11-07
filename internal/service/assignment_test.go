@@ -13,6 +13,7 @@ import (
 
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // memAssignments is an in-memory stint store with the same two rules as the
@@ -274,6 +275,30 @@ func (l lockingTrucks) LockByID(ctx context.Context, id uuid.UUID) (*model.Truck
 	return l.GetByID(ctx, id)
 }
 
+// lockingUsers: users who may (or may not) dispatch.
+type lockingUsers struct {
+	users map[uuid.UUID]*model.User
+	perms map[uuid.UUID][]model.Permission
+	log   *lockLog
+}
+
+func (l lockingUsers) LockForShare(ctx context.Context, id uuid.UUID) (*model.User, error) {
+	if !inTx(ctx) {
+		return nil, errors.New("lock outside transaction")
+	}
+	*l.log = append(*l.log, "user")
+	u, ok := l.users[id]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	c := *u
+	return &c, nil
+}
+
+func (l lockingUsers) GetPermissions(_ context.Context, id uuid.UUID) ([]model.Permission, error) {
+	return l.perms[id], nil
+}
+
 type assignmentSvcFixture struct {
 	svc         *AssignmentService
 	assignments *memAssignments
@@ -283,11 +308,13 @@ type assignmentSvcFixture struct {
 	trucks      *memTruckRepo
 	audit       *memAuditStore
 	locks       lockLog
+	users       lockingUsers
 }
 
 func newAssignmentSvcFixture() *assignmentSvcFixture {
 	f := &assignmentSvcFixture{assignments: newMemAssignments(), elds: newMemELDAssignments(),
 		drivers: newMemDriverRepo(), devices: newMemELDRepo(), trucks: newMemTruckRepo()}
+	f.users = lockingUsers{users: map[uuid.UUID]*model.User{}, perms: map[uuid.UUID][]model.Permission{}, log: &f.locks}
 	var audit *Auditor
 	audit, f.audit = newTestAuditor()
 	f.svc = NewAssignmentService(AssignmentDeps{
@@ -297,9 +324,19 @@ func newAssignmentSvcFixture() *assignmentSvcFixture {
 		Drivers:      lockingDrivers{f.drivers, &f.locks},
 		Devices:      lockingDevices{f.devices, &f.locks},
 		Trucks:       lockingTrucks{f.trucks, &f.locks},
+		Users:        f.users,
 		Audit:        audit,
 	})
 	return f
+}
+
+// dispatcher adds an active user of the company who may dispatch.
+func (f *assignmentSvcFixture) dispatcher(companyID uuid.UUID) *model.User {
+	cid := companyID
+	u := &model.User{ID: uuid.New(), CompanyID: &cid, IsActive: true}
+	f.users.users[u.ID] = u
+	f.users.perms[u.ID] = []model.Permission{model.PermDriverRead, model.PermAssignmentManage}
+	return u
 }
 
 // driver adds an active driver of the company.
@@ -1002,4 +1039,129 @@ func TestAssignmentService_ELDHistory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, &companyA, f.elds.historyF.CompanyID)
 	assert.Equal(t, &deviceID, f.elds.historyF.ELDDeviceID)
+}
+
+// ---------- dispatchers ----------
+
+func TestAssignmentService_SetDispatcher(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("links, locking the dispatcher BEFORE the driver", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(companyA)
+		disp := f.dispatcher(companyA)
+
+		got, err := f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, &disp.ID)
+
+		require.NoError(t, err)
+		assert.Equal(t, disp.ID, *got.Driver.DispatcherID)
+		assert.Equal(t, disp.ID, *f.drivers.drivers[d.Driver.ID].Driver.DispatcherID, "saved")
+		assert.Equal(t, lockLog{"user", "driver"}, f.locks,
+			"the same order as deactivating a dispatcher (user, then drivers): no deadlock")
+		e := f.audit.last(t)
+		assert.Equal(t, "driver.set_dispatcher", e.Action)
+		assert.Equal(t, model.AuditChange{Old: nil, New: disp.ID}, e.Changes["dispatcher_id"])
+		f.audit.requireAllInTx(t)
+	})
+
+	t.Run("the same again changes nothing", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(companyA)
+		disp := f.dispatcher(companyA)
+		_, err := f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, &disp.ID)
+		require.NoError(t, err)
+
+		_, err = f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, &disp.ID)
+
+		require.NoError(t, err)
+		assert.Len(t, f.audit.entries, 1)
+	})
+
+	t.Run("unlink", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(companyA)
+		disp := f.dispatcher(companyA)
+		_, err := f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, &disp.ID)
+		require.NoError(t, err)
+
+		got, err := f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, nil)
+
+		require.NoError(t, err)
+		assert.Nil(t, got.Driver.DispatcherID)
+		assert.Equal(t, model.AuditChange{Old: disp.ID, New: nil}, f.audit.last(t).Changes["dispatcher_id"])
+
+		_, err = f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, nil)
+		require.NoError(t, err, "no dispatcher: unlinking is not an error")
+		assert.Len(t, f.audit.entries, 2, "and nothing recorded")
+	})
+
+	invalid := []struct {
+		name  string
+		setup func(f *assignmentSvcFixture, d *model.DriverDetails) uuid.UUID
+		msg   string
+	}{
+		{"unknown user", func(*assignmentSvcFixture, *model.DriverDetails) uuid.UUID { return uuid.New() }, "user not found"},
+		{"another company's user looks like a missing one", func(f *assignmentSvcFixture, _ *model.DriverDetails) uuid.UUID {
+			return f.dispatcher(uuid.New()).ID
+		}, "user not found"},
+		{"no permission to dispatch", func(f *assignmentSvcFixture, _ *model.DriverDetails) uuid.UUID {
+			u := f.dispatcher(companyA)
+			f.users.perms[u.ID] = []model.Permission{model.PermDriverRead}
+			return u.ID
+		}, "this user cannot dispatch (needs permission assignment:manage)"},
+		{"disabled account", func(f *assignmentSvcFixture, _ *model.DriverDetails) uuid.UUID {
+			u := f.dispatcher(companyA)
+			u.IsActive = false
+			return u.ID
+		}, "the user's account is disabled"},
+		{"the driver themselves", func(f *assignmentSvcFixture, d *model.DriverDetails) uuid.UUID {
+			cid := companyA
+			f.users.users[d.Driver.UserID] = &model.User{ID: d.Driver.UserID, CompanyID: &cid, IsActive: true}
+			f.users.perms[d.Driver.UserID] = []model.Permission{model.PermAssignmentManage}
+			return d.Driver.UserID
+		}, "a driver cannot be their own dispatcher"},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAssignmentSvcFixture()
+			d := f.driver(companyA)
+			id := tc.setup(f, d)
+
+			_, err := f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, &id)
+
+			var vErr *validation.ValidationError
+			require.ErrorAs(t, err, &vErr)
+			assert.Equal(t, tc.msg, vErr.Fields["dispatcher_id"])
+			assert.Nil(t, f.drivers.drivers[d.Driver.ID].Driver.DispatcherID, "not saved")
+		})
+	}
+
+	t.Run("driver of another company does not exist, before any lock", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(uuid.New())
+		disp := f.dispatcher(companyA)
+
+		_, err := f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, &disp.ID)
+
+		assert.ErrorIs(t, err, model.ErrNotFound)
+		assert.Empty(t, f.locks)
+	})
+}
+
+func TestAssignmentService_ReleaseUser_UnlinksADispatchersDrivers(t *testing.T) {
+	ctx := context.Background()
+	f := newAssignmentSvcFixture()
+	disp := f.dispatcher(companyA)
+	ali, bob := f.driver(companyA), f.driver(companyA)
+	for _, d := range []*model.DriverDetails{ali, bob} {
+		_, err := f.svc.SetDispatcher(ctx, companyAUser, d.Driver.ID, &disp.ID)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, f.svc.ReleaseUser(ctx, companyAUser, disp.ID))
+
+	assert.Nil(t, f.drivers.drivers[ali.Driver.ID].Driver.DispatcherID)
+	assert.Nil(t, f.drivers.drivers[bob.Driver.ID].Driver.DispatcherID)
+	assert.Equal(t, []string{"driver.set_dispatcher", "driver.set_dispatcher", "driver.set_dispatcher", "driver.set_dispatcher"},
+		f.audit.actions(), "two links, two unlinks")
 }

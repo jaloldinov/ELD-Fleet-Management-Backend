@@ -32,6 +32,7 @@ type fakeAssignmentService struct {
 	gotHistory   service.AssignmentHistoryParams
 	driverPage   *service.DriverAssignmentPage
 	eldPage      *service.ELDAssignmentPage
+	gotDispatch  *uuid.UUID
 	err          error
 }
 
@@ -100,6 +101,17 @@ func (f *fakeAssignmentService) ELDHistory(_ context.Context, p auth.Principal, 
 	return f.eldPage, nil
 }
 
+func (f *fakeAssignmentService) SetDispatcher(_ context.Context, p auth.Principal, driverID uuid.UUID, dispatcherID *uuid.UUID) (*model.DriverDetails, error) {
+	f.gotPrincipal, f.gotDriverID, f.gotDispatch = p, driverID, dispatcherID
+	f.calls = append(f.calls, "SetDispatcher")
+	if f.err != nil {
+		return nil, f.err
+	}
+	dd := sampleDriver()
+	dd.Driver.DispatcherID = dispatcherID
+	return dd, nil
+}
+
 func sampleAssignment() *model.DriverAssignment {
 	return &model.DriverAssignment{ID: uuid.New(), CompanyID: testCompanyID, DriverID: uuid.New(), TruckID: uuid.New(),
 		Role: model.AssignmentPrimary, StartedAt: time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC), StartedBy: &testUserID}
@@ -120,6 +132,8 @@ func assignmentRouter(svc AssignmentService) *gin.Engine {
 	g.DELETE("/me/truck", h.UnassignMe)
 	g.PUT("/:id/truck", h.Assign)
 	g.DELETE("/:id/truck", h.Unassign)
+	g.PUT("/:id/dispatcher", h.SetDispatcher)
+	g.DELETE("/:id/dispatcher", h.RemoveDispatcher)
 	r.GET("/api/v1/trucks/:id/current", h.TruckBoard)
 	r.GET("/api/v1/driver-assignments", h.ListDriverAssignments)
 	r.GET("/api/v1/eld-assignments", h.ListELDAssignments)
@@ -425,4 +439,39 @@ func TestAssignmentHandler_ListELDAssignments(t *testing.T) {
 	assert.Contains(t, body, `"serial_number":"PT30-0009"`)
 	assert.Contains(t, body, `"truck_unit_number":"205"`)
 	assert.Contains(t, body, `"ended_at":"2026-11-09T16:00:00Z"`)
+}
+
+func TestAssignmentHandler_SetDispatcher(t *testing.T) {
+	svc := &fakeAssignmentService{}
+	driverID, dispID := uuid.New(), uuid.New()
+
+	rec := do(assignmentRouter(svc), http.MethodPut, "/api/v1/drivers/"+driverID.String()+"/dispatcher",
+		`{"dispatcher_id":"`+dispID.String()+`"}`)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, driverID, svc.gotDriverID)
+	require.NotNil(t, svc.gotDispatch)
+	assert.Equal(t, dispID, *svc.gotDispatch)
+	assert.Contains(t, rec.Body.String(), `"dispatcher_id":"`+dispID.String()+`"`)
+}
+
+func TestAssignmentHandler_SetDispatcher_MissingID(t *testing.T) {
+	svc := &fakeAssignmentService{}
+
+	rec := do(assignmentRouter(svc), http.MethodPut, "/api/v1/drivers/"+uuid.NewString()+"/dispatcher", `{}`)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, decodeError(t, rec).Details, "dispatcher_id")
+	assert.Empty(t, svc.calls, "unlinking is DELETE, not an empty PUT")
+}
+
+func TestAssignmentHandler_RemoveDispatcher(t *testing.T) {
+	svc := &fakeAssignmentService{}
+
+	rec := do(assignmentRouter(svc), http.MethodDelete, "/api/v1/drivers/"+uuid.NewString()+"/dispatcher", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"SetDispatcher"}, svc.calls)
+	assert.Nil(t, svc.gotDispatch)
+	assert.Contains(t, rec.Body.String(), `"dispatcher_id":null`)
 }

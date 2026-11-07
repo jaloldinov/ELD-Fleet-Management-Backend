@@ -192,6 +192,9 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	drivers.GET("/:id/truck", perm.Require(model.PermAssignmentRead), h.Assignment.DriverTruck)
 	drivers.PUT("/:id/truck", perm.Require(model.PermAssignmentManage), h.Assignment.Assign)
 	drivers.DELETE("/:id/truck", perm.Require(model.PermAssignmentManage), h.Assignment.Unassign)
+	// Who dispatches the driver ("my drivers": GET /drivers?dispatcher_id=me).
+	drivers.PUT("/:id/dispatcher", perm.Require(model.PermAssignmentManage), h.Assignment.SetDispatcher)
+	drivers.DELETE("/:id/dispatcher", perm.Require(model.PermAssignmentManage), h.Assignment.RemoveDispatcher)
 
 	trucks := product.Group("/trucks")
 	trucks.POST("", perm.Require(model.PermTruckCreate), h.Truck.Create)
