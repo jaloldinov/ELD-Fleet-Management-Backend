@@ -53,6 +53,27 @@ func (r *TruckRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Tru
 	return t, nil
 }
 
+// LockByID reads an alive truck and locks its row until the transaction ends
+// (ctx must carry one). Use it before deciding something from the truck's
+// state, e.g. "it is active, so a driver may be assigned": a concurrent
+// deactivation or deletion waits for our COMMIT instead of slipping in
+// between our check and our write. A request that waited here reads the
+// row as it is after the other COMMIT, so it sees the new state.
+func (r *TruckRepository) LockByID(ctx context.Context, id uuid.UUID) (*model.Truck, error) {
+	if err := requireTx(ctx); err != nil {
+		return nil, err
+	}
+	row := r.q(ctx).QueryRow(ctx, `
+		SELECT `+truckColumns+` FROM trucks
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR UPDATE`, id)
+	t, err := scanTruck(row)
+	if err != nil {
+		return nil, mapTruckError("lock truck", err)
+	}
+	return t, nil
+}
+
 func (r *TruckRepository) List(ctx context.Context, f model.TruckFilter, limit, offset int) ([]model.Truck, int, error) {
 	const where = `
 		WHERE deleted_at IS NULL

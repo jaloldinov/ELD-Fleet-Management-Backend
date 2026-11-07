@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -36,6 +37,20 @@ func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context) e
 	return pgx.BeginFunc(ctx, m.db, func(tx pgx.Tx) error {
 		return fn(context.WithValue(ctx, txKey{}, tx))
 	})
+}
+
+// errNoTx: a row lock was requested outside a transaction. Without one, each
+// statement is its own transaction and the lock is released right after the
+// SELECT, before the caller acts on what it read: the lock would protect
+// nothing. This is a programming error, so it is not a model error.
+var errNoTx = errors.New("row lock requested outside a transaction")
+
+// requireTx returns errNoTx unless ctx carries a transaction.
+func requireTx(ctx context.Context) error {
+	if _, ok := ctx.Value(txKey{}).(pgx.Tx); !ok {
+		return errNoTx
+	}
+	return nil
 }
 
 // conn returns the transaction carried by ctx, or db when there is none.

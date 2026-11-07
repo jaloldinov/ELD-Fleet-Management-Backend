@@ -25,6 +25,11 @@ var (
 	ErrSerialTaken     = errors.New("an ELD device with this serial number is already registered")
 	ErrTruckHasELD     = errors.New("this truck already has an ELD device installed")
 
+	// Driver ↔ truck assignments. Both come from partial unique indexes, so
+	// they also hold when two requests arrive at the same moment.
+	ErrDriverOnTruck = errors.New("this driver is already assigned to a truck")
+	ErrSeatTaken     = errors.New("this truck already has a driver in that role")
+
 	// ErrInvalidCredentials is deliberately the same for "no such user" and
 	// "wrong password", so attackers cannot learn which accounts exist.
 	ErrInvalidCredentials = errors.New("invalid login or password")

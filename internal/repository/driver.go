@@ -61,6 +61,24 @@ func (r *DriverRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Dr
 	return dd, nil
 }
 
+// LockByID is GetByID that also locks the driver's row until the transaction
+// ends (ctx must carry one); see TruckRepository.LockByID. Only the drivers
+// row is locked (FOR UPDATE OF d), not the joined user: editing the user's
+// name must not wait for an assignment.
+func (r *DriverRepository) LockByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error) {
+	if err := requireTx(ctx); err != nil {
+		return nil, err
+	}
+	row := r.q(ctx).QueryRow(ctx, driverDetailsSelect+`
+		WHERE d.id = $1 AND d.deleted_at IS NULL AND u.deleted_at IS NULL
+		FOR UPDATE OF d`, id)
+	dd, err := scanDriverDetails(row)
+	if err != nil {
+		return nil, mapDriverError("lock driver", err)
+	}
+	return dd, nil
+}
+
 // GetByUserID returns the driver profile of a user, or model.ErrNotFound.
 func (r *DriverRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*model.DriverDetails, error) {
 	row := r.q(ctx).QueryRow(ctx, driverDetailsSelect+`
