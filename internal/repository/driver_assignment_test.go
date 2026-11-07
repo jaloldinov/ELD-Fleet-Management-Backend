@@ -401,3 +401,97 @@ func TestDriverRepository_LockByID_HoldsTheUserAccount(t *testing.T) {
 		assert.False(t, r.active, "read after the deactivation's COMMIT, not before")
 	})
 }
+
+// day returns 2026-11-02 (a Monday) + d days, at hour h, UTC.
+func day(d, h int) time.Time { return time.Date(2026, 11, 2+d, h, 0, 0, 0, time.UTC) }
+
+// setPeriod rewrites a stint's times: Open always starts "now".
+func (f *assignmentFixture) setPeriod(t *testing.T, id uuid.UUID, start time.Time, end *time.Time) {
+	t.Helper()
+	_, err := f.db.Exec(context.Background(),
+		`UPDATE driver_truck_assignments SET started_at = $2, ended_at = $3 WHERE id = $1`, id, start, end)
+	require.NoError(t, err)
+}
+
+func TestDriverAssignmentRepository_ListHistory(t *testing.T) {
+	f := newAssignmentFixture(t)
+	ctx := context.Background()
+	ptr := func(t time.Time) *time.Time { return &t }
+
+	// Ali: truck 101 Mon 08:00 → Wed 12:00, then truck 102 from Wed 12:00 (still on it).
+	// Bob: co-driver on 101 Tue 00:00 → Tue 18:00.
+	aliOn1, err := f.open(f.ali, f.t1, model.AssignmentPrimary)
+	require.NoError(t, err)
+	_, err = f.assignments.EndOpenByDriver(ctx, f.ali, nil)
+	require.NoError(t, err)
+	aliOn2, err := f.open(f.ali, f.t2, model.AssignmentPrimary)
+	require.NoError(t, err)
+	bobOn1, err := f.open(f.bob, f.t1, model.AssignmentCoDriver)
+	require.NoError(t, err)
+	_, err = f.assignments.EndOpenByDriver(ctx, f.bob, nil)
+	require.NoError(t, err)
+	f.setPeriod(t, aliOn1.ID, day(0, 8), ptr(day(2, 12)))
+	f.setPeriod(t, aliOn2.ID, day(2, 12), nil)
+	f.setPeriod(t, bobOn1.ID, day(1, 0), ptr(day(1, 18)))
+
+	ids := func(filter model.DriverAssignmentFilter) []uuid.UUID {
+		t.Helper()
+		list, total, err := f.assignments.ListHistory(ctx, filter, 20, 0)
+		require.NoError(t, err)
+		require.Len(t, list, total)
+		out := make([]uuid.UUID, 0, len(list))
+		for _, r := range list {
+			out = append(out, r.Assignment.ID)
+		}
+		return out
+	}
+	alpha := &f.alpha.ID
+
+	assert.Equal(t, []uuid.UUID{aliOn2.ID, aliOn1.ID}, ids(model.DriverAssignmentFilter{CompanyID: alpha, DriverID: &f.ali}),
+		"a driver's trucks, newest first")
+	assert.Equal(t, []uuid.UUID{bobOn1.ID, aliOn1.ID}, ids(model.DriverAssignmentFilter{TruckID: &f.t1.ID}),
+		"a truck's drivers")
+	assert.Empty(t, ids(model.DriverAssignmentFilter{CompanyID: &f.bravo.ID}), "other company")
+
+	t.Run("at: who was in the truck at that moment", func(t *testing.T) {
+		assert.ElementsMatch(t, []uuid.UUID{aliOn1.ID, bobOn1.ID},
+			ids(model.DriverAssignmentFilter{TruckID: &f.t1.ID, Period: model.StintPeriod{At: ptr(day(1, 10))}}), "Tuesday 10:00: both")
+		assert.Equal(t, []uuid.UUID{aliOn2.ID},
+			ids(model.DriverAssignmentFilter{DriverID: &f.ali, Period: model.StintPeriod{At: ptr(day(2, 12))}}),
+			"Wednesday 12:00 sharp: the move moment belongs to the NEW stint, never to both")
+		assert.Equal(t, []uuid.UUID{aliOn2.ID},
+			ids(model.DriverAssignmentFilter{DriverID: &f.ali, Period: model.StintPeriod{At: ptr(day(30, 0))}}),
+			"a stint still running covers the future too")
+		assert.Empty(t, ids(model.DriverAssignmentFilter{CompanyID: alpha, Period: model.StintPeriod{At: ptr(day(0, 7))}}),
+			"before anything started")
+	})
+
+	t.Run("from/to: every stint touching the window", func(t *testing.T) {
+		assert.Equal(t, []uuid.UUID{aliOn2.ID},
+			ids(model.DriverAssignmentFilter{CompanyID: alpha, Period: model.StintPeriod{From: ptr(day(3, 0)), To: ptr(day(4, 0))}}),
+			"Thursday: only the stint still running")
+		assert.Equal(t, []uuid.UUID{bobOn1.ID, aliOn1.ID},
+			ids(model.DriverAssignmentFilter{CompanyID: alpha, Period: model.StintPeriod{From: ptr(day(1, 12)), To: ptr(day(1, 13))}}),
+			"Tuesday noon: Ali's Mon–Wed stint overlaps it too")
+		assert.Equal(t, []uuid.UUID{aliOn1.ID},
+			ids(model.DriverAssignmentFilter{CompanyID: alpha, Period: model.StintPeriod{To: ptr(day(0, 9))}}),
+			"only a 'to': everything that started before it")
+	})
+
+	t.Run("names come along, also for a deleted truck", func(t *testing.T) {
+		require.NoError(t, f.trucks.SoftDelete(ctx, f.t1.ID))
+		list, _, err := f.assignments.ListHistory(ctx, model.DriverAssignmentFilter{DriverID: &f.bob}, 20, 0)
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, "101", list[0].TruckUnitNumber)
+		assert.NotEmpty(t, list[0].DriverFirstName)
+	})
+
+	t.Run("pages", func(t *testing.T) {
+		list, total, err := f.assignments.ListHistory(ctx, model.DriverAssignmentFilter{CompanyID: alpha}, 1, 1)
+		require.NoError(t, err)
+		assert.Equal(t, 3, total)
+		require.Len(t, list, 1)
+		assert.Equal(t, bobOn1.ID, list[0].Assignment.ID, "second newest: Wed, TUE, Mon")
+	})
+}

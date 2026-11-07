@@ -529,6 +529,50 @@ definitions:
         example: "2026-11-07T08:00:00Z"
         type: string
     type: object
+  handler.DriverAssignmentRecordResponse:
+    properties:
+      company_id:
+        format: uuid
+        type: string
+      driver_first_name:
+        example: Ali
+        type: string
+      driver_id:
+        format: uuid
+        type: string
+      driver_last_name:
+        example: Valiyev
+        type: string
+      ended_at:
+        description: null = current
+        example: "2026-11-07T17:30:00Z"
+        type: string
+      ended_by:
+        format: uuid
+        type: string
+      id:
+        format: uuid
+        type: string
+      role:
+        enum:
+        - primary
+        - co_driver
+        example: primary
+        type: string
+      started_at:
+        example: "2026-11-07T08:00:00Z"
+        type: string
+      started_by:
+        description: null = the system
+        format: uuid
+        type: string
+      truck_id:
+        format: uuid
+        type: string
+      truck_unit_number:
+        example: "101"
+        type: string
+    type: object
   handler.DriverAssignmentResponse:
     properties:
       company_id:
@@ -621,6 +665,40 @@ definitions:
         type: string
       truck:
         $ref: '#/definitions/handler.TruckBoardResponse'
+    type: object
+  handler.ELDAssignmentResponse:
+    properties:
+      company_id:
+        format: uuid
+        type: string
+      eld_device_id:
+        format: uuid
+        type: string
+      ended_at:
+        description: null = still installed
+        example: "2026-11-09T16:00:00Z"
+        type: string
+      ended_by:
+        format: uuid
+        type: string
+      id:
+        format: uuid
+        type: string
+      serial_number:
+        example: PT30-0001
+        type: string
+      started_at:
+        example: "2026-11-07T07:30:00Z"
+        type: string
+      started_by:
+        format: uuid
+        type: string
+      truck_id:
+        format: uuid
+        type: string
+      truck_unit_number:
+        example: "101"
+        type: string
     type: object
   handler.ELDDeviceResponse:
     properties:
@@ -806,6 +884,22 @@ definitions:
         example: 57
         type: integer
     type: object
+  handler.ListDriverAssignmentsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.DriverAssignmentRecordResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 1
+        type: integer
+    type: object
   handler.ListDriversResponse:
     properties:
       items:
@@ -820,6 +914,22 @@ definitions:
         type: integer
       total:
         example: 8
+        type: integer
+    type: object
+  handler.ListELDAssignmentsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/handler.ELDAssignmentResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 1
         type: integer
     type: object
   handler.ListELDDevicesResponse:
@@ -3078,6 +3188,82 @@ paths:
       summary: What the company would be billed for
       tags:
       - billing
+  /api/v1/driver-assignments:
+    get:
+      description: |-
+        Requires permission: assignment:read
+        Who drove which truck when, newest first. Filter by driver ("Ali's trucks"), by truck ("101's drivers") and by time: at = stints running at that instant ("who drove 101 at 14:30 on Tuesday?"); from/to = stints overlapping [from, to). Deleted trucks and drivers stay in the history.
+      parameters:
+      - description: Only this driver
+        format: uuid
+        in: query
+        name: driver_id
+        type: string
+      - description: Only this truck
+        format: uuid
+        in: query
+        name: truck_id
+        type: string
+      - description: Running at this instant (RFC 3339)
+        format: date-time
+        in: query
+        name: at
+        type: string
+      - description: Overlapping [from, to) (RFC 3339)
+        format: date-time
+        in: query
+        name: from
+        type: string
+      - description: Overlapping [from, to) (RFC 3339)
+        format: date-time
+        in: query
+        name: to
+        type: string
+      - description: Platform users only
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListDriverAssignmentsResponse'
+        "400":
+          description: invalid filter
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Driver ↔ truck history
+      tags:
+      - assignments
   /api/v1/drivers:
     get:
       description: |-
@@ -3600,6 +3786,82 @@ paths:
       security:
       - BearerAuth: []
       summary: Pick my truck
+      tags:
+      - assignments
+  /api/v1/eld-assignments:
+    get:
+      description: |-
+        Requires permission: assignment:read
+        Which device was in which truck when, newest first. Same time filters as /driver-assignments.
+      parameters:
+      - description: Only this device
+        format: uuid
+        in: query
+        name: eld_device_id
+        type: string
+      - description: Only this truck
+        format: uuid
+        in: query
+        name: truck_id
+        type: string
+      - description: Installed at this instant (RFC 3339)
+        format: date-time
+        in: query
+        name: at
+        type: string
+      - description: Overlapping [from, to) (RFC 3339)
+        format: date-time
+        in: query
+        name: from
+        type: string
+      - description: Overlapping [from, to) (RFC 3339)
+        format: date-time
+        in: query
+        name: to
+        type: string
+      - description: Platform users only
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ListELDAssignmentsResponse'
+        "400":
+          description: invalid filter
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: ELD ↔ truck history
       tags:
       - assignments
   /api/v1/eld-devices:

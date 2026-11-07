@@ -29,6 +29,9 @@ type fakeAssignmentService struct {
 	device       *model.ELDDevice
 	board        *model.TruckBoard
 	driverTruck  *model.DriverTruck
+	gotHistory   service.AssignmentHistoryParams
+	driverPage   *service.DriverAssignmentPage
+	eldPage      *service.ELDAssignmentPage
 	err          error
 }
 
@@ -80,6 +83,23 @@ func (f *fakeAssignmentService) MyTruck(_ context.Context, p auth.Principal) (*m
 	return f.driverTruck, f.err
 }
 
+func (f *fakeAssignmentService) DriverHistory(_ context.Context, p auth.Principal, params service.AssignmentHistoryParams) (*service.DriverAssignmentPage, error) {
+	f.gotPrincipal, f.gotHistory = p, params
+	f.calls = append(f.calls, "DriverHistory")
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.driverPage, nil
+}
+func (f *fakeAssignmentService) ELDHistory(_ context.Context, p auth.Principal, params service.AssignmentHistoryParams) (*service.ELDAssignmentPage, error) {
+	f.gotPrincipal, f.gotHistory = p, params
+	f.calls = append(f.calls, "ELDHistory")
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.eldPage, nil
+}
+
 func sampleAssignment() *model.DriverAssignment {
 	return &model.DriverAssignment{ID: uuid.New(), CompanyID: testCompanyID, DriverID: uuid.New(), TruckID: uuid.New(),
 		Role: model.AssignmentPrimary, StartedAt: time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC), StartedBy: &testUserID}
@@ -101,6 +121,8 @@ func assignmentRouter(svc AssignmentService) *gin.Engine {
 	g.PUT("/:id/truck", h.Assign)
 	g.DELETE("/:id/truck", h.Unassign)
 	r.GET("/api/v1/trucks/:id/current", h.TruckBoard)
+	r.GET("/api/v1/driver-assignments", h.ListDriverAssignments)
+	r.GET("/api/v1/eld-assignments", h.ListELDAssignments)
 	e := r.Group("/api/v1/eld-devices")
 	e.PUT("/:id/truck", h.InstallDevice)
 	e.DELETE("/:id/truck", h.RemoveDevice)
@@ -338,4 +360,69 @@ func TestAssignmentHandler_Board_Errors(t *testing.T) {
 			assert.Equal(t, tt.want, rec.Code)
 		})
 	}
+}
+
+func TestAssignmentHandler_ListDriverAssignments(t *testing.T) {
+	a := sampleAssignment()
+	svc := &fakeAssignmentService{driverPage: &service.DriverAssignmentPage{
+		Items: []model.DriverAssignmentRecord{{Assignment: *a, TruckUnitNumber: "101", DriverFirstName: "Ali", DriverLastName: "Valiyev"}},
+		Total: 1, Page: 1, PageSize: 20,
+	}}
+	driverID, truckID := uuid.New(), uuid.New()
+
+	rec := do(assignmentRouter(svc), http.MethodGet, "/api/v1/driver-assignments?driver_id="+driverID.String()+
+		"&truck_id="+truckID.String()+"&at=2026-11-03T14:30:00Z&page=2&page_size=5", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	got := svc.gotHistory
+	assert.Equal(t, driverID, *got.DriverID)
+	assert.Equal(t, truckID, *got.TruckID)
+	assert.Equal(t, time.Date(2026, 11, 3, 14, 30, 0, 0, time.UTC), got.Period.At.UTC())
+	assert.Nil(t, got.Period.From)
+	assert.Equal(t, 2, got.Page)
+	assert.Equal(t, 5, got.PageSize)
+
+	body := rec.Body.String()
+	assert.Contains(t, body, `"truck_unit_number":"101"`)
+	assert.Contains(t, body, `"driver_first_name":"Ali"`)
+	assert.Contains(t, body, `"role":"primary"`, "the stint's own fields sit at the top level")
+	assert.Contains(t, body, `"ended_at":null`)
+	assert.Contains(t, body, `"total":1`)
+}
+
+func TestAssignmentHandler_ListDriverAssignments_BadQuery(t *testing.T) {
+	svc := &fakeAssignmentService{}
+
+	rec := do(assignmentRouter(svc), http.MethodGet, "/api/v1/driver-assignments?driver_id=x&at=yesterday&page=one", "")
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	details := decodeError(t, rec).Details
+	assert.Contains(t, details, "driver_id")
+	assert.Contains(t, details, "at")
+	assert.Contains(t, details, "page", "all problems reported at once")
+	assert.Empty(t, svc.calls)
+}
+
+func TestAssignmentHandler_ListELDAssignments(t *testing.T) {
+	ended := time.Date(2026, 11, 9, 16, 0, 0, 0, time.UTC)
+	svc := &fakeAssignmentService{eldPage: &service.ELDAssignmentPage{
+		Items: []model.ELDAssignmentRecord{{
+			Assignment:      model.ELDAssignment{ID: uuid.New(), ELDDeviceID: uuid.New(), TruckID: uuid.New(), EndedAt: &ended},
+			TruckUnitNumber: "205", SerialNumber: "PT30-0009",
+		}},
+		Total: 1, Page: 1, PageSize: 20,
+	}}
+	deviceID := uuid.New()
+
+	rec := do(assignmentRouter(svc), http.MethodGet, "/api/v1/eld-assignments?eld_device_id="+deviceID.String()+
+		"&from=2026-11-01T00:00:00Z&to=2026-11-10T00:00:00Z", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, deviceID, *svc.gotHistory.ELDDeviceID)
+	require.NotNil(t, svc.gotHistory.Period.From)
+	require.NotNil(t, svc.gotHistory.Period.To)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"serial_number":"PT30-0009"`)
+	assert.Contains(t, body, `"truck_unit_number":"205"`)
+	assert.Contains(t, body, `"ended_at":"2026-11-09T16:00:00Z"`)
 }

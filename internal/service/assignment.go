@@ -19,6 +19,7 @@ type DriverAssignmentRepository interface {
 	EndOpenByDriverUser(ctx context.Context, userID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error)
 	EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error)
 	ListCrew(ctx context.Context, truckID uuid.UUID) ([]model.CrewMember, error)
+	ListHistory(ctx context.Context, f model.DriverAssignmentFilter, limit, offset int) ([]model.DriverAssignmentRecord, int, error)
 }
 
 // ELDAssignmentRepository is what AssignmentService needs to store which
@@ -30,6 +31,7 @@ type ELDAssignmentRepository interface {
 	EndOpenByDevice(ctx context.Context, deviceID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error)
 	EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error)
 	GetInstalled(ctx context.Context, truckID uuid.UUID) (*model.InstalledDevice, error)
+	ListHistory(ctx context.Context, f model.ELDAssignmentFilter, limit, offset int) ([]model.ELDAssignmentRecord, int, error)
 }
 
 // DeviceLocker locks an ELD device's row (repository.ELDDeviceRepository).
@@ -186,6 +188,85 @@ func (s *AssignmentService) board(ctx context.Context, t model.Truck) (*model.Tr
 		return nil, err
 	}
 	return b, nil
+}
+
+// ---------- history ----------
+
+// AssignmentHistoryParams filters a stint history. Company users always get
+// their own company (CompanyID is for platform users).
+type AssignmentHistoryParams struct {
+	CompanyID   *uuid.UUID
+	DriverID    *uuid.UUID // driver stints only
+	ELDDeviceID *uuid.UUID // device stints only
+	TruckID     *uuid.UUID
+	Period      model.StintPeriod
+	Page        int
+	PageSize    int
+}
+
+type DriverAssignmentPage struct {
+	Items    []model.DriverAssignmentRecord
+	Total    int
+	Page     int
+	PageSize int
+}
+
+type ELDAssignmentPage struct {
+	Items    []model.ELDAssignmentRecord
+	Total    int
+	Page     int
+	PageSize int
+}
+
+// DriverHistory lists who drove which truck when, newest first. Filter by
+// driver ("Ali's trucks"), by truck ("101's drivers"), and by time (At:
+// "who drove 101 at 14:30 on Tuesday?").
+func (s *AssignmentService) DriverHistory(ctx context.Context, p auth.Principal, params AssignmentHistoryParams) (*DriverAssignmentPage, error) {
+	if err := validatePeriod(params.Period); err != nil {
+		return nil, err
+	}
+	page, size := normalizePage(ListParams{Page: params.Page, PageSize: params.PageSize})
+	f := model.DriverAssignmentFilter{
+		CompanyID: tenantScope(p, params.CompanyID), DriverID: params.DriverID, TruckID: params.TruckID, Period: params.Period,
+	}
+	items, total, err := s.assignments.ListHistory(ctx, f, size, (page-1)*size)
+	if err != nil {
+		return nil, err
+	}
+	return &DriverAssignmentPage{Items: items, Total: total, Page: page, PageSize: size}, nil
+}
+
+// ELDHistory lists which device was in which truck when, newest first.
+func (s *AssignmentService) ELDHistory(ctx context.Context, p auth.Principal, params AssignmentHistoryParams) (*ELDAssignmentPage, error) {
+	if err := validatePeriod(params.Period); err != nil {
+		return nil, err
+	}
+	page, size := normalizePage(ListParams{Page: params.Page, PageSize: params.PageSize})
+	f := model.ELDAssignmentFilter{
+		CompanyID: tenantScope(p, params.CompanyID), ELDDeviceID: params.ELDDeviceID, TruckID: params.TruckID, Period: params.Period,
+	}
+	items, total, err := s.elds.ListHistory(ctx, f, size, (page-1)*size)
+	if err != nil {
+		return nil, err
+	}
+	return &ELDAssignmentPage{Items: items, Total: total, Page: page, PageSize: size}, nil
+}
+
+// tenantScope: company users see their own company only (applied in SQL, so
+// another company's driver_id or truck_id simply matches nothing); platform
+// users see what they ask for.
+func tenantScope(p auth.Principal, requested *uuid.UUID) *uuid.UUID {
+	if !p.IsPlatformUser() {
+		return p.CompanyID
+	}
+	return requested
+}
+
+func validatePeriod(pd model.StintPeriod) error {
+	var v validation.Validator
+	v.Check(pd.At == nil || (pd.From == nil && pd.To == nil), "at", "cannot be combined with from/to")
+	v.Check(pd.From == nil || pd.To == nil || pd.From.Before(*pd.To), "to", "must be after from")
+	return v.Err()
 }
 
 // ---------- drivers ----------

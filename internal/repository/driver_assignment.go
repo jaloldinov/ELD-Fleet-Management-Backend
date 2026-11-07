@@ -137,6 +137,46 @@ func (r *DriverAssignmentRepository) EndOpenByTruck(ctx context.Context, truckID
 	return collectDriverAssignments(rows)
 }
 
+// ListHistory returns one page of stints, newest first, and the total.
+// Deleted drivers and trucks are included: history outlives them.
+func (r *DriverAssignmentRepository) ListHistory(ctx context.Context, f model.DriverAssignmentFilter, limit, offset int) ([]model.DriverAssignmentRecord, int, error) {
+	from := `
+		FROM driver_truck_assignments a
+		JOIN trucks t ON t.id = a.truck_id
+		JOIN drivers d ON d.id = a.driver_id
+		JOIN users u ON u.id = d.user_id
+		WHERE ($1::uuid IS NULL OR a.company_id = $1)
+		  AND ($2::uuid IS NULL OR a.driver_id = $2)
+		  AND ($3::uuid IS NULL OR a.truck_id = $3)` + stintPeriodSQL("a", "$4", "$5", "$6")
+	args := append([]any{f.CompanyID, f.DriverID, f.TruckID}, periodArgs(f.Period)...)
+
+	var total int
+	if err := r.q(ctx).QueryRow(ctx, `SELECT count(*)`+from, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count driver assignments: %w", err)
+	}
+	rows, err := r.q(ctx).Query(ctx, `
+		SELECT a.id, a.company_id, a.driver_id, a.truck_id, a.role,
+		       a.started_at, a.ended_at, a.started_by, a.ended_by,
+		       t.unit_number, u.first_name, u.last_name`+from+`
+		ORDER BY a.started_at DESC, a.id DESC
+		LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list driver assignments: %w", err)
+	}
+	list, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.DriverAssignmentRecord, error) {
+		var rec model.DriverAssignmentRecord
+		a := &rec.Assignment
+		err := row.Scan(&a.ID, &a.CompanyID, &a.DriverID, &a.TruckID, &a.Role,
+			&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy,
+			&rec.TruckUnitNumber, &rec.DriverFirstName, &rec.DriverLastName)
+		return rec, err
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("scan driver assignments: %w", err)
+	}
+	return list, total, nil
+}
+
 func collectDriverAssignments(rows pgx.Rows) ([]model.DriverAssignment, error) {
 	list, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.DriverAssignment, error) {
 		a, err := scanDriverAssignment(row)

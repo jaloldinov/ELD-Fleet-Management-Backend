@@ -96,6 +96,44 @@ func (r *ELDAssignmentRepository) EndOpenByTruck(ctx context.Context, truckID uu
 		RETURNING `+eldAssignmentColumns, truckID, endedBy)
 }
 
+// ListHistory returns one page of device stints, newest first, and the
+// total. Deleted devices and trucks are included: history outlives them.
+func (r *ELDAssignmentRepository) ListHistory(ctx context.Context, f model.ELDAssignmentFilter, limit, offset int) ([]model.ELDAssignmentRecord, int, error) {
+	from := `
+		FROM eld_truck_assignments a
+		JOIN trucks t ON t.id = a.truck_id
+		JOIN eld_devices e ON e.id = a.eld_device_id
+		WHERE ($1::uuid IS NULL OR a.company_id = $1)
+		  AND ($2::uuid IS NULL OR a.eld_device_id = $2)
+		  AND ($3::uuid IS NULL OR a.truck_id = $3)` + stintPeriodSQL("a", "$4", "$5", "$6")
+	args := append([]any{f.CompanyID, f.ELDDeviceID, f.TruckID}, periodArgs(f.Period)...)
+
+	var total int
+	if err := r.q(ctx).QueryRow(ctx, `SELECT count(*)`+from, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count eld assignments: %w", err)
+	}
+	rows, err := r.q(ctx).Query(ctx, `
+		SELECT a.id, a.company_id, a.eld_device_id, a.truck_id,
+		       a.started_at, a.ended_at, a.started_by, a.ended_by,
+		       t.unit_number, e.serial_number`+from+`
+		ORDER BY a.started_at DESC, a.id DESC
+		LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list eld assignments: %w", err)
+	}
+	list, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.ELDAssignmentRecord, error) {
+		var rec model.ELDAssignmentRecord
+		a := &rec.Assignment
+		err := row.Scan(&a.ID, &a.CompanyID, &a.ELDDeviceID, &a.TruckID,
+			&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy, &rec.TruckUnitNumber, &rec.SerialNumber)
+		return rec, err
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("scan eld assignments: %w", err)
+	}
+	return list, total, nil
+}
+
 func (r *ELDAssignmentRepository) one(ctx context.Context, op, sql string, args ...any) (*model.ELDAssignment, error) {
 	a, err := scanELDAssignment(r.q(ctx).QueryRow(ctx, sql, args...))
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +22,9 @@ type memAssignments struct {
 	ended       []model.DriverAssignment
 	userDrivers map[uuid.UUID]uuid.UUID // user id → driver id
 	names       map[uuid.UUID]string    // driver id → first name, for ListCrew
-	readOutside int                     // ListCrew calls outside a snapshot
+	historyF    model.DriverAssignmentFilter
+	historyPage [2]int // limit, offset
+	readOutside int    // ListCrew calls outside a snapshot
 	// endedMeanwhile: EndOpenByDriver finds nothing, as when the old truck
 	// was deleted (ending its stints) while we waited for its lock.
 	endedMeanwhile bool
@@ -109,10 +112,16 @@ func (m *memAssignments) ListCrew(ctx context.Context, truckID uuid.UUID) ([]mod
 	return crew, nil
 }
 
+func (m *memAssignments) ListHistory(_ context.Context, f model.DriverAssignmentFilter, limit, offset int) ([]model.DriverAssignmentRecord, int, error) {
+	m.historyF, m.historyPage = f, [2]int{limit, offset}
+	return nil, 0, nil
+}
+
 // memELDAssignments: device ↔ truck stints, with the database's two rules.
 type memELDAssignments struct {
-	open  map[uuid.UUID]*model.ELDAssignment // by device
-	ended []model.ELDAssignment
+	open     map[uuid.UUID]*model.ELDAssignment // by device
+	ended    []model.ELDAssignment
+	historyF model.ELDAssignmentFilter
 }
 
 func newMemELDAssignments() *memELDAssignments {
@@ -180,6 +189,11 @@ func (m *memELDAssignments) EndOpenByTruck(ctx context.Context, truckID uuid.UUI
 		return nil, err
 	}
 	return m.EndOpenByDevice(ctx, a.ELDDeviceID, endedBy)
+}
+
+func (m *memELDAssignments) ListHistory(_ context.Context, f model.ELDAssignmentFilter, _, _ int) ([]model.ELDAssignmentRecord, int, error) {
+	m.historyF = f
+	return nil, 0, nil
 }
 
 type lockingDevices struct {
@@ -927,4 +941,65 @@ func TestAssignmentService_MyTruck(t *testing.T) {
 
 	_, err = f.svc.MyTruck(ctx, companyAUser)
 	assert.ErrorIs(t, err, model.ErrNotFound, "not a driver")
+}
+
+// ---------- history ----------
+
+func TestAssignmentService_DriverHistory(t *testing.T) {
+	ctx := context.Background()
+	at := time.Date(2026, 11, 3, 14, 30, 0, 0, time.UTC)
+
+	t.Run("company users are kept in their company", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		other, truckID := uuid.New(), uuid.New()
+
+		page, err := f.svc.DriverHistory(ctx, companyAUser, AssignmentHistoryParams{
+			CompanyID: &other, TruckID: &truckID, Period: model.StintPeriod{At: &at}, Page: 2, PageSize: 10})
+
+		require.NoError(t, err)
+		assert.Equal(t, &companyA, f.assignments.historyF.CompanyID, "asked for another company: ignored")
+		assert.Equal(t, &truckID, f.assignments.historyF.TruckID)
+		assert.Equal(t, &at, f.assignments.historyF.Period.At)
+		assert.Equal(t, [2]int{10, 10}, f.assignments.historyPage)
+		assert.Equal(t, 2, page.Page)
+	})
+
+	t.Run("platform users choose the company, or see all", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+
+		_, err := f.svc.DriverHistory(ctx, platformAdmin, AssignmentHistoryParams{})
+
+		require.NoError(t, err)
+		assert.Nil(t, f.assignments.historyF.CompanyID)
+	})
+
+	t.Run("at and from/to are not combined", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+
+		_, err := f.svc.DriverHistory(ctx, companyAUser, AssignmentHistoryParams{Period: model.StintPeriod{At: &at, From: &at}})
+
+		requireValidationField(t, err, "at")
+	})
+
+	t.Run("to must be after from", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		later := at.Add(time.Hour)
+
+		_, err := f.svc.DriverHistory(ctx, companyAUser, AssignmentHistoryParams{Period: model.StintPeriod{From: &later, To: &at}})
+		requireValidationField(t, err, "to")
+
+		_, err = f.svc.DriverHistory(ctx, companyAUser, AssignmentHistoryParams{Period: model.StintPeriod{From: &at, To: &at}})
+		requireValidationField(t, err, "to")
+	})
+}
+
+func TestAssignmentService_ELDHistory(t *testing.T) {
+	f := newAssignmentSvcFixture()
+	deviceID := uuid.New()
+
+	_, err := f.svc.ELDHistory(context.Background(), companyAUser, AssignmentHistoryParams{ELDDeviceID: &deviceID})
+
+	require.NoError(t, err)
+	assert.Equal(t, &companyA, f.elds.historyF.CompanyID)
+	assert.Equal(t, &deviceID, f.elds.historyF.ELDDeviceID)
 }

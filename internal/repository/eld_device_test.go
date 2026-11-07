@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -210,4 +211,34 @@ func TestELDDeviceRepository_SoftDelete(t *testing.T) {
 
 	// The serial can be registered again.
 	f.device(t, f.alpha.ID, "PT30-0001")
+}
+
+func TestELDAssignmentRepository_ListHistory(t *testing.T) {
+	f := newELDFixture(t)
+	ctx := context.Background()
+	d := f.device(t, f.alpha.ID, "PT30-0001")
+	first, err := f.install(d, f.alphaT1)
+	require.NoError(t, err)
+	_, err = f.installs.EndOpenByDevice(ctx, d.ID, nil)
+	require.NoError(t, err)
+	second, err := f.install(d, f.alphaT2)
+	require.NoError(t, err)
+
+	list, total, err := f.installs.ListHistory(ctx, model.ELDAssignmentFilter{ELDDeviceID: &d.ID}, 20, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	assert.Equal(t, second.ID, list[0].Assignment.ID, "newest first")
+	assert.Equal(t, first.ID, list[1].Assignment.ID)
+	assert.Equal(t, "102", list[0].TruckUnitNumber)
+	assert.Equal(t, "PT30-0001", list[0].SerialNumber)
+
+	now := time.Now()
+	running, _, err := f.installs.ListHistory(ctx, model.ELDAssignmentFilter{
+		TruckID: &f.alphaT2.ID, Period: model.StintPeriod{At: &now}}, 20, 0)
+	require.NoError(t, err)
+	require.Len(t, running, 1, "the device in truck 102 right now")
+
+	_, total, err = f.installs.ListHistory(ctx, model.ELDAssignmentFilter{CompanyID: &f.bravo.ID}, 20, 0)
+	require.NoError(t, err)
+	assert.Zero(t, total, "other company")
 }

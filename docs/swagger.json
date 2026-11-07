@@ -2156,6 +2156,117 @@
                 }
             }
         },
+        "/api/v1/driver-assignments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:read\nWho drove which truck when, newest first. Filter by driver (\"Ali's trucks\"), by truck (\"101's drivers\") and by time: at = stints running at that instant (\"who drove 101 at 14:30 on Tuesday?\"); from/to = stints overlapping [from, to). Deleted trucks and drivers stay in the history.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Driver ↔ truck history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only this driver",
+                        "name": "driver_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only this truck",
+                        "name": "truck_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Running at this instant (RFC 3339)",
+                        "name": "at",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Overlapping [from, to) (RFC 3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Overlapping [from, to) (RFC 3339)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Platform users only",
+                        "name": "company_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20, max 100)",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListDriverAssignmentsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid filter",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers": {
             "get": {
                 "security": [
@@ -2921,6 +3032,117 @@
                     },
                     "404": {
                         "description": "driver not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/eld-assignments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:read\nWhich device was in which truck when, newest first. Same time filters as /driver-assignments.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "ELD ↔ truck history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only this device",
+                        "name": "eld_device_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only this truck",
+                        "name": "truck_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Installed at this instant (RFC 3339)",
+                        "name": "at",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Overlapping [from, to) (RFC 3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Overlapping [from, to) (RFC 3339)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Platform users only",
+                        "name": "company_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20, max 100)",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListELDAssignmentsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid filter",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:read",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -6355,6 +6577,65 @@
                 }
             }
         },
+        "handler.DriverAssignmentRecordResponse": {
+            "type": "object",
+            "properties": {
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "driver_first_name": {
+                    "type": "string",
+                    "example": "Ali"
+                },
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "driver_last_name": {
+                    "type": "string",
+                    "example": "Valiyev"
+                },
+                "ended_at": {
+                    "description": "null = current",
+                    "type": "string",
+                    "example": "2026-11-07T17:30:00Z"
+                },
+                "ended_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "primary",
+                        "co_driver"
+                    ],
+                    "example": "primary"
+                },
+                "started_at": {
+                    "type": "string",
+                    "example": "2026-11-07T08:00:00Z"
+                },
+                "started_by": {
+                    "description": "null = the system",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "truck_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "truck_unit_number": {
+                    "type": "string",
+                    "example": "101"
+                }
+            }
+        },
         "handler.DriverAssignmentResponse": {
             "type": "object",
             "properties": {
@@ -6477,6 +6758,52 @@
                 },
                 "truck": {
                     "$ref": "#/definitions/handler.TruckBoardResponse"
+                }
+            }
+        },
+        "handler.ELDAssignmentResponse": {
+            "type": "object",
+            "properties": {
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "eld_device_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ended_at": {
+                    "description": "null = still installed",
+                    "type": "string",
+                    "example": "2026-11-09T16:00:00Z"
+                },
+                "ended_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "serial_number": {
+                    "type": "string",
+                    "example": "PT30-0001"
+                },
+                "started_at": {
+                    "type": "string",
+                    "example": "2026-11-07T07:30:00Z"
+                },
+                "started_by": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "truck_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "truck_unit_number": {
+                    "type": "string",
+                    "example": "101"
                 }
             }
         },
@@ -6734,6 +7061,29 @@
                 }
             }
         },
+        "handler.ListDriverAssignmentsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.DriverAssignmentRecordResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
         "handler.ListDriversResponse": {
             "type": "object",
             "properties": {
@@ -6754,6 +7104,29 @@
                 "total": {
                     "type": "integer",
                     "example": 8
+                }
+            }
+        },
+        "handler.ListELDAssignmentsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.ELDAssignmentResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 1
                 }
             }
         },

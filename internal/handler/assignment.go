@@ -25,6 +25,8 @@ type AssignmentService interface {
 	TruckBoard(ctx context.Context, p auth.Principal, truckID uuid.UUID) (*model.TruckBoard, error)
 	DriverTruck(ctx context.Context, p auth.Principal, driverID uuid.UUID) (*model.DriverTruck, error)
 	MyTruck(ctx context.Context, p auth.Principal) (*model.DriverTruck, error)
+	DriverHistory(ctx context.Context, p auth.Principal, params service.AssignmentHistoryParams) (*service.DriverAssignmentPage, error)
+	ELDHistory(ctx context.Context, p auth.Principal, params service.AssignmentHistoryParams) (*service.ELDAssignmentPage, error)
 }
 
 // ---------- DTOs ----------
@@ -137,6 +139,57 @@ func newDriverTruckResponse(dt *model.DriverTruck) DriverTruckResponse {
 		r.Truck = &b
 	}
 	return r
+}
+
+// DriverAssignmentRecordResponse is a stint in the history, with the names
+// people know (they stay even after the truck or driver is deleted).
+type DriverAssignmentRecordResponse struct {
+	DriverAssignmentResponse
+	TruckUnitNumber string `json:"truck_unit_number" example:"101"`
+	DriverFirstName string `json:"driver_first_name" example:"Ali"`
+	DriverLastName  string `json:"driver_last_name" example:"Valiyev"`
+}
+
+type ListDriverAssignmentsResponse struct {
+	Items    []DriverAssignmentRecordResponse `json:"items"`
+	Page     int                              `json:"page" example:"1"`
+	PageSize int                              `json:"page_size" example:"20"`
+	Total    int                              `json:"total" example:"1"`
+}
+
+// ELDAssignmentResponse is one stint of a device in a truck.
+type ELDAssignmentResponse struct {
+	ID              uuid.UUID  `json:"id" swaggertype:"string" format:"uuid"`
+	CompanyID       uuid.UUID  `json:"company_id" swaggertype:"string" format:"uuid"`
+	ELDDeviceID     uuid.UUID  `json:"eld_device_id" swaggertype:"string" format:"uuid"`
+	SerialNumber    string     `json:"serial_number" example:"PT30-0001"`
+	TruckID         uuid.UUID  `json:"truck_id" swaggertype:"string" format:"uuid"`
+	TruckUnitNumber string     `json:"truck_unit_number" example:"101"`
+	StartedAt       time.Time  `json:"started_at" example:"2026-11-07T07:30:00Z"`
+	EndedAt         *time.Time `json:"ended_at" example:"2026-11-09T16:00:00Z"` // null = still installed
+	StartedBy       *uuid.UUID `json:"started_by" swaggertype:"string" format:"uuid"`
+	EndedBy         *uuid.UUID `json:"ended_by" swaggertype:"string" format:"uuid"`
+}
+
+type ListELDAssignmentsResponse struct {
+	Items    []ELDAssignmentResponse `json:"items"`
+	Page     int                     `json:"page" example:"1"`
+	PageSize int                     `json:"page_size" example:"20"`
+	Total    int                     `json:"total" example:"1"`
+}
+
+func newELDAssignmentResponse(r *model.ELDAssignmentRecord) ELDAssignmentResponse {
+	a := r.Assignment
+	out := ELDAssignmentResponse{
+		ID: a.ID, CompanyID: a.CompanyID, ELDDeviceID: a.ELDDeviceID, SerialNumber: r.SerialNumber,
+		TruckID: a.TruckID, TruckUnitNumber: r.TruckUnitNumber,
+		StartedAt: a.StartedAt.UTC(), StartedBy: a.StartedBy, EndedBy: a.EndedBy,
+	}
+	if a.EndedAt != nil {
+		ended := a.EndedAt.UTC()
+		out.EndedAt = &ended
+	}
+	return out
 }
 
 // ---------- Handler ----------
@@ -451,6 +504,133 @@ func (h *AssignmentHandler) MyTruck(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, newDriverTruckResponse(dt))
+}
+
+// ListDriverAssignments handles GET /api/v1/driver-assignments.
+//
+//	@Summary		Driver ↔ truck history
+//	@Description	Requires permission: assignment:read
+//	@Description	Who drove which truck when, newest first. Filter by driver ("Ali's trucks"), by truck ("101's drivers") and by time: at = stints running at that instant ("who drove 101 at 14:30 on Tuesday?"); from/to = stints overlapping [from, to). Deleted trucks and drivers stay in the history.
+//	@Tags			assignments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			driver_id	query		string	false	"Only this driver"						format(uuid)
+//	@Param			truck_id	query		string	false	"Only this truck"						format(uuid)
+//	@Param			at			query		string	false	"Running at this instant (RFC 3339)"	format(date-time)
+//	@Param			from		query		string	false	"Overlapping [from, to) (RFC 3339)"		format(date-time)
+//	@Param			to			query		string	false	"Overlapping [from, to) (RFC 3339)"		format(date-time)
+//	@Param			company_id	query		string	false	"Platform users only"					format(uuid)
+//	@Param			page		query		int		false	"Page number (default 1)"
+//	@Param			page_size	query		int		false	"Items per page (default 20, max 100)"
+//	@Success		200			{object}	ListDriverAssignmentsResponse
+//	@Failure		400			{object}	apierror.Response	"invalid filter"
+//	@Failure		401			{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402			{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403			{object}	apierror.Response	"missing permission assignment:read"
+//	@Failure		500			{object}	apierror.Response
+//	@Router			/api/v1/driver-assignments [get]
+func (h *AssignmentHandler) ListDriverAssignments(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	var v validation.Validator
+	params := historyParams(c, &v)
+	driverID, ok := queryUUID(c, "driver_id")
+	v.Check(ok, "driver_id", "must be a valid UUID")
+	if err := v.Err(); err != nil {
+		handleError(c, err)
+		return
+	}
+	params.DriverID = driverID
+
+	res, err := h.svc.DriverHistory(c.Request.Context(), p, params)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	items := make([]DriverAssignmentRecordResponse, 0, len(res.Items))
+	for i := range res.Items {
+		r := &res.Items[i]
+		items = append(items, DriverAssignmentRecordResponse{
+			DriverAssignmentResponse: newDriverAssignmentResponse(&r.Assignment),
+			TruckUnitNumber:          r.TruckUnitNumber, DriverFirstName: r.DriverFirstName, DriverLastName: r.DriverLastName,
+		})
+	}
+	c.JSON(http.StatusOK, ListDriverAssignmentsResponse{Items: items, Page: res.Page, PageSize: res.PageSize, Total: res.Total})
+}
+
+// ListELDAssignments handles GET /api/v1/eld-assignments.
+//
+//	@Summary		ELD ↔ truck history
+//	@Description	Requires permission: assignment:read
+//	@Description	Which device was in which truck when, newest first. Same time filters as /driver-assignments.
+//	@Tags			assignments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			eld_device_id	query		string	false	"Only this device"						format(uuid)
+//	@Param			truck_id		query		string	false	"Only this truck"						format(uuid)
+//	@Param			at				query		string	false	"Installed at this instant (RFC 3339)"	format(date-time)
+//	@Param			from			query		string	false	"Overlapping [from, to) (RFC 3339)"		format(date-time)
+//	@Param			to				query		string	false	"Overlapping [from, to) (RFC 3339)"		format(date-time)
+//	@Param			company_id		query		string	false	"Platform users only"					format(uuid)
+//	@Param			page			query		int		false	"Page number (default 1)"
+//	@Param			page_size		query		int		false	"Items per page (default 20, max 100)"
+//	@Success		200				{object}	ListELDAssignmentsResponse
+//	@Failure		400				{object}	apierror.Response	"invalid filter"
+//	@Failure		401				{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402				{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403				{object}	apierror.Response	"missing permission assignment:read"
+//	@Failure		500				{object}	apierror.Response
+//	@Router			/api/v1/eld-assignments [get]
+func (h *AssignmentHandler) ListELDAssignments(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	var v validation.Validator
+	params := historyParams(c, &v)
+	deviceID, ok := queryUUID(c, "eld_device_id")
+	v.Check(ok, "eld_device_id", "must be a valid UUID")
+	if err := v.Err(); err != nil {
+		handleError(c, err)
+		return
+	}
+	params.ELDDeviceID = deviceID
+
+	res, err := h.svc.ELDHistory(c.Request.Context(), p, params)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	items := make([]ELDAssignmentResponse, 0, len(res.Items))
+	for i := range res.Items {
+		items = append(items, newELDAssignmentResponse(&res.Items[i]))
+	}
+	c.JSON(http.StatusOK, ListELDAssignmentsResponse{Items: items, Page: res.Page, PageSize: res.PageSize, Total: res.Total})
+}
+
+// historyParams reads the query parameters both histories share; problems
+// go into v, so all of them are reported at once.
+func historyParams(c *gin.Context, v *validation.Validator) service.AssignmentHistoryParams {
+	const timeMsg = "must be an RFC 3339 time, e.g. 2026-11-03T14:30:00Z"
+	var p service.AssignmentHistoryParams
+	var ok bool
+	p.Page, ok = queryInt(c, "page")
+	v.Check(ok, "page", "must be an integer")
+	p.PageSize, ok = queryInt(c, "page_size")
+	v.Check(ok, "page_size", "must be an integer")
+	p.CompanyID, ok = queryUUID(c, "company_id")
+	v.Check(ok, "company_id", "must be a valid UUID")
+	p.TruckID, ok = queryUUID(c, "truck_id")
+	v.Check(ok, "truck_id", "must be a valid UUID")
+	p.Period.At, ok = queryTime(c, "at")
+	v.Check(ok, "at", timeMsg)
+	p.Period.From, ok = queryTime(c, "from")
+	v.Check(ok, "from", timeMsg)
+	p.Period.To, ok = queryTime(c, "to")
+	v.Check(ok, "to", timeMsg)
+	return p
 }
 
 // bindAssignDriver reads the body; truck_id is required. The role is checked

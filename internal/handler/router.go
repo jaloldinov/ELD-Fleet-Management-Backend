@@ -202,6 +202,12 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	// Who drives it now and which device is in it.
 	trucks.GET("/:id/current", perm.Require(model.PermAssignmentRead), h.Assignment.TruckBoard)
 
+	// History: who drove which truck when, which device was where. Lists
+	// with filters (not /trucks/:id/...), so a deleted truck's history
+	// stays reachable.
+	product.GET("/driver-assignments", perm.Require(model.PermAssignmentRead), h.Assignment.ListDriverAssignments)
+	product.GET("/eld-assignments", perm.Require(model.PermAssignmentRead), h.Assignment.ListELDAssignments)
+
 	// Installing/removing a device is an edit of the device: eld:update.
 	elds := product.Group("/eld-devices")
 	elds.POST("", perm.Require(model.PermELDCreate), h.ELDDevice.Create)

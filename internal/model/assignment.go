@@ -78,3 +78,46 @@ type DriverTruck struct {
 	Assignment *DriverAssignment
 	Board      *TruckBoard
 }
+
+// StintPeriod filters stints by time. At: stints running at that instant
+// ("who drove truck 101 at 14:30?"). From/To: stints that overlap
+// [From, To), even partly. At and From/To are not combined.
+type StintPeriod struct {
+	At       *time.Time
+	From, To *time.Time
+}
+
+// DriverAssignmentFilter narrows the driver stint history. The zero value
+// means "no filter".
+type DriverAssignmentFilter struct {
+	CompanyID *uuid.UUID
+	DriverID  *uuid.UUID
+	TruckID   *uuid.UUID
+	Period    StintPeriod
+}
+
+// DriverAssignmentRecord is a stint with the names people know: the truck's
+// unit number and the driver's name. Deleted trucks and drivers keep theirs
+// here: history outlives them.
+type DriverAssignmentRecord struct {
+	Assignment      DriverAssignment
+	TruckUnitNumber string
+	DriverFirstName string
+	DriverLastName  string
+}
+
+// ELDAssignmentFilter narrows the device stint history.
+type ELDAssignmentFilter struct {
+	CompanyID   *uuid.UUID
+	ELDDeviceID *uuid.UUID
+	TruckID     *uuid.UUID
+	Period      StintPeriod
+}
+
+// ELDAssignmentRecord is a device stint with the device's serial number and
+// the truck's unit number.
+type ELDAssignmentRecord struct {
+	Assignment      ELDAssignment
+	TruckUnitNumber string
+	SerialNumber    string
+}
