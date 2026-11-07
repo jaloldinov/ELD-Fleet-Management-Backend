@@ -258,6 +258,7 @@ func resetDatabase(pool *pgxpool.Pool) error {
 		DELETE FROM subscriptions; -- items go with them (ON DELETE CASCADE)
 		DELETE FROM prices;
 		DELETE FROM products;
+		DELETE FROM driver_truck_assignments; -- history: before drivers and trucks
 		DELETE FROM eld_devices;
 		DELETE FROM trucks;
 		DELETE FROM drivers;
