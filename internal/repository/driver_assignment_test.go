@@ -285,3 +285,118 @@ func TestTruckRepository_LockByID_WaitsAndSeesNewState(t *testing.T) {
 	require.NoError(t, <-aDone)
 	assert.ErrorIs(t, <-bDone, model.ErrNotFound, "B re-reads the row after A's COMMIT")
 }
+
+func TestDriverAssignmentRepository_EndOpenByDriverUser(t *testing.T) {
+	f := newAssignmentFixture(t)
+	ctx := context.Background()
+	_, err := f.open(f.ali, f.t1, model.AssignmentPrimary)
+	require.NoError(t, err)
+	ali, err := f.drivers.GetByID(ctx, f.ali)
+	require.NoError(t, err)
+
+	// DriverService deletes the profile first, then the user, in one
+	// transaction: the stint must still be found through the deleted profile.
+	require.NoError(t, f.drivers.SoftDelete(ctx, f.ali))
+	ended, err := f.assignments.EndOpenByDriverUser(ctx, ali.User.ID, nil)
+
+	require.NoError(t, err)
+	require.Len(t, ended, 1)
+	assert.Equal(t, f.t1.ID, ended[0].TruckID)
+	assert.False(t, ended[0].IsCurrent())
+
+	none, err := f.assignments.EndOpenByDriverUser(ctx, uuid.New(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, none, "not a driver: nothing to end")
+}
+
+// The race FOR SHARE OF u closes: an assignment reads "account active" while
+// an admin disables the account. Whoever comes second must wait, and then
+// see what the first one did.
+func TestDriverRepository_LockByID_HoldsTheUserAccount(t *testing.T) {
+	f := newAssignmentFixture(t)
+	ctx := context.Background()
+	ali, err := f.drivers.GetByID(ctx, f.ali)
+	require.NoError(t, err)
+	// conn: inside a transaction when ctx carries one, like repository code.
+	disable := func(ctx context.Context) error {
+		_, err := conn(ctx, f.db).Exec(ctx, `UPDATE users SET is_active = false WHERE id = $1`, ali.User.ID)
+		return err
+	}
+
+	t.Run("assignment first: the deactivation waits", func(t *testing.T) {
+		locked, release := make(chan struct{}), make(chan struct{})
+		releaseA := sync.OnceFunc(func() { close(release) })
+		defer releaseA()
+		aDone := make(chan error, 1)
+		go func() {
+			aDone <- f.tx.WithinTx(ctx, func(ctx context.Context) error {
+				if _, err := f.drivers.LockByID(ctx, f.ali); err != nil {
+					return err
+				}
+				close(locked)
+				<-release
+				return nil
+			})
+		}()
+		<-locked
+
+		bDone := make(chan error, 1)
+		go func() { bDone <- disable(ctx) }()
+		select {
+		case err := <-bDone:
+			t.Fatalf("the deactivation did not wait for the assignment (err: %v)", err)
+		case <-time.After(200 * time.Millisecond):
+		}
+		releaseA()
+		require.NoError(t, <-aDone)
+		require.NoError(t, <-bDone)
+	})
+
+	_, err = f.db.Exec(ctx, `UPDATE users SET is_active = true WHERE id = $1`, ali.User.ID)
+	require.NoError(t, err)
+
+	t.Run("deactivation first: the assignment waits and sees it", func(t *testing.T) {
+		locked, release := make(chan struct{}), make(chan struct{})
+		releaseB := sync.OnceFunc(func() { close(release) })
+		defer releaseB()
+		bDone := make(chan error, 1)
+		go func() {
+			bDone <- f.tx.WithinTx(ctx, func(ctx context.Context) error {
+				if err := disable(ctx); err != nil {
+					return err
+				}
+				close(locked)
+				<-release
+				return nil
+			})
+		}()
+		<-locked
+
+		type result struct {
+			active bool
+			err    error
+		}
+		aDone := make(chan result, 1)
+		go func() {
+			var r result
+			r.err = f.tx.WithinTx(ctx, func(ctx context.Context) error {
+				dd, err := f.drivers.LockByID(ctx, f.ali)
+				if err == nil {
+					r.active = dd.User.IsActive
+				}
+				return err
+			})
+			aDone <- r
+		}()
+		select {
+		case r := <-aDone:
+			t.Fatalf("the assignment did not wait for the deactivation (%+v)", r)
+		case <-time.After(200 * time.Millisecond):
+		}
+		releaseB()
+		require.NoError(t, <-bDone)
+		r := <-aDone
+		require.NoError(t, r.err)
+		assert.False(t, r.active, "read after the deactivation's COMMIT, not before")
+	})
+}

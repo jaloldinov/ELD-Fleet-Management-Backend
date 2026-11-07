@@ -132,15 +132,17 @@ func run() error {
 		return err
 	}
 
-	userSvc := service.NewUserService(userRepo, companyRepo, sessionRepo, hasher, auditor)
+	// Who drives which truck. Built first: deactivating a user or a truck
+	// takes the driver off the truck (UserService, TruckService use it).
 	driverRepo := repository.NewDriverRepository(pool)
+	truckRepo := repository.NewTruckRepository(pool)
+	assignmentSvc := service.NewAssignmentService(repository.NewDriverAssignmentRepository(pool), driverRepo, truckRepo, auditor)
+
+	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)
 
 	// Shared: TruckService manages trucks; ELDDeviceService looks them up.
-	truckRepo := repository.NewTruckRepository(pool)
-	truckSvc := service.NewTruckService(truckRepo, companyRepo, auditor)
-
-	assignmentSvc := service.NewAssignmentService(repository.NewDriverAssignmentRepository(pool), driverRepo, truckRepo, auditor)
+	truckSvc := service.NewTruckService(truckRepo, assignmentSvc, companyRepo, auditor)
 
 	// Background jobs run until jobsCtx is cancelled (when run returns).
 	jobsCtx, stopJobs := context.WithCancel(context.Background())

@@ -67,13 +67,16 @@ func run() error {
 
 	// Same layers as the API: the CLI is just another "front door" to the
 	// service, so validation and hashing rules are identical.
+	// Recorded like any change; the actor is the system (no user).
+	auditor := service.NewAuditor(repository.NewTxManager(pool), repository.NewAuditRepository(pool))
 	users := service.NewUserService(
 		repository.NewUserRepository(pool),
+		service.NewAssignmentService(repository.NewDriverAssignmentRepository(pool),
+			repository.NewDriverRepository(pool), repository.NewTruckRepository(pool), auditor),
 		repository.NewCompanyRepository(pool),
 		repository.NewSessionRepository(pool),
 		auth.NewBcryptHasher(auth.DefaultBcryptCost),
-		// Recorded like any change; the actor is the system (no user).
-		service.NewAuditor(repository.NewTxManager(pool), repository.NewAuditRepository(pool)),
+		auditor,
 	)
 
 	// The CLI acts as the system itself: the explicit SystemPrincipal makes

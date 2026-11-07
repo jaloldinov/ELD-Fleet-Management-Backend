@@ -20,9 +20,16 @@ import (
 type TruckRepository interface {
 	Create(ctx context.Context, t model.Truck) (*model.Truck, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Truck, error)
+	LockByID(ctx context.Context, id uuid.UUID) (*model.Truck, error)
 	List(ctx context.Context, f model.TruckFilter, limit, offset int) ([]model.Truck, int, error)
 	Update(ctx context.Context, t model.Truck) (*model.Truck, error)
 	SoftDelete(ctx context.Context, id uuid.UUID) error
+}
+
+// TruckReleaser takes the drivers off a truck that leaves service
+// (AssignmentService).
+type TruckReleaser interface {
+	ReleaseTruck(ctx context.Context, p auth.Principal, truckID uuid.UUID) error
 }
 
 var (
@@ -72,6 +79,7 @@ type TruckPage struct {
 
 type TruckService struct {
 	repo      TruckRepository
+	drivers   TruckReleaser
 	companies CompanyLookup
 	audit     *Auditor
 	now       func() time.Time // for the model-year rule; replaceable in tests
@@ -82,8 +90,8 @@ type TruckService struct {
 	fleetChanged func(ctx context.Context, companyID uuid.UUID)
 }
 
-func NewTruckService(repo TruckRepository, companies CompanyLookup, audit *Auditor) *TruckService {
-	return &TruckService{repo: repo, companies: companies, audit: audit, now: time.Now,
+func NewTruckService(repo TruckRepository, drivers TruckReleaser, companies CompanyLookup, audit *Auditor) *TruckService {
+	return &TruckService{repo: repo, drivers: drivers, companies: companies, audit: audit, now: time.Now,
 		fleetChanged: func(context.Context, uuid.UUID) {}}
 }
 
@@ -198,6 +206,12 @@ func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUI
 
 	var updated *model.Truck
 	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		// Taken out of service: nobody drives it any more.
+		if before.IsActive && !t.IsActive {
+			if err := s.releaseDrivers(ctx, p, id); err != nil {
+				return err
+			}
+		}
 		var err error
 		if updated, err = s.repo.Update(ctx, *t); err != nil {
 			return err
@@ -222,6 +236,9 @@ func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUI
 		return err
 	}
 	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		if err := s.releaseDrivers(ctx, p, id); err != nil {
+			return err
+		}
 		if err := s.repo.SoftDelete(ctx, id); err != nil {
 			return err
 		}
@@ -234,6 +251,17 @@ func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUI
 		s.fleetChanged(ctx, t.CompanyID)
 	}
 	return nil
+}
+
+// releaseDrivers ends the stints on a truck leaving service. The truck is
+// LOCKED first, in this transaction: an assignment to it that is in
+// progress finishes before we look (so its stint is ended too), and one
+// that starts later waits and then finds the truck gone or inactive.
+func (s *TruckService) releaseDrivers(ctx context.Context, p auth.Principal, id uuid.UUID) error {
+	if _, err := s.repo.LockByID(ctx, id); err != nil {
+		return err
+	}
+	return s.drivers.ReleaseTruck(ctx, p, id)
 }
 
 func (s *TruckService) record(ctx context.Context, p auth.Principal, action string, t *model.Truck, ch model.AuditChanges) error {

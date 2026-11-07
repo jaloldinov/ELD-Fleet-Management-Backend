@@ -16,6 +16,8 @@ type DriverAssignmentRepository interface {
 	Open(ctx context.Context, a model.DriverAssignment) (*model.DriverAssignment, error)
 	GetOpenByDriver(ctx context.Context, driverID uuid.UUID) (*model.DriverAssignment, error)
 	EndOpenByDriver(ctx context.Context, driverID uuid.UUID, endedBy *uuid.UUID) (*model.DriverAssignment, error)
+	EndOpenByDriverUser(ctx context.Context, userID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error)
+	EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error)
 }
 
 // AssignmentDrivers finds and locks drivers (repository.DriverRepository).
@@ -135,9 +137,12 @@ func (s *AssignmentService) assign(ctx context.Context, p auth.Principal, driver
 		}
 
 		// 4. Moving: end the old stint first, or the new one would break
-		// "one open stint per driver".
+		// "one open stint per driver". ErrNotFound: the old truck was just
+		// deleted or deactivated and its stints ended while we waited for
+		// the row. Nothing left to end, so carry on.
 		if current != nil {
-			if _, err := s.assignments.EndOpenByDriver(ctx, driverID, actorID(p)); err != nil {
+			_, err := s.assignments.EndOpenByDriver(ctx, driverID, actorID(p))
+			if err != nil && !errors.Is(err, model.ErrNotFound) {
 				return err
 			}
 		}
@@ -169,6 +174,49 @@ func (s *AssignmentService) unassign(ctx context.Context, p auth.Principal, driv
 		}
 		return s.record(ctx, p, "driver.unassign_truck", dd.Driver, assignmentChanges(ended, nil))
 	})
+}
+
+// ReleaseTruck ends every stint on a truck that leaves service (deleted or
+// deactivated), and records each on its driver. It runs in the CALLER's
+// transaction (ctx must carry it), which must have LOCKED the truck first:
+// an assignment in progress then finishes before we look, so its stint is
+// ended too, and a later one waits and sees the truck gone.
+//
+// Why not one SQL statement (a CTE) inside the truck's UPDATE? A statement
+// sees the data as it was when it STARTED. If it waits for the truck's lock
+// while an assignment commits, the CTE never sees that new stint, and it
+// stays open on a deleted truck. Separate statements after the lock do.
+func (s *AssignmentService) ReleaseTruck(ctx context.Context, p auth.Principal, truckID uuid.UUID) error {
+	ended, err := s.assignments.EndOpenByTruck(ctx, truckID, actorID(p))
+	if err != nil {
+		return err
+	}
+	return s.recordReleased(ctx, p, ended)
+}
+
+// ReleaseUser ends the stint of the driver behind a user account that is
+// being deactivated or deleted (no stint, or not a driver: nothing to do).
+// It runs in the CALLER's transaction, AFTER the caller updated the users
+// row: that UPDATE waited for any assignment holding the account (see
+// DriverRepository.LockByID), so its stint is visible and ended here.
+func (s *AssignmentService) ReleaseUser(ctx context.Context, p auth.Principal, userID uuid.UUID) error {
+	ended, err := s.assignments.EndOpenByDriverUser(ctx, userID, actorID(p))
+	if err != nil {
+		return err
+	}
+	return s.recordReleased(ctx, p, ended)
+}
+
+// recordReleased audits each ended stint on its driver, like an unassign.
+func (s *AssignmentService) recordReleased(ctx context.Context, p auth.Principal, ended []model.DriverAssignment) error {
+	for i := range ended {
+		a := &ended[i]
+		d := model.Driver{ID: a.DriverID, CompanyID: a.CompanyID}
+		if err := s.record(ctx, p, "driver.unassign_truck", d, assignmentChanges(a, nil)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // lockDriverInScope locks the driver; drivers of other companies "do not

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ type memTruckRepo struct {
 	trucks  map[uuid.UUID]*model.Truck
 	created []model.Truck
 	listF   model.TruckFilter
+	events  []string // "lock", and "release" from fakeReleaser: their order
 }
 
 func newMemTruckRepo() *memTruckRepo { return &memTruckRepo{trucks: map[uuid.UUID]*model.Truck{}} }
@@ -48,6 +50,14 @@ func (m *memTruckRepo) GetByID(_ context.Context, id uuid.UUID) (*model.Truck, e
 	return &c, nil
 }
 
+func (m *memTruckRepo) LockByID(ctx context.Context, id uuid.UUID) (*model.Truck, error) {
+	if !inTx(ctx) {
+		return nil, errors.New("lock outside transaction")
+	}
+	m.events = append(m.events, "lock")
+	return m.GetByID(ctx, id)
+}
+
 func (m *memTruckRepo) List(_ context.Context, f model.TruckFilter, _, _ int) ([]model.Truck, int, error) {
 	m.listF = f
 	return nil, 0, nil
@@ -69,11 +79,17 @@ func newTruckSvc() (*TruckService, *memTruckRepo) {
 }
 
 func newAuditedTruckSvc() (*TruckService, *memTruckRepo, *memAuditStore) {
+	svc, repo, store, _ := newTruckSvcWithReleaser()
+	return svc, repo, store
+}
+
+func newTruckSvcWithReleaser() (*TruckService, *memTruckRepo, *memAuditStore, *fakeReleaser) {
 	repo := newMemTruckRepo()
 	audit, store := newTestAuditor()
-	svc := NewTruckService(repo, fakeCompanies{}, audit)
+	rel := &fakeReleaser{log: &repo.events}
+	svc := NewTruckService(repo, rel, fakeCompanies{}, audit)
 	svc.now = func() time.Time { return time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC) }
-	return svc, repo, store
+	return svc, repo, store, rel
 }
 
 func validTruckInput() CreateTruckInput {
@@ -305,4 +321,41 @@ func TestTruckService_TellsBillingWhenTheFleetChanges(t *testing.T) {
 	_, err = svc.Create(ctx, companyAUser, CreateTruckInput{UnitNumber: "bad unit!", VIN: validVIN})
 	require.Error(t, err)
 	assert.Len(t, told, 3, "a failed change tells nobody")
+}
+
+func TestTruckService_LeavingServiceReleasesDrivers(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("delete: lock, then release, in the transaction", func(t *testing.T) {
+		svc, repo, _, rel := newTruckSvcWithReleaser()
+		tr := repo.add(companyA)
+
+		require.NoError(t, svc.Delete(ctx, companyAUser, tr.ID))
+
+		assert.Equal(t, []uuid.UUID{tr.ID}, rel.trucks)
+		assert.Equal(t, []string{"lock", "release"}, repo.events, "lock first, or an assignment could slip in")
+		assert.True(t, rel.allInTx)
+	})
+
+	t.Run("deactivate", func(t *testing.T) {
+		svc, repo, _, rel := newTruckSvcWithReleaser()
+		tr := repo.add(companyA)
+
+		_, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{IsActive: ptr(false)})
+
+		require.NoError(t, err)
+		assert.Equal(t, []uuid.UUID{tr.ID}, rel.trucks)
+		assert.Equal(t, []string{"lock", "release"}, repo.events)
+	})
+
+	t.Run("other edits keep the drivers", func(t *testing.T) {
+		svc, repo, _, rel := newTruckSvcWithReleaser()
+		tr := repo.add(companyA)
+
+		_, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Make: ptr("Volvo"), IsActive: ptr(true)})
+
+		require.NoError(t, err)
+		assert.Empty(t, rel.trucks)
+		assert.Empty(t, repo.events, "no lock needed")
+	})
 }

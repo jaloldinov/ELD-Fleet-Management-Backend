@@ -92,6 +92,23 @@ func (r *DriverAssignmentRepository) EndOpenByDriver(ctx context.Context, driver
 	return a, nil
 }
 
+// EndOpenByDriverUser ends the current stint of the driver behind a user
+// account (being deactivated or deleted) and returns it; an empty slice if
+// that user drives no truck or is no driver. Deleted driver profiles count
+// too: DriverService deletes the profile before the user, in the same
+// transaction.
+func (r *DriverAssignmentRepository) EndOpenByDriverUser(ctx context.Context, userID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error) {
+	rows, err := r.q(ctx).Query(ctx, `
+		UPDATE driver_truck_assignments SET ended_at = now(), ended_by = $2
+		WHERE ended_at IS NULL
+		  AND driver_id IN (SELECT id FROM drivers WHERE user_id = $1)
+		RETURNING `+driverAssignmentColumns, userID, endedBy)
+	if err != nil {
+		return nil, fmt.Errorf("end user's driver assignments: %w", err)
+	}
+	return collectDriverAssignments(rows)
+}
+
 // EndOpenByTruck ends every current stint on the truck (it is being deleted
 // or taken out of service) and returns them. None open is not an error.
 func (r *DriverAssignmentRepository) EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error) {

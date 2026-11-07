@@ -16,12 +16,16 @@ import (
 // memAssignments is an in-memory stint store with the same two rules as the
 // database's partial unique indexes.
 type memAssignments struct {
-	open  map[uuid.UUID]*model.DriverAssignment // by driver
-	ended []model.DriverAssignment
+	open        map[uuid.UUID]*model.DriverAssignment // by driver
+	ended       []model.DriverAssignment
+	userDrivers map[uuid.UUID]uuid.UUID // user id → driver id
+	// endedMeanwhile: EndOpenByDriver finds nothing, as when the old truck
+	// was deleted (ending its stints) while we waited for its lock.
+	endedMeanwhile bool
 }
 
 func newMemAssignments() *memAssignments {
-	return &memAssignments{open: map[uuid.UUID]*model.DriverAssignment{}}
+	return &memAssignments{open: map[uuid.UUID]*model.DriverAssignment{}, userDrivers: map[uuid.UUID]uuid.UUID{}}
 }
 
 func (m *memAssignments) Open(_ context.Context, a model.DriverAssignment) (*model.DriverAssignment, error) {
@@ -49,6 +53,9 @@ func (m *memAssignments) GetOpenByDriver(_ context.Context, driverID uuid.UUID) 
 }
 
 func (m *memAssignments) EndOpenByDriver(_ context.Context, driverID uuid.UUID, endedBy *uuid.UUID) (*model.DriverAssignment, error) {
+	if m.endedMeanwhile {
+		delete(m.open, driverID)
+	}
 	a, ok := m.open[driverID]
 	if !ok {
 		return nil, model.ErrNotFound
@@ -59,6 +66,58 @@ func (m *memAssignments) EndOpenByDriver(_ context.Context, driverID uuid.UUID, 
 	m.ended = append(m.ended, *a)
 	c := *a
 	return &c, nil
+}
+
+func (m *memAssignments) EndOpenByDriverUser(ctx context.Context, userID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error) {
+	driverID, ok := m.userDrivers[userID]
+	if !ok {
+		return nil, nil // not a driver
+	}
+	a, err := m.EndOpenByDriver(ctx, driverID, endedBy)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil, nil
+	}
+	return []model.DriverAssignment{*a}, err
+}
+
+func (m *memAssignments) EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error) {
+	var out []model.DriverAssignment
+	for driverID, a := range m.open {
+		if a.TruckID == truckID {
+			ended, _ := m.EndOpenByDriver(ctx, driverID, endedBy)
+			out = append(out, *ended)
+		}
+	}
+	return out, nil
+}
+
+// fakeReleaser stands in for AssignmentService in TruckService and
+// UserService tests.
+type fakeReleaser struct {
+	trucks, users []uuid.UUID
+	allInTx       bool
+	calls         int
+	log           *[]string // optional: shared event log, to check order
+}
+
+func (f *fakeReleaser) called(ctx context.Context) {
+	f.allInTx = (f.calls == 0 || f.allInTx) && inTx(ctx)
+	f.calls++
+	if f.log != nil {
+		*f.log = append(*f.log, "release")
+	}
+}
+
+func (f *fakeReleaser) ReleaseTruck(ctx context.Context, _ auth.Principal, truckID uuid.UUID) error {
+	f.called(ctx)
+	f.trucks = append(f.trucks, truckID)
+	return nil
+}
+
+func (f *fakeReleaser) ReleaseUser(ctx context.Context, _ auth.Principal, userID uuid.UUID) error {
+	f.called(ctx)
+	f.users = append(f.users, userID)
+	return nil
 }
 
 // lockLog records which rows were locked, in order. Locking outside a
@@ -113,6 +172,7 @@ func newAssignmentSvcFixture() *assignmentSvcFixture {
 func (f *assignmentSvcFixture) driver(companyID uuid.UUID) *model.DriverDetails {
 	dd := f.drivers.add(companyID)
 	dd.User.IsActive = true
+	f.assignments.userDrivers[dd.Driver.UserID] = dd.Driver.ID
 	return dd
 }
 
@@ -279,6 +339,20 @@ func TestAssignmentService_AssignDriver(t *testing.T) {
 		assert.ErrorIs(t, err, model.ErrNotFound)
 	})
 
+	t.Run("old stint ended meanwhile: the move still succeeds", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(companyA)
+		t1, t2 := f.trucks.add(companyA), f.trucks.add(companyA)
+		_, err := f.svc.AssignDriver(ctx, companyAUser, d.Driver.ID, AssignDriverInput{TruckID: t1.ID})
+		require.NoError(t, err)
+		f.assignments.endedMeanwhile = true // truck 1 deleted while we waited
+
+		got, err := f.svc.AssignDriver(ctx, companyAUser, d.Driver.ID, AssignDriverInput{TruckID: t2.ID})
+
+		require.NoError(t, err)
+		assert.Equal(t, t2.ID, got.TruckID)
+	})
+
 	t.Run("platform admin assigns within the driver's company", func(t *testing.T) {
 		f := newAssignmentSvcFixture()
 		d := f.driver(companyA)
@@ -370,5 +444,61 @@ func TestAssignmentService_Unassign(t *testing.T) {
 	t.Run("UnassignMe for a non-driver", func(t *testing.T) {
 		f := newAssignmentSvcFixture()
 		assert.ErrorIs(t, f.svc.UnassignMe(ctx, companyAUser), model.ErrNotFound)
+	})
+}
+
+func TestAssignmentService_ReleaseTruck(t *testing.T) {
+	ctx := context.Background()
+	f := newAssignmentSvcFixture()
+	tr, other := f.trucks.add(companyA), f.trucks.add(companyA)
+	ali, bob, cat := f.driver(companyA), f.driver(companyA), f.driver(companyA)
+	_, err := f.svc.AssignDriver(ctx, companyAUser, ali.Driver.ID, AssignDriverInput{TruckID: tr.ID})
+	require.NoError(t, err)
+	_, err = f.svc.AssignDriver(ctx, companyAUser, bob.Driver.ID, AssignDriverInput{TruckID: tr.ID, Role: model.AssignmentCoDriver})
+	require.NoError(t, err)
+	_, err = f.svc.AssignDriver(ctx, companyAUser, cat.Driver.ID, AssignDriverInput{TruckID: other.ID})
+	require.NoError(t, err)
+	before := len(f.audit.entries)
+
+	require.NoError(t, f.svc.ReleaseTruck(ctx, companyAUser, tr.ID))
+
+	assert.Len(t, f.assignments.ended, 2, "both drivers of the truck")
+	assert.Contains(t, f.assignments.open, cat.Driver.ID, "other trucks are untouched")
+	released := f.audit.entries[before:]
+	require.Len(t, released, 2, "one entry per driver")
+	for _, e := range released {
+		assert.Equal(t, "driver.unassign_truck", e.Action)
+		assert.Equal(t, model.AuditDriver, e.Entity)
+		assert.Equal(t, model.AuditChange{Old: tr.ID, New: nil}, e.Changes["truck_id"])
+	}
+
+	require.NoError(t, f.svc.ReleaseTruck(ctx, companyAUser, tr.ID), "nobody left: not an error")
+}
+
+func TestAssignmentService_ReleaseUser(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a driver's account", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(companyA)
+		tr := f.trucks.add(companyA)
+		_, err := f.svc.AssignDriver(ctx, companyAUser, d.Driver.ID, AssignDriverInput{TruckID: tr.ID})
+		require.NoError(t, err)
+
+		require.NoError(t, f.svc.ReleaseUser(ctx, companyAUser, d.Driver.UserID))
+
+		assert.Empty(t, f.assignments.open)
+		assert.Equal(t, companyAUser.UserID, *f.assignments.ended[0].EndedBy)
+		assert.Equal(t, "driver.unassign_truck", f.audit.last(t).Action)
+	})
+
+	t.Run("not a driver, or on no truck: nothing to do", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(companyA)
+
+		require.NoError(t, f.svc.ReleaseUser(ctx, companyAUser, uuid.New()))
+		require.NoError(t, f.svc.ReleaseUser(ctx, companyAUser, d.Driver.UserID))
+
+		assert.Empty(t, f.audit.entries)
 	})
 }

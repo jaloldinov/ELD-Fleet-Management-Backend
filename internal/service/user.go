@@ -106,16 +106,23 @@ type UserListParams struct {
 	PageSize  int
 }
 
+// DriverReleaser takes a driver off their truck when their account is
+// deactivated or deleted (AssignmentService).
+type DriverReleaser interface {
+	ReleaseUser(ctx context.Context, p auth.Principal, userID uuid.UUID) error
+}
+
 type UserService struct {
 	repo      UserRepository
+	drivers   DriverReleaser
 	companies CompanyLookup
 	sessions  SessionRevoker
 	hasher    PasswordHasher
 	audit     *Auditor
 }
 
-func NewUserService(repo UserRepository, companies CompanyLookup, sessions SessionRevoker, hasher PasswordHasher, audit *Auditor) *UserService {
-	return &UserService{repo: repo, companies: companies, sessions: sessions, hasher: hasher, audit: audit}
+func NewUserService(repo UserRepository, drivers DriverReleaser, companies CompanyLookup, sessions SessionRevoker, hasher PasswordHasher, audit *Auditor) *UserService {
+	return &UserService{repo: repo, drivers: drivers, companies: companies, sessions: sessions, hasher: hasher, audit: audit}
 }
 
 // Create adds a user. Company users can only create users in their own
@@ -287,6 +294,11 @@ func (s *UserService) Update(ctx context.Context, p auth.Principal, id uuid.UUID
 			if err := s.sessions.RevokeAllForUser(ctx, id); err != nil {
 				return err
 			}
+			// A disabled driver drives nothing. After the UPDATE above, on
+			// purpose: see AssignmentService.ReleaseUser.
+			if err := s.drivers.ReleaseUser(ctx, p, id); err != nil {
+				return err
+			}
 		}
 		if ch := userChanges(before, *updated, oldRoles, roles); len(ch) > 0 {
 			return s.record(ctx, p, "user.update", updated, ch)
@@ -313,6 +325,9 @@ func (s *UserService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID
 			return err
 		}
 		if err := s.sessions.RevokeAllForUser(ctx, id); err != nil {
+			return err
+		}
+		if err := s.drivers.ReleaseUser(ctx, p, id); err != nil {
 			return err
 		}
 		return s.record(ctx, p, "user.delete", u, nil)

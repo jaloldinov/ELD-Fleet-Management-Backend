@@ -134,17 +134,18 @@ func (f fakeHasher) Hash(pw string) (string, error) {
 }
 
 type userFixture struct {
-	svc     *UserService
-	repo    *memUserRepo
-	revoker *fakeRevoker
+	svc      *UserService
+	repo     *memUserRepo
+	revoker  *fakeRevoker
+	releaser *fakeReleaser
 	audit   *memAuditStore
 }
 
 func newUserFixture() *userFixture {
-	f := &userFixture{repo: newMemUserRepo(), revoker: &fakeRevoker{}}
+	f := &userFixture{repo: newMemUserRepo(), revoker: &fakeRevoker{}, releaser: &fakeReleaser{}}
 	var audit *Auditor
 	audit, f.audit = newTestAuditor()
-	f.svc = NewUserService(f.repo, fakeCompanies{}, f.revoker, fakeHasher{}, audit)
+	f.svc = NewUserService(f.repo, f.releaser, fakeCompanies{}, f.revoker, fakeHasher{}, audit)
 	return f
 }
 
@@ -391,6 +392,19 @@ func TestUserService_Update_DeactivationRevokesSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, got.User.IsActive)
 	assert.Equal(t, []uuid.UUID{u.ID}, f.revoker.revoked)
+	assert.Equal(t, []uuid.UUID{u.ID}, f.releaser.users, "a disabled driver drives nothing")
+	assert.True(t, f.releaser.allInTx)
+}
+
+func TestUserService_Update_OtherChangesKeepTheTruck(t *testing.T) {
+	f := newUserFixture()
+	admin := f.companyAdminOf(companyA)
+	u := f.repo.add(&companyA, model.RoleDriver)
+
+	_, err := f.svc.Update(context.Background(), admin, u.ID, UpdateUserInput{FirstName: ptr("Ali"), IsActive: ptr(true)})
+
+	require.NoError(t, err)
+	assert.Empty(t, f.releaser.users)
 }
 
 func TestUserService_Update_Denied(t *testing.T) {
@@ -485,6 +499,8 @@ func TestUserService_Delete(t *testing.T) {
 
 		assert.NotContains(t, f.repo.users, u.ID)
 		assert.Equal(t, []uuid.UUID{u.ID}, f.revoker.revoked)
+		assert.Equal(t, []uuid.UUID{u.ID}, f.releaser.users)
+		assert.True(t, f.releaser.allInTx)
 	})
 
 	t.Run("cannot delete yourself", func(t *testing.T) {
