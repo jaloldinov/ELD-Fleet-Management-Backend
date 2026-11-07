@@ -821,7 +821,7 @@ async function payInvoice(inv) {
     // Paid: the subscription may be unblocked; everything else follows.
     await loadCompanyBilling();
   } catch (err) {
-    // 402 card_declined carries the bank's words.
+    // 402 card_declined carries the bank's words; 402 no_payment_method says to add a card.
     $("invoice-error").textContent = err.message;
   }
 }

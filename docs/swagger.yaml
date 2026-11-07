@@ -2452,7 +2452,7 @@ paths:
       - application/json
       description: |-
         Requires permission: invoice:manage (platform only). A separate invoice with one line ("ELD installation").
-        Prorations waiting for the next renewal are not included. With charge_now, a decline is returned in payment_error and the invoice stays open.
+        Prorations waiting for the next renewal are not included. With charge_now, a decline (or no default card) is returned in payment_error and the invoice stays open.
       parameters:
       - description: Company ID
         format: uuid
@@ -4647,7 +4647,7 @@ paths:
           schema:
             $ref: '#/definitions/apierror.Response'
         "402":
-          description: card_declined
+          description: card_declined, or no_payment_method (add a card first)
           schema:
             $ref: '#/definitions/apierror.Response'
         "403":

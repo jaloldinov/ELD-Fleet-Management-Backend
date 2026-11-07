@@ -64,6 +64,12 @@ var (
 	// the payment (3-D Secure); it can only be finished in the browser.
 	ErrAuthenticationRequired = errors.New("the bank asks the card holder to confirm this payment")
 
+	// ErrNoPaymentMethod: a payment was asked for, but the company has no
+	// default card. The customer must fix it (add a card); retrying does not
+	// help, so it is a 402, not a provider failure (502). Checked BEFORE
+	// calling Stripe: our own rule, instead of guessing Stripe's error code.
+	ErrNoPaymentMethod = errors.New("the company has no default card: add one on the billing page first")
+
 	// ErrBillingInactive: the company's subscription does not allow using
 	// the product (not paid yet, or Stripe gave up). Becomes HTTP 402.
 	ErrBillingInactive = errors.New("the company's subscription is not active")

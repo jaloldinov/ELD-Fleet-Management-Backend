@@ -1009,7 +1009,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires permission: invoice:manage (platform only). A separate invoice with one line (\"ELD installation\").\nProrations waiting for the next renewal are not included. With charge_now, a decline is returned in payment_error and the invoice stays open.",
+                "description": "Requires permission: invoice:manage (platform only). A separate invoice with one line (\"ELD installation\").\nProrations waiting for the next renewal are not included. With charge_now, a decline (or no default card) is returned in payment_error and the invoice stays open.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4248,7 +4248,7 @@ const docTemplate = `{
                         }
                     },
                     "402": {
-                        "description": "card_declined",
+                        "description": "card_declined, or no_payment_method (add a card first)",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }

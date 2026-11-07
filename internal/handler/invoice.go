@@ -266,7 +266,7 @@ func (h *InvoiceHandler) Get(c *gin.Context) {
 //	@Success		200	{object}	InvoicePaymentResponse
 //	@Failure		400	{object}	apierror.Response	"the invoice is not open"
 //	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
-//	@Failure		402	{object}	apierror.Response	"card_declined"
+//	@Failure		402	{object}	apierror.Response	"card_declined, or no_payment_method (add a card first)"
 //	@Failure		403	{object}	apierror.Response	"missing permission invoice:pay"
 //	@Failure		404	{object}	apierror.Response
 //	@Failure		502	{object}	apierror.Response	"Stripe refused the request or could not be reached"
@@ -411,7 +411,7 @@ func (h *InvoiceHandler) CreateCreditNote(c *gin.Context) {
 //
 //	@Summary		One-off charge
 //	@Description	Requires permission: invoice:manage (platform only). A separate invoice with one line ("ELD installation").
-//	@Description	Prorations waiting for the next renewal are not included. With charge_now, a decline is returned in payment_error and the invoice stays open.
+//	@Description	Prorations waiting for the next renewal are not included. With charge_now, a decline (or no default card) is returned in payment_error and the invoice stays open.
 //	@Tags			billing
 //	@Accept			json
 //	@Produce		json

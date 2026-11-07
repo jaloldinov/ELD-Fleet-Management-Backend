@@ -37,6 +37,8 @@ const (
 	CodeCardDeclined = "card_declined"
 	// The bank wants the card holder to confirm (3-D Secure) (HTTP 402).
 	CodeAuthenticationRequired = "authentication_required"
+	// Nothing to charge: the company has no default card (HTTP 402).
+	CodeNoPaymentMethod = "no_payment_method"
 
 	// Password reset: "wrong or expired code, try again" vs "the reset
 	// token is no longer valid, start over".

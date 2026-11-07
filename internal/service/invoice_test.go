@@ -141,6 +141,7 @@ type invFixture struct {
 	store   *memInvoiceStore
 	gw      *fakeInvoiceGateway
 	subs    *fakeSyncer
+	cards   *fakeSubCustomers // company A has a default card; empty .cards to remove it
 	audit   *memAuditStore
 	openInv *model.Invoice // company A's open renewal invoice, $150
 	paidInv *model.Invoice // company A's paid invoice, $100
@@ -172,11 +173,11 @@ func newInvFixture(t *testing.T) invFixture {
 	f.draft = add("in_draft", model.InvoiceDraft, companyA, 5000)
 	f.theirs = add("in_theirs", model.InvoiceOpen, companyB, 15000)
 
-	customers := &fakeSubCustomers{cards: []model.PaymentMethod{{ID: "pm_default", IsDefault: true}}}
+	f.cards = &fakeSubCustomers{cards: []model.PaymentMethod{{ID: "pm_default", IsDefault: true}}}
 	billing := &memBilling{customers: map[string]uuid.UUID{"cus_A": companyA}, status: map[uuid.UUID]string{}}
 	var auditor *Auditor
 	auditor, f.audit = newTestAuditor()
-	f.svc = NewInvoiceService(f.store, billing, customers, f.gw, f.subs, auditor)
+	f.svc = NewInvoiceService(f.store, billing, f.cards, f.gw, f.subs, auditor)
 	return f
 }
 
@@ -226,6 +227,27 @@ func TestInvoice_Pay_Rules(t *testing.T) {
 	f.gw.payErr = fmt.Errorf("%w: Your card was declined.", model.ErrCardDeclined)
 	_, err = f.svc.Pay(ctx, companyAUser, f.openInv.ID)
 	assert.ErrorIs(t, err, model.ErrCardDeclined)
+}
+
+func TestInvoice_Pay_NoCard(t *testing.T) {
+	ctx := context.Background()
+
+	for name, cards := range map[string][]model.PaymentMethod{
+		"no cards at all":         nil,
+		"cards, but none default": {{ID: "pm_other", IsDefault: false}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newInvFixture(t)
+			f.cards.cards = cards
+
+			_, err := f.svc.Pay(ctx, companyAUser, f.openInv.ID)
+
+			assert.ErrorIs(t, err, model.ErrNoPaymentMethod, "the customer's to fix: 402, not a provider failure")
+			assert.NotErrorIs(t, err, model.ErrPaymentProvider)
+			assert.Zero(t, f.gw.payCalled, "Stripe is not even asked")
+			assert.Empty(t, f.audit.entries)
+		})
+	}
 }
 
 func TestInvoice_Pay_BankWantsTheCardHolder(t *testing.T) {
@@ -290,6 +312,19 @@ func TestInvoice_CreateCharge_DeclinedStaysOpen(t *testing.T) {
 	require.NoError(t, err, "the invoice exists; the decline is reported with it")
 	assert.Equal(t, model.InvoiceOpen, res.Invoice.Status)
 	assert.Equal(t, "Your card has insufficient funds.", res.PaymentError)
+}
+
+func TestInvoice_CreateCharge_NoCardStaysOpen(t *testing.T) {
+	f := newInvFixture(t)
+	f.cards.cards = nil
+
+	res, err := f.svc.CreateCharge(context.Background(), platformAdmin, companyA,
+		ChargeInput{Description: "ELD installation", Amount: 15000, ChargeNow: true})
+
+	require.NoError(t, err, "like a decline: the invoice exists, the reason comes with it")
+	assert.Equal(t, model.InvoiceOpen, res.Invoice.Status)
+	assert.Equal(t, model.ErrNoPaymentMethod.Error(), res.PaymentError)
+	assert.Zero(t, f.gw.payCalled)
 }
 
 func TestInvoice_AddCredit(t *testing.T) {

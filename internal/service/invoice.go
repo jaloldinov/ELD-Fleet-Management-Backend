@@ -187,6 +187,10 @@ func (s *InvoiceService) Pay(ctx context.Context, p auth.Principal, id uuid.UUID
 		return nil, &validation.ValidationError{Fields: map[string]string{"invoice": "only an open invoice can be paid"}}
 	}
 
+	if _, err := s.defaultCard(ctx, p, inv.CompanyID); err != nil {
+		return nil, err // ErrNoPaymentMethod: 402, add a card first
+	}
+
 	snap, err := s.gateway.PayInvoice(ctx, inv.StripeInvoiceID)
 	if errors.Is(err, model.ErrAuthenticationRequired) {
 		// The bank wants the card holder: hand the browser what it needs.
@@ -213,17 +217,30 @@ func (s *InvoiceService) needsConfirmation(ctx context.Context, p auth.Principal
 	if err != nil {
 		return nil, err
 	}
-	card := ""
-	if cards, err := s.customers.ListPaymentMethods(ctx, p, inv.CompanyID); err == nil {
-		for _, c := range cards {
-			if c.IsDefault {
-				card = c.ID
-			}
-		}
-	}
+	card, _ := s.defaultCard(ctx, p, inv.CompanyID) // "" if it cannot be read
 	return &InvoicePayment{Invoice: saved, Payment: &PaymentDue{
 		InvoiceID: snap.StripeInvoiceID, AmountDue: snap.AmountRemaining, ClientSecret: snap.ClientSecret, PaymentMethodID: card,
 	}}, nil
+}
+
+// defaultCard returns the id of the company's default card, or
+// ErrNoPaymentMethod if it has none. Asked before charging, so "no card"
+// is answered by us (402, add a card) instead of surfacing as a Stripe
+// error (502, try again later), which retrying would never fix.
+//
+// A card removed between this check and the charge still makes Stripe
+// refuse; that rare race keeps the 502.
+func (s *InvoiceService) defaultCard(ctx context.Context, p auth.Principal, companyID uuid.UUID) (string, error) {
+	cards, err := s.customers.ListPaymentMethods(ctx, p, companyID)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range cards {
+		if c.IsDefault {
+			return c.ID, nil
+		}
+	}
+	return "", model.ErrNoPaymentMethod
 }
 
 // syncSubscription refreshes the invoice's subscription at once (paying
@@ -309,6 +326,14 @@ func (s *InvoiceService) CreateCharge(ctx context.Context, p auth.Principal, com
 		return res, nil
 	}
 
+	// No card: like a decline, the invoice stays open (Stripe collects it
+	// once a card is added) and the reason comes back with it.
+	if _, err := s.defaultCard(ctx, p, companyID); errors.Is(err, model.ErrNoPaymentMethod) {
+		res.PaymentError = err.Error()
+		return res, nil
+	} else if err != nil {
+		return nil, err
+	}
 	paid, err := s.gateway.PayInvoice(ctx, saved.StripeInvoiceID)
 	switch {
 	case errors.Is(err, model.ErrCardDeclined), errors.Is(err, model.ErrAuthenticationRequired):

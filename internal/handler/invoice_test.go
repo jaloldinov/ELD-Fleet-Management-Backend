@@ -126,6 +126,14 @@ func TestInvoiceHandler_Pay(t *testing.T) {
 	rec = do(invoiceRouter(svc), http.MethodPost, "/invoices/"+svc.invoice.ID.String()+"/pay", "")
 	assert.Equal(t, http.StatusPaymentRequired, rec.Code)
 	assert.Equal(t, "authentication_required", decodeError(t, rec).Code)
+
+	// No card: the customer's to fix (402), not "try again later" (502).
+	svc.err = model.ErrNoPaymentMethod
+	rec = do(invoiceRouter(svc), http.MethodPost, "/invoices/"+svc.invoice.ID.String()+"/pay", "")
+	assert.Equal(t, http.StatusPaymentRequired, rec.Code)
+	body := decodeError(t, rec)
+	assert.Equal(t, "no_payment_method", body.Code)
+	assert.Contains(t, body.Message, "add one on the billing page")
 }
 
 func TestInvoiceHandler_ChargeCreditBalance(t *testing.T) {

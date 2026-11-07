@@ -68,6 +68,8 @@ func handleError(c *gin.Context, err error) {
 	case errors.Is(err, model.ErrAuthenticationRequired):
 		apierror.Respond(c, http.StatusPaymentRequired, apierror.CodeAuthenticationRequired,
 			"the bank asks the card holder to confirm this payment; pay it from the billing page", nil)
+	case errors.Is(err, model.ErrNoPaymentMethod):
+		apierror.Respond(c, http.StatusPaymentRequired, apierror.CodeNoPaymentMethod, err.Error(), nil)
 	case errors.Is(err, model.ErrPaymentProvider):
 		// 502 Bad Gateway: "a server we depend on failed", not our bug. The
 		// Stripe error is logged; the client gets no Stripe internals.
