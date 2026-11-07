@@ -145,3 +145,23 @@ func TestELDDeviceHandler_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestELDDeviceHandler_Status(t *testing.T) {
+	d := sampleELD()
+	d.Status = model.ELDFaulty
+	svc := &fakeELDService{device: d}
+
+	rec := do(eldRouter(svc), http.MethodPatch, eldPath+testUserID.String(), `{"status":"faulty"}`)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, svc.gotUpdate.Status)
+	assert.Equal(t, model.ELDFaulty, *svc.gotUpdate.Status)
+	assert.Contains(t, rec.Body.String(), `"status":"faulty"`)
+
+	rec = do(eldRouter(svc), http.MethodGet, "/api/v1/eld-devices?status=retired", "")
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, model.ELDRetired, *svc.gotList.Status)
+
+	rec = do(eldRouter(svc), http.MethodGet, "/api/v1/eld-devices?status=lost", "")
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}

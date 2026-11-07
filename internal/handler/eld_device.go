@@ -41,7 +41,11 @@ type CreateELDDeviceRequest struct {
 type UpdateELDDeviceRequest struct {
 	Model           *string `json:"model,omitempty" example:"PT30"`
 	FirmwareVersion *string `json:"firmware_version,omitempty" example:"2.0.0"`
-	IsActive        *bool   `json:"is_active,omitempty" example:"false"`
+	// active: works. faulty: broken, may stay in its truck until replaced.
+	// retired: end of life, must be taken out of its truck first.
+	Status *string `json:"status,omitempty" enums:"active,faulty,retired" example:"faulty"`
+	// Older way to set the status: true = active, false = retired.
+	IsActive *bool `json:"is_active,omitempty" example:"false"`
 }
 
 type ELDDeviceResponse struct {
@@ -51,7 +55,8 @@ type ELDDeviceResponse struct {
 	Model           string     `json:"model" example:"PT30"`
 	FirmwareVersion string     `json:"firmware_version" example:"1.2.3"`
 	TruckID         *uuid.UUID `json:"truck_id" swaggertype:"string" format:"uuid"` // null = not installed
-	IsActive        bool       `json:"is_active" example:"true"`
+	Status          string     `json:"status" enums:"active,faulty,retired" example:"active"`
+	IsActive        bool       `json:"is_active" example:"true"` // status is active
 	CreatedAt       time.Time  `json:"created_at" example:"2026-10-02T11:26:26Z"`
 	UpdatedAt       time.Time  `json:"updated_at" example:"2026-10-02T11:26:26Z"`
 }
@@ -59,7 +64,8 @@ type ELDDeviceResponse struct {
 func newELDDeviceResponse(d *model.ELDDevice) ELDDeviceResponse {
 	return ELDDeviceResponse{
 		ID: d.ID, CompanyID: d.CompanyID, SerialNumber: d.SerialNumber,
-		Model: d.Model, FirmwareVersion: d.FirmwareVersion, TruckID: d.TruckID, IsActive: d.IsActive,
+		Model: d.Model, FirmwareVersion: d.FirmwareVersion, TruckID: d.TruckID,
+		Status: string(d.Status), IsActive: d.IsActive,
 		CreatedAt: d.CreatedAt.UTC(), UpdatedAt: d.UpdatedAt.UTC(),
 	}
 }
@@ -132,6 +138,7 @@ func (h *ELDDeviceHandler) Create(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Param			company_id	query		string	false	"Filter by company (platform users only)"	format(uuid)
 //	@Param			is_active	query		bool	false	"Only active (true) or inactive (false) devices"
+//	@Param			status		query		string	false	"Only devices with this status"			Enums(active, faulty, retired)
 //	@Param			truck_id	query		string	false	"The device installed in this truck"	format(uuid)
 //	@Param			page		query		int		false	"Page number (1-based)"					default(1)	minimum(1)
 //	@Param			page_size	query		int		false	"Items per page"						default(20)	minimum(1)	maximum(100)
@@ -161,13 +168,19 @@ func (h *ELDDeviceHandler) List(c *gin.Context) {
 		v.Check(err == nil, "is_active", "must be true or false")
 		isActive = &b
 	}
+	var status *model.ELDStatus
+	if s := c.Query("status"); s != "" {
+		st := model.ELDStatus(s)
+		v.Check(st.Valid(), "status", "must be active, faulty or retired")
+		status = &st
+	}
 	if err := v.Err(); err != nil {
 		handleError(c, err)
 		return
 	}
 
 	res, err := h.svc.List(c.Request.Context(), p, service.ELDDeviceListParams{
-		CompanyID: companyID, IsActive: isActive, TruckID: truckID, Page: page, PageSize: size,
+		CompanyID: companyID, IsActive: isActive, Status: status, TruckID: truckID, Page: page, PageSize: size,
 	})
 	if err != nil {
 		handleError(c, err)
@@ -246,6 +259,7 @@ func (h *ELDDeviceHandler) Update(c *gin.Context) {
 
 	d, err := h.svc.Update(c.Request.Context(), p, id, service.UpdateELDDeviceInput{
 		Model: req.Model, FirmwareVersion: req.FirmwareVersion, IsActive: req.IsActive,
+		Status: (*model.ELDStatus)(req.Status),
 	})
 	if err != nil {
 		handleError(c, err)

@@ -132,3 +132,37 @@ func TestTruckHandler_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestTruckHandler_Status(t *testing.T) {
+	t.Run("update by status", func(t *testing.T) {
+		tr := sampleTruck()
+		tr.Status, tr.IsActive = model.TruckInMaintenance, true
+		svc := &fakeTruckService{truck: tr}
+
+		rec := do(truckRouter(svc), http.MethodPatch, "/api/v1/trucks/"+tr.ID.String(), `{"status":"in_maintenance"}`)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.NotNil(t, svc.gotUpdate.Status)
+		assert.Equal(t, model.TruckInMaintenance, *svc.gotUpdate.Status)
+		assert.Nil(t, svc.gotUpdate.IsActive)
+		assert.Contains(t, rec.Body.String(), `"status":"in_maintenance"`)
+		assert.Contains(t, rec.Body.String(), `"is_active":true`, "in the shop is still in the fleet")
+	})
+
+	t.Run("list by status", func(t *testing.T) {
+		svc := &fakeTruckService{truck: sampleTruck()}
+
+		rec := do(truckRouter(svc), http.MethodGet, "/api/v1/trucks?status=out_of_service", "")
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.NotNil(t, svc.gotList.Status)
+		assert.Equal(t, model.TruckOutOfService, *svc.gotList.Status)
+	})
+
+	t.Run("unknown status in the list filter", func(t *testing.T) {
+		rec := do(truckRouter(&fakeTruckService{}), http.MethodGet, "/api/v1/trucks?status=parked", "")
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, decodeError(t, rec).Details, "status")
+	})
+}

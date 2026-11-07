@@ -49,7 +49,12 @@ type UpdateTruckRequest struct {
 	Year         *int    `json:"year,omitempty" example:"2023"`
 	LicensePlate *string `json:"license_plate,omitempty" example:"XYZ9876"`
 	PlateState   *string `json:"plate_state,omitempty" example:"OK"`
-	IsActive     *bool   `json:"is_active,omitempty" example:"false"`
+	// active: on the road. in_maintenance: in the shop (drivers come off,
+	// the ELD stays). out_of_service: left the fleet (drivers and ELD come
+	// off; no longer billed).
+	Status *string `json:"status,omitempty" enums:"active,in_maintenance,out_of_service" example:"in_maintenance"`
+	// Older way to set the status: true = active, false = out_of_service.
+	IsActive *bool `json:"is_active,omitempty" example:"false"`
 }
 
 type TruckResponse struct {
@@ -62,16 +67,18 @@ type TruckResponse struct {
 	Year         *int      `json:"year" example:"2022"`
 	LicensePlate *string   `json:"license_plate" example:"ABC1234"`
 	PlateState   *string   `json:"plate_state" example:"TX"`
-	IsActive     bool      `json:"is_active" example:"true"`
-	CreatedAt    time.Time `json:"created_at" example:"2026-10-02T11:26:26Z"`
-	UpdatedAt    time.Time `json:"updated_at" example:"2026-10-02T11:26:26Z"`
+	Status       string    `json:"status" enums:"active,in_maintenance,out_of_service" example:"active"`
+	// Part of the fleet: status is not out_of_service. Follows status.
+	IsActive  bool      `json:"is_active" example:"true"`
+	CreatedAt time.Time `json:"created_at" example:"2026-10-02T11:26:26Z"`
+	UpdatedAt time.Time `json:"updated_at" example:"2026-10-02T11:26:26Z"`
 }
 
 func newTruckResponse(t *model.Truck) TruckResponse {
 	return TruckResponse{
 		ID: t.ID, CompanyID: t.CompanyID, UnitNumber: t.UnitNumber, VIN: t.VIN,
 		Make: t.Make, Model: t.Model, Year: t.Year,
-		LicensePlate: t.LicensePlate, PlateState: t.PlateState, IsActive: t.IsActive,
+		LicensePlate: t.LicensePlate, PlateState: t.PlateState, Status: string(t.Status), IsActive: t.IsActive,
 		CreatedAt: t.CreatedAt.UTC(), UpdatedAt: t.UpdatedAt.UTC(),
 	}
 }
@@ -143,9 +150,10 @@ func (h *TruckHandler) Create(c *gin.Context) {
 //	@Produce		json
 //	@Security		BearerAuth
 //	@Param			company_id	query		string	false	"Filter by company (platform users only)"	format(uuid)
-//	@Param			is_active	query		bool	false	"Only active (true) or inactive (false) trucks"
-//	@Param			page		query		int		false	"Page number (1-based)"	default(1)	minimum(1)
-//	@Param			page_size	query		int		false	"Items per page"		default(20)	minimum(1)	maximum(100)
+//	@Param			is_active	query		bool	false	"Only trucks in the fleet (true) or out of service (false)"
+//	@Param			status		query		string	false	"Only trucks with this status"	Enums(active, in_maintenance, out_of_service)
+//	@Param			page		query		int		false	"Page number (1-based)"			default(1)	minimum(1)
+//	@Param			page_size	query		int		false	"Items per page"				default(20)	minimum(1)	maximum(100)
 //	@Success		200			{object}	ListTrucksResponse
 //	@Failure		400			{object}	apierror.Response
 //	@Failure		401			{object}	apierror.Response	"missing or invalid access token"
@@ -174,13 +182,19 @@ func (h *TruckHandler) List(c *gin.Context) {
 		v.Check(err == nil, "is_active", "must be true or false")
 		isActive = &b
 	}
+	var status *model.TruckStatus
+	if s := c.Query("status"); s != "" {
+		st := model.TruckStatus(s)
+		v.Check(st.Valid(), "status", "must be active, in_maintenance or out_of_service")
+		status = &st
+	}
 	if err := v.Err(); err != nil {
 		handleError(c, err)
 		return
 	}
 
 	res, err := h.svc.List(c.Request.Context(), p, service.TruckListParams{
-		CompanyID: companyID, IsActive: isActive, Page: page, PageSize: size,
+		CompanyID: companyID, IsActive: isActive, Status: status, Page: page, PageSize: size,
 	})
 	if err != nil {
 		handleError(c, err)
@@ -261,6 +275,7 @@ func (h *TruckHandler) Update(c *gin.Context) {
 	t, err := h.svc.Update(c.Request.Context(), p, id, service.UpdateTruckInput{
 		UnitNumber: req.UnitNumber, Make: req.Make, Model: req.Model, Year: req.Year,
 		LicensePlate: req.LicensePlate, PlateState: req.PlateState, IsActive: req.IsActive,
+		Status: (*model.TruckStatus)(req.Status),
 	})
 	if err != nil {
 		handleError(c, err)

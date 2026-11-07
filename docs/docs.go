@@ -3351,6 +3351,17 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "active",
+                            "faulty",
+                            "retired"
+                        ],
+                        "type": "string",
+                        "description": "Only devices with this status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
                         "type": "string",
                         "format": "uuid",
                         "description": "The device installed in this truck",
@@ -5143,8 +5154,19 @@ const docTemplate = `{
                     },
                     {
                         "type": "boolean",
-                        "description": "Only active (true) or inactive (false) trucks",
+                        "description": "Only trucks in the fleet (true) or out of service (false)",
                         "name": "is_active",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "active",
+                            "in_maintenance",
+                            "out_of_service"
+                        ],
+                        "type": "string",
+                        "description": "Only trucks with this status",
+                        "name": "status",
                         "in": "query"
                     },
                     {
@@ -6997,6 +7019,7 @@ const docTemplate = `{
                     "format": "uuid"
                 },
                 "is_active": {
+                    "description": "status is active",
                     "type": "boolean",
                     "example": true
                 },
@@ -7007,6 +7030,15 @@ const docTemplate = `{
                 "serial_number": {
                     "type": "string",
                     "example": "PT30-0001"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "faulty",
+                        "retired"
+                    ],
+                    "example": "active"
                 },
                 "truck_id": {
                     "description": "null = not installed",
@@ -8092,6 +8124,7 @@ const docTemplate = `{
                     "format": "uuid"
                 },
                 "is_active": {
+                    "description": "Part of the fleet: status is not out_of_service. Follows status.",
                     "type": "boolean",
                     "example": true
                 },
@@ -8110,6 +8143,15 @@ const docTemplate = `{
                 "plate_state": {
                     "type": "string",
                     "example": "TX"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "in_maintenance",
+                        "out_of_service"
+                    ],
+                    "example": "active"
                 },
                 "unit_number": {
                     "type": "string",
@@ -8175,12 +8217,23 @@ const docTemplate = `{
                     "example": "2.0.0"
                 },
                 "is_active": {
+                    "description": "Older way to set the status: true = active, false = retired.",
                     "type": "boolean",
                     "example": false
                 },
                 "model": {
                     "type": "string",
                     "example": "PT30"
+                },
+                "status": {
+                    "description": "active: works. faulty: broken, may stay in its truck until replaced.\nretired: end of life, must be taken out of its truck first.",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "faulty",
+                        "retired"
+                    ],
+                    "example": "faulty"
                 }
             }
         },
@@ -8235,6 +8288,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "is_active": {
+                    "description": "Older way to set the status: true = active, false = out_of_service.",
                     "type": "boolean",
                     "example": false
                 },
@@ -8253,6 +8307,16 @@ const docTemplate = `{
                 "plate_state": {
                     "type": "string",
                     "example": "OK"
+                },
+                "status": {
+                    "description": "active: on the road. in_maintenance: in the shop (drivers come off,\nthe ELD stays). out_of_service: left the fleet (drivers and ELD come\noff; no longer billed).",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "in_maintenance",
+                        "out_of_service"
+                    ],
+                    "example": "in_maintenance"
                 },
                 "unit_number": {
                     "type": "string",

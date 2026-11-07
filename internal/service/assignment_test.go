@@ -214,6 +214,7 @@ func (l lockingDevices) LockByID(ctx context.Context, id uuid.UUID) (*model.ELDD
 // UserService tests.
 type fakeReleaser struct {
 	trucks, users, devices []uuid.UUID
+	driversOnly            []uuid.UUID // ReleaseDrivers: the device stays
 	allInTx                bool
 	calls                  int
 	log                    *[]string // optional: shared event log, to check order
@@ -230,6 +231,12 @@ func (f *fakeReleaser) called(ctx context.Context) {
 func (f *fakeReleaser) ReleaseTruck(ctx context.Context, _ auth.Principal, truckID uuid.UUID) error {
 	f.called(ctx)
 	f.trucks = append(f.trucks, truckID)
+	return nil
+}
+
+func (f *fakeReleaser) ReleaseDrivers(ctx context.Context, _ auth.Principal, truckID uuid.UUID) error {
+	f.called(ctx)
+	f.driversOnly = append(f.driversOnly, truckID)
 	return nil
 }
 
@@ -479,16 +486,20 @@ func TestAssignmentService_AssignDriver(t *testing.T) {
 		requireValidationField(t, err, "truck_id")
 	})
 
-	t.Run("out-of-service truck", func(t *testing.T) {
-		f := newAssignmentSvcFixture()
-		d := f.driver(companyA)
-		tr := f.trucks.add(companyA)
-		tr.IsActive = false
+	for _, st := range []model.TruckStatus{model.TruckInMaintenance, model.TruckOutOfService} {
+		t.Run("no drivers for a truck "+string(st), func(t *testing.T) {
+			f := newAssignmentSvcFixture()
+			d := f.driver(companyA)
+			tr := f.trucks.add(companyA)
+			tr.Status = st
 
-		_, err := f.svc.AssignDriver(ctx, companyAUser, d.Driver.ID, AssignDriverInput{TruckID: tr.ID})
+			_, err := f.svc.AssignDriver(ctx, companyAUser, d.Driver.ID, AssignDriverInput{TruckID: tr.ID})
 
-		requireValidationField(t, err, "truck_id")
-	})
+			var vErr *validation.ValidationError
+			require.ErrorAs(t, err, &vErr)
+			assert.Equal(t, truckUnavailable(st), vErr.Fields["truck_id"])
+		})
+	}
 
 	t.Run("disabled driver account", func(t *testing.T) {
 		f := newAssignmentSvcFixture()
@@ -799,23 +810,37 @@ func TestAssignmentService_InstallDevice(t *testing.T) {
 		f := newAssignmentSvcFixture()
 		d := f.devices.add(companyA)
 		tr := f.trucks.add(companyA)
-		tr.IsActive = false
+		tr.Status = model.TruckOutOfService
 
 		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
 
 		requireValidationField(t, err, "truck_id")
 	})
 
-	t.Run("inactive device", func(t *testing.T) {
+	t.Run("a truck in the shop gets its device there", func(t *testing.T) {
 		f := newAssignmentSvcFixture()
 		d := f.devices.add(companyA)
-		d.IsActive = false
 		tr := f.trucks.add(companyA)
+		tr.Status = model.TruckInMaintenance
 
-		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+		got, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
 
-		requireValidationField(t, err, "is_active")
+		require.NoError(t, err)
+		assert.Equal(t, tr.ID, *got.TruckID)
 	})
+
+	for _, st := range []model.ELDStatus{model.ELDFaulty, model.ELDRetired} {
+		t.Run("a "+string(st)+" device cannot be installed", func(t *testing.T) {
+			f := newAssignmentSvcFixture()
+			d := f.devices.add(companyA)
+			d.Status = st
+			tr := f.trucks.add(companyA)
+
+			_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+
+			requireValidationField(t, err, "status")
+		})
+	}
 
 	t.Run("device of another company does not exist", func(t *testing.T) {
 		f := newAssignmentSvcFixture()
@@ -1164,4 +1189,21 @@ func TestAssignmentService_ReleaseUser_UnlinksADispatchersDrivers(t *testing.T) 
 	assert.Nil(t, f.drivers.drivers[bob.Driver.ID].Driver.DispatcherID)
 	assert.Equal(t, []string{"driver.set_dispatcher", "driver.set_dispatcher", "driver.set_dispatcher", "driver.set_dispatcher"},
 		f.audit.actions(), "two links, two unlinks")
+}
+
+func TestAssignmentService_ReleaseDrivers_KeepsTheDevice(t *testing.T) {
+	ctx := context.Background()
+	f := newAssignmentSvcFixture()
+	tr := f.trucks.add(companyA)
+	d := f.driver(companyA)
+	_, err := f.svc.AssignDriver(ctx, companyAUser, d.Driver.ID, AssignDriverInput{TruckID: tr.ID})
+	require.NoError(t, err)
+	dev := f.devices.add(companyA)
+	_, err = f.svc.InstallDevice(ctx, companyAUser, dev.ID, tr.ID, false)
+	require.NoError(t, err)
+
+	require.NoError(t, f.svc.ReleaseDrivers(ctx, companyAUser, tr.ID))
+
+	assert.Empty(t, f.assignments.open, "drivers off")
+	assert.Contains(t, f.elds.open, dev.ID, "the device stays in the truck")
 }

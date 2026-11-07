@@ -22,14 +22,14 @@ type memELDRepo struct {
 func newMemELDRepo() *memELDRepo { return &memELDRepo{devices: map[uuid.UUID]*model.ELDDevice{}} }
 
 func (m *memELDRepo) add(companyID uuid.UUID) *model.ELDDevice {
-	d := &model.ELDDevice{ID: uuid.New(), CompanyID: companyID, SerialNumber: "PT30-0001", IsActive: true}
+	d := &model.ELDDevice{ID: uuid.New(), CompanyID: companyID, SerialNumber: "PT30-0001", Status: model.ELDActive, IsActive: true}
 	m.devices[d.ID] = d
 	return d
 }
 
 func (m *memELDRepo) Create(_ context.Context, d model.ELDDevice) (*model.ELDDevice, error) {
 	m.created = append(m.created, d)
-	d.ID, d.IsActive = uuid.New(), true
+	d.ID, d.Status, d.IsActive = uuid.New(), model.ELDActive, true
 	m.devices[d.ID] = &d
 	return &d, nil
 }
@@ -49,6 +49,7 @@ func (m *memELDRepo) List(_ context.Context, f model.ELDDeviceFilter, _, _ int) 
 }
 
 func (m *memELDRepo) Update(_ context.Context, d model.ELDDevice) (*model.ELDDevice, error) {
+	d.IsActive = d.Status == model.ELDActive // like the generated column
 	m.devices[d.ID] = &d
 	return &d, nil
 }
@@ -206,4 +207,60 @@ func TestELDDeviceService_DeleteTakesItOutOfItsTruck(t *testing.T) {
 	assert.Equal(t, []uuid.UUID{d.ID}, f.releaser.devices)
 	assert.Equal(t, []string{"lock", "release"}, f.repo.events, "lock first, or an install could slip in")
 	assert.True(t, f.releaser.allInTx)
+}
+
+func TestELDDeviceService_Status(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a faulty device may stay in its truck", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(companyA)
+		truckID := uuid.New()
+		d.TruckID = &truckID
+
+		got, err := f.svc.Update(ctx, companyAUser, d.ID, UpdateELDDeviceInput{Status: ptr(model.ELDFaulty)})
+
+		require.NoError(t, err)
+		assert.Equal(t, model.ELDFaulty, got.Status)
+		assert.False(t, got.IsActive)
+	})
+
+	t.Run("a retired one must come out first", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(companyA)
+		truckID := uuid.New()
+		d.TruckID = &truckID
+
+		_, err := f.svc.Update(ctx, companyAUser, d.ID, UpdateELDDeviceInput{Status: ptr(model.ELDRetired)})
+
+		requireValidationField(t, err, "status")
+	})
+
+	t.Run("is_active false still means retired", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(companyA)
+
+		got, err := f.svc.Update(ctx, companyAUser, d.ID, UpdateELDDeviceInput{IsActive: ptr(false)})
+
+		require.NoError(t, err)
+		assert.Equal(t, model.ELDRetired, got.Status)
+	})
+
+	t.Run("status and is_active must agree", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(companyA)
+
+		_, err := f.svc.Update(ctx, companyAUser, d.ID, UpdateELDDeviceInput{Status: ptr(model.ELDFaulty), IsActive: ptr(true)})
+
+		requireValidationField(t, err, "is_active")
+	})
+
+	t.Run("unknown status", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(companyA)
+
+		_, err := f.svc.Update(ctx, companyAUser, d.ID, UpdateELDDeviceInput{Status: ptr(model.ELDStatus("lost"))})
+
+		requireValidationField(t, err, "status")
+	})
 }

@@ -6,6 +6,19 @@ import (
 	"github.com/google/uuid"
 )
 
+// ELDStatus is where a device is in its working life.
+type ELDStatus string
+
+const (
+	ELDActive  ELDStatus = "active"  // works: may be installed
+	ELDFaulty  ELDStatus = "faulty"  // broken: may stay in its truck until replaced
+	ELDRetired ELDStatus = "retired" // end of life: not in any truck
+)
+
+func (s ELDStatus) Valid() bool {
+	return s == ELDActive || s == ELDFaulty || s == ELDRetired
+}
+
 // ELDDevice is the hardware installed in a truck that records driving time.
 type ELDDevice struct {
 	ID              uuid.UUID
@@ -14,7 +27,8 @@ type ELDDevice struct {
 	Model           string
 	FirmwareVersion string
 	TruckID         *uuid.UUID // read from the open ELD stint; nil = not installed
-	IsActive        bool
+	Status          ELDStatus
+	IsActive        bool // read-only, computed by the database: Status == active
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	DeletedAt       *time.Time
@@ -24,5 +38,6 @@ type ELDDevice struct {
 type ELDDeviceFilter struct {
 	CompanyID *uuid.UUID
 	IsActive  *bool
+	Status    *ELDStatus
 	TruckID   *uuid.UUID
 }

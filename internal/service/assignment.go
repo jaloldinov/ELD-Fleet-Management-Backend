@@ -441,8 +441,9 @@ func (s *AssignmentService) assign(ctx context.Context, p auth.Principal, driver
 		} else if err != nil {
 			return err
 		}
-		if !t.IsActive {
-			return &validation.ValidationError{Fields: map[string]string{"truck_id": "truck is out of service"}}
+		// Only a truck on the road gets drivers.
+		if t.Status != model.TruckActive {
+			return &validation.ValidationError{Fields: map[string]string{"truck_id": truckUnavailable(t.Status)}}
 		}
 
 		// 3. Already there? Then nothing to do (PUT is idempotent).
@@ -507,12 +508,9 @@ func (s *AssignmentService) unassign(ctx context.Context, p auth.Principal, driv
 // stays open on a deleted truck. Separate statements after the lock do.
 //
 // The truck's ELD device is taken out too: it is ready for another truck.
+// (A truck going to the shop keeps its device: see ReleaseDrivers.)
 func (s *AssignmentService) ReleaseTruck(ctx context.Context, p auth.Principal, truckID uuid.UUID) error {
-	ended, err := s.assignments.EndOpenByTruck(ctx, truckID, actorID(p))
-	if err != nil {
-		return err
-	}
-	if err := s.recordReleased(ctx, p, ended); err != nil {
+	if err := s.ReleaseDrivers(ctx, p, truckID); err != nil {
 		return err
 	}
 	device, err := s.elds.EndOpenByTruck(ctx, truckID, actorID(p))
@@ -522,6 +520,17 @@ func (s *AssignmentService) ReleaseTruck(ctx context.Context, p auth.Principal, 
 		return err
 	}
 	return s.recordDevice(ctx, p, "eld_device.unassign_truck", device.ELDDeviceID, device.CompanyID, &device.TruckID, nil)
+}
+
+// ReleaseDrivers takes every driver off a truck that can no longer be
+// driven (e.g. it went to the shop); its ELD device stays installed. Same
+// rules as ReleaseTruck: the caller's transaction, truck locked first.
+func (s *AssignmentService) ReleaseDrivers(ctx context.Context, p auth.Principal, truckID uuid.UUID) error {
+	ended, err := s.assignments.EndOpenByTruck(ctx, truckID, actorID(p))
+	if err != nil {
+		return err
+	}
+	return s.recordReleased(ctx, p, ended)
 }
 
 // ReleaseUser ends the stint of the driver behind a user account that is
@@ -568,8 +577,8 @@ func (s *AssignmentService) InstallDevice(ctx context.Context, p auth.Principal,
 		if err != nil {
 			return err
 		}
-		if !d.IsActive {
-			return &validation.ValidationError{Fields: map[string]string{"is_active": "an inactive device cannot be installed"}}
+		if d.Status != model.ELDActive {
+			return &validation.ValidationError{Fields: map[string]string{"status": "a " + string(d.Status) + " device cannot be installed"}}
 		}
 
 		// 2. The truck, locked: it cannot be deleted or deactivated before
@@ -580,8 +589,10 @@ func (s *AssignmentService) InstallDevice(ctx context.Context, p auth.Principal,
 		} else if err != nil {
 			return err
 		}
-		if !t.IsActive {
-			return &validation.ValidationError{Fields: map[string]string{"truck_id": "truck is out of service"}}
+		// Devices are often installed in the shop: only a truck that left
+		// the fleet is refused.
+		if t.Status == model.TruckOutOfService {
+			return &validation.ValidationError{Fields: map[string]string{"truck_id": truckUnavailable(t.Status)}}
 		}
 
 		// 3. Already there? Nothing to do.
@@ -739,6 +750,13 @@ func assignmentChanges(old, new *model.DriverAssignment) model.AuditChanges {
 	c.Set("truck_id", oldTruck, newTruck)
 	c.Set("role", oldRole, newRole)
 	return c
+}
+
+func truckUnavailable(st model.TruckStatus) string {
+	if st == model.TruckInMaintenance {
+		return "truck is in maintenance"
+	}
+	return "truck is out of service"
 }
 
 // actorID is who did it, for started_by / ended_by: nil for the system.

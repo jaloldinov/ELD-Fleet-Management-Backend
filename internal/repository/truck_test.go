@@ -97,9 +97,10 @@ func TestTruckRepository_ListFilters(t *testing.T) {
 	_, err = repo.Create(ctx, newTruck(bravo.ID, "101", vin3))
 	require.NoError(t, err)
 
-	a1.IsActive = false
-	_, err = repo.Update(ctx, *a1)
+	a1.Status = model.TruckOutOfService
+	updated, err := repo.Update(ctx, *a1)
 	require.NoError(t, err)
+	assert.False(t, updated.IsActive, "is_active is computed by the database from status")
 
 	_, total, err := repo.List(ctx, model.TruckFilter{CompanyID: &alpha.ID}, 20, 0)
 	require.NoError(t, err)
@@ -110,6 +111,12 @@ func TestTruckRepository_ListFilters(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Equal(t, "102", items[0].UnitNumber)
+
+	outOfService := model.TruckOutOfService
+	items, total, err = repo.List(ctx, model.TruckFilter{CompanyID: &alpha.ID, Status: &outOfService}, 20, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	assert.Equal(t, "101", items[0].UnitNumber)
 
 	_, total, err = repo.List(ctx, model.TruckFilter{}, 20, 0)
 	require.NoError(t, err)

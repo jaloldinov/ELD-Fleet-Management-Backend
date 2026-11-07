@@ -29,7 +29,8 @@ type TruckRepository interface {
 // TruckReleaser takes the drivers off a truck that leaves service
 // (AssignmentService).
 type TruckReleaser interface {
-	ReleaseTruck(ctx context.Context, p auth.Principal, truckID uuid.UUID) error
+	ReleaseTruck(ctx context.Context, p auth.Principal, truckID uuid.UUID) error   // drivers and device
+	ReleaseDrivers(ctx context.Context, p auth.Principal, truckID uuid.UUID) error // drivers only
 }
 
 var (
@@ -60,12 +61,17 @@ type UpdateTruckInput struct {
 	Year         *int
 	LicensePlate *string
 	PlateState   *string
-	IsActive     *bool
+	Status       *model.TruckStatus
+	// IsActive is the pre-status way to say the same: true = active, false
+	// = out_of_service. Kept for old clients; may be sent with Status only
+	// if they agree.
+	IsActive *bool
 }
 
 type TruckListParams struct {
 	CompanyID *uuid.UUID // platform users only
 	IsActive  *bool
+	Status    *model.TruckStatus
 	Page      int
 	PageSize  int
 }
@@ -148,7 +154,7 @@ func (s *TruckService) Get(ctx context.Context, p auth.Principal, id uuid.UUID) 
 func (s *TruckService) List(ctx context.Context, p auth.Principal, params TruckListParams) (*TruckPage, error) {
 	page, size := normalizePage(ListParams{Page: params.Page, PageSize: params.PageSize})
 
-	f := model.TruckFilter{CompanyID: params.CompanyID, IsActive: params.IsActive}
+	f := model.TruckFilter{CompanyID: params.CompanyID, IsActive: params.IsActive, Status: params.Status}
 	if !p.IsPlatformUser() {
 		f.CompanyID = p.CompanyID // tenant scope, applied in SQL
 	}
@@ -194,11 +200,10 @@ func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUI
 		}
 		t.LicensePlate, t.PlateState = normalizePlate(plate, state)
 	}
-	if in.IsActive != nil {
-		t.IsActive = *in.IsActive
-	}
-
 	var v validation.Validator
+	if st, ok := truckStatusFrom(&v, in.Status, in.IsActive); ok {
+		t.Status = st
+	}
 	s.validateTruck(&v, *t)
 	if err := v.Err(); err != nil {
 		return nil, err
@@ -206,9 +211,15 @@ func (s *TruckService) Update(ctx context.Context, p auth.Principal, id uuid.UUI
 
 	var updated *model.Truck
 	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
-		// Taken out of service: nobody drives it any more.
-		if before.IsActive && !t.IsActive {
-			if err := s.releaseDrivers(ctx, p, id); err != nil {
+		switch {
+		case before.Status != model.TruckOutOfService && t.Status == model.TruckOutOfService:
+			// Left the fleet: no drivers, and its device comes out.
+			if err := s.release(ctx, p, id, true); err != nil {
+				return err
+			}
+		case before.Status == model.TruckActive && t.Status == model.TruckInMaintenance:
+			// To the shop: no drivers; the device stays in the truck.
+			if err := s.release(ctx, p, id, false); err != nil {
 				return err
 			}
 		}
@@ -236,7 +247,7 @@ func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUI
 		return err
 	}
 	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
-		if err := s.releaseDrivers(ctx, p, id); err != nil {
+		if err := s.release(ctx, p, id, true); err != nil {
 			return err
 		}
 		if err := s.repo.SoftDelete(ctx, id); err != nil {
@@ -253,15 +264,45 @@ func (s *TruckService) Delete(ctx context.Context, p auth.Principal, id uuid.UUI
 	return nil
 }
 
-// releaseDrivers ends the stints on a truck leaving service. The truck is
-// LOCKED first, in this transaction: an assignment to it that is in
-// progress finishes before we look (so its stint is ended too), and one
-// that starts later waits and then finds the truck gone or inactive.
-func (s *TruckService) releaseDrivers(ctx context.Context, p auth.Principal, id uuid.UUID) error {
+// release takes the drivers (and, withDevice, the ELD device) off a truck
+// leaving service. The truck is LOCKED first, in this transaction: an
+// assignment to it that is in progress finishes before we look (so its
+// stint is ended too), and one that starts later waits and then sees the
+// truck's new status.
+func (s *TruckService) release(ctx context.Context, p auth.Principal, id uuid.UUID, withDevice bool) error {
 	if _, err := s.repo.LockByID(ctx, id); err != nil {
 		return err
 	}
-	return s.drivers.ReleaseTruck(ctx, p, id)
+	if withDevice {
+		return s.drivers.ReleaseTruck(ctx, p, id)
+	}
+	return s.drivers.ReleaseDrivers(ctx, p, id)
+}
+
+// truckStatusFrom turns the request's status (or the older is_active) into
+// the new status; ok = false when neither was sent or they are invalid.
+func truckStatusFrom(v *validation.Validator, status *model.TruckStatus, isActive *bool) (model.TruckStatus, bool) {
+	var st model.TruckStatus
+	switch {
+	case status != nil:
+		st = *status
+		if !st.Valid() {
+			v.Check(false, "status", "must be active, in_maintenance or out_of_service")
+			return "", false
+		}
+		if isActive != nil && *isActive != (st != model.TruckOutOfService) {
+			v.Check(false, "is_active", "contradicts status (send only status)")
+			return "", false
+		}
+	case isActive != nil:
+		st = model.TruckOutOfService
+		if *isActive {
+			st = model.TruckActive
+		}
+	default:
+		return "", false
+	}
+	return st, true
 }
 
 func (s *TruckService) record(ctx context.Context, p auth.Principal, action string, t *model.Truck, ch model.AuditChanges) error {
@@ -281,7 +322,7 @@ func truckChanges(old, new model.Truck) model.AuditChanges {
 	c.Set("year", old.Year, new.Year)
 	c.Set("license_plate", old.LicensePlate, new.LicensePlate)
 	c.Set("plate_state", old.PlateState, new.PlateState)
-	c.Set("is_active", old.IsActive, new.IsActive)
+	c.Set("status", old.Status, new.Status) // is_active follows from it
 	return c
 }
 

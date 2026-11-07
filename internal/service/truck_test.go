@@ -28,7 +28,7 @@ func newMemTruckRepo() *memTruckRepo { return &memTruckRepo{trucks: map[uuid.UUI
 func (m *memTruckRepo) add(companyID uuid.UUID) *model.Truck {
 	plate, state := "ABC123", "TX"
 	t := &model.Truck{ID: uuid.New(), CompanyID: companyID, UnitNumber: "101", VIN: validVIN,
-		LicensePlate: &plate, PlateState: &state, IsActive: true}
+		LicensePlate: &plate, PlateState: &state, Status: model.TruckActive, IsActive: true}
 	m.trucks[t.ID] = t
 	return t
 }
@@ -36,7 +36,7 @@ func (m *memTruckRepo) add(companyID uuid.UUID) *model.Truck {
 func (m *memTruckRepo) Create(_ context.Context, t model.Truck) (*model.Truck, error) {
 	m.created = append(m.created, t)
 	t.ID = uuid.New()
-	t.IsActive = true
+	t.Status, t.IsActive = model.TruckActive, true
 	m.trucks[t.ID] = &t
 	return &t, nil
 }
@@ -64,6 +64,7 @@ func (m *memTruckRepo) List(_ context.Context, f model.TruckFilter, _, _ int) ([
 }
 
 func (m *memTruckRepo) Update(_ context.Context, t model.Truck) (*model.Truck, error) {
+	t.IsActive = t.Status != model.TruckOutOfService // like the generated column
 	m.trucks[t.ID] = &t
 	return &t, nil
 }
@@ -348,6 +349,42 @@ func TestTruckService_LeavingServiceReleasesDrivers(t *testing.T) {
 		assert.Equal(t, []string{"lock", "release"}, repo.events)
 	})
 
+	t.Run("to the shop: drivers off, the device stays", func(t *testing.T) {
+		svc, repo, _, rel := newTruckSvcWithReleaser()
+		tr := repo.add(companyA)
+
+		got, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Status: ptr(model.TruckInMaintenance)})
+
+		require.NoError(t, err)
+		assert.Equal(t, model.TruckInMaintenance, got.Status)
+		assert.True(t, got.IsActive, "still part of the fleet (and billed)")
+		assert.Equal(t, []uuid.UUID{tr.ID}, rel.driversOnly)
+		assert.Empty(t, rel.trucks, "no full release")
+		assert.Equal(t, []string{"lock", "release"}, repo.events)
+	})
+
+	t.Run("from the shop to out of service: the device comes out too", func(t *testing.T) {
+		svc, repo, _, rel := newTruckSvcWithReleaser()
+		tr := repo.add(companyA)
+		tr.Status = model.TruckInMaintenance
+
+		_, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Status: ptr(model.TruckOutOfService)})
+
+		require.NoError(t, err)
+		assert.Equal(t, []uuid.UUID{tr.ID}, rel.trucks)
+	})
+
+	t.Run("back from the shop: nothing to release", func(t *testing.T) {
+		svc, repo, _, rel := newTruckSvcWithReleaser()
+		tr := repo.add(companyA)
+		tr.Status = model.TruckInMaintenance
+
+		_, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Status: ptr(model.TruckActive)})
+
+		require.NoError(t, err)
+		assert.Zero(t, rel.calls)
+	})
+
 	t.Run("other edits keep the drivers", func(t *testing.T) {
 		svc, repo, _, rel := newTruckSvcWithReleaser()
 		tr := repo.add(companyA)
@@ -357,5 +394,50 @@ func TestTruckService_LeavingServiceReleasesDrivers(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, rel.trucks)
 		assert.Empty(t, repo.events, "no lock needed")
+	})
+}
+
+func TestTruckService_StatusInput(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("is_active false still means out of service", func(t *testing.T) {
+		svc, repo := newTruckSvc()
+		tr := repo.add(companyA)
+
+		got, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{IsActive: ptr(false)})
+
+		require.NoError(t, err)
+		assert.Equal(t, model.TruckOutOfService, got.Status)
+		assert.False(t, got.IsActive)
+	})
+
+	t.Run("status and is_active must agree", func(t *testing.T) {
+		svc, repo := newTruckSvc()
+		tr := repo.add(companyA)
+
+		_, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Status: ptr(model.TruckInMaintenance), IsActive: ptr(false)})
+		requireValidationField(t, err, "is_active")
+
+		_, err = svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Status: ptr(model.TruckInMaintenance), IsActive: ptr(true)})
+		assert.NoError(t, err, "a truck in the shop is still active")
+	})
+
+	t.Run("unknown status", func(t *testing.T) {
+		svc, repo := newTruckSvc()
+		tr := repo.add(companyA)
+
+		_, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Status: ptr(model.TruckStatus("parked"))})
+
+		requireValidationField(t, err, "status")
+	})
+
+	t.Run("audited as status", func(t *testing.T) {
+		svc, repo, store := newAuditedTruckSvc()
+		tr := repo.add(companyA)
+
+		_, err := svc.Update(ctx, companyAUser, tr.ID, UpdateTruckInput{Status: ptr(model.TruckInMaintenance)})
+
+		require.NoError(t, err)
+		assert.Equal(t, model.AuditChanges{"status": {Old: model.TruckActive, New: model.TruckInMaintenance}}, store.last(t).Changes)
 	})
 }

@@ -12,7 +12,7 @@ import (
 )
 
 const truckColumns = `id, company_id, unit_number, vin, make, model, year,
-	license_plate, plate_state, is_active, created_at, updated_at, deleted_at`
+	license_plate, plate_state, status, is_active, created_at, updated_at, deleted_at`
 
 type TruckRepository struct {
 	db DBTX
@@ -78,18 +78,19 @@ func (r *TruckRepository) List(ctx context.Context, f model.TruckFilter, limit, 
 	const where = `
 		WHERE deleted_at IS NULL
 		  AND ($1::uuid IS NULL OR company_id = $1)
-		  AND ($2::boolean IS NULL OR is_active = $2)`
+		  AND ($2::boolean IS NULL OR is_active = $2)
+		  AND ($3::text IS NULL OR status = $3)`
 
 	var total int
 	if err := r.q(ctx).QueryRow(ctx, `SELECT count(*) FROM trucks`+where,
-		f.CompanyID, f.IsActive).Scan(&total); err != nil {
+		f.CompanyID, f.IsActive, f.Status).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count trucks: %w", err)
 	}
 
 	rows, err := r.q(ctx).Query(ctx, `SELECT `+truckColumns+` FROM trucks`+where+`
 		ORDER BY id
-		LIMIT $3 OFFSET $4`,
-		f.CompanyID, f.IsActive, limit, offset,
+		LIMIT $4 OFFSET $5`,
+		f.CompanyID, f.IsActive, f.Status, limit, offset,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list trucks: %w", err)
@@ -113,10 +114,10 @@ func (r *TruckRepository) Update(ctx context.Context, t model.Truck) (*model.Tru
 	row := r.q(ctx).QueryRow(ctx, `
 		UPDATE trucks
 		SET unit_number = $2, make = $3, model = $4, year = $5,
-		    license_plate = $6, plate_state = $7, is_active = $8
+		    license_plate = $6, plate_state = $7, status = $8
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING `+truckColumns,
-		t.ID, t.UnitNumber, t.Make, t.Model, t.Year, t.LicensePlate, t.PlateState, t.IsActive,
+		t.ID, t.UnitNumber, t.Make, t.Model, t.Year, t.LicensePlate, t.PlateState, t.Status,
 	)
 	updated, err := scanTruck(row)
 	if err != nil {
@@ -145,7 +146,7 @@ func scanTruck(row pgx.Row) (*model.Truck, error) {
 	var t model.Truck
 	var year *int16 // SMALLINT in Postgres
 	err := row.Scan(&t.ID, &t.CompanyID, &t.UnitNumber, &t.VIN, &t.Make, &t.Model, &year,
-		&t.LicensePlate, &t.PlateState, &t.IsActive, &t.CreatedAt, &t.UpdatedAt, &t.DeletedAt)
+		&t.LicensePlate, &t.PlateState, &t.Status, &t.IsActive, &t.CreatedAt, &t.UpdatedAt, &t.DeletedAt)
 	if err != nil {
 		return nil, err
 	}

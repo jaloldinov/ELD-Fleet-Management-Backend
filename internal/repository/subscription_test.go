@@ -181,16 +181,21 @@ func TestTruckRepository_CountActive(t *testing.T) {
 	require.NoError(t, err)
 	parked, err := repo.Create(ctx, newTruck(c.ID, "102", vin2))
 	require.NoError(t, err)
-	parked.IsActive = false
+	parked.Status = model.TruckOutOfService
 	_, err = repo.Update(ctx, *parked)
 	require.NoError(t, err)
 	gone, err := repo.Create(ctx, newTruck(c.ID, "103", vin3))
 	require.NoError(t, err)
 	require.NoError(t, repo.SoftDelete(ctx, gone.ID))
+	inShop, err := repo.Create(ctx, newTruck(c.ID, "104", "1HGCM82633A004354"))
+	require.NoError(t, err)
+	inShop.Status = model.TruckInMaintenance
+	_, err = repo.Update(ctx, *inShop)
+	require.NoError(t, err)
 
 	n, err := repo.CountActive(ctx, c.ID)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n, "inactive and deleted trucks are not billed")
+	assert.Equal(t, 2, n, "out-of-service and deleted trucks are not billed; one in the shop still is")
 }
 
 func TestSubscriptionRepository_GetByStripeID(t *testing.T) {

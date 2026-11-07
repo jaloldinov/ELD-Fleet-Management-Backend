@@ -157,12 +157,17 @@ func TestELDDeviceRepository_List(t *testing.T) {
 	_, err := f.install(installed, f.alphaT1)
 	require.NoError(t, err)
 	inactive := f.device(t, f.alpha.ID, "A-0002")
-	inactive.IsActive = false
-	_, err = f.devices.Update(ctx, *inactive)
+	inactive.Status = model.ELDFaulty
+	updated, err := f.devices.Update(ctx, *inactive)
 	require.NoError(t, err)
+	assert.False(t, updated.IsActive, "computed by the database from status")
+	faulty := model.ELDFaulty
+	_, total, err := f.devices.List(ctx, model.ELDDeviceFilter{Status: &faulty}, 20, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "status filter")
 	f.device(t, f.bravo.ID, "B-0001")
 
-	_, total, err := f.devices.List(ctx, model.ELDDeviceFilter{CompanyID: &f.alpha.ID}, 20, 0)
+	_, total, err = f.devices.List(ctx, model.ELDDeviceFilter{CompanyID: &f.alpha.ID}, 20, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 

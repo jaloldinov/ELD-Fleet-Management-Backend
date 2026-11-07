@@ -719,6 +719,7 @@ definitions:
         format: uuid
         type: string
       is_active:
+        description: status is active
         example: true
         type: boolean
       model:
@@ -726,6 +727,13 @@ definitions:
         type: string
       serial_number:
         example: PT30-0001
+        type: string
+      status:
+        enum:
+        - active
+        - faulty
+        - retired
+        example: active
         type: string
       truck_id:
         description: null = not installed
@@ -1510,6 +1518,7 @@ definitions:
         format: uuid
         type: string
       is_active:
+        description: 'Part of the fleet: status is not out_of_service. Follows status.'
         example: true
         type: boolean
       license_plate:
@@ -1523,6 +1532,13 @@ definitions:
         type: string
       plate_state:
         example: TX
+        type: string
+      status:
+        enum:
+        - active
+        - in_maintenance
+        - out_of_service
+        example: active
         type: string
       unit_number:
         example: "101"
@@ -1570,10 +1586,21 @@ definitions:
         example: 2.0.0
         type: string
       is_active:
+        description: 'Older way to set the status: true = active, false = retired.'
         example: false
         type: boolean
       model:
         example: PT30
+        type: string
+      status:
+        description: |-
+          active: works. faulty: broken, may stay in its truck until replaced.
+          retired: end of life, must be taken out of its truck first.
+        enum:
+        - active
+        - faulty
+        - retired
+        example: faulty
         type: string
     type: object
   handler.UpdatePriceRequest:
@@ -1613,6 +1640,7 @@ definitions:
   handler.UpdateTruckRequest:
     properties:
       is_active:
+        description: 'Older way to set the status: true = active, false = out_of_service.'
         example: false
         type: boolean
       license_plate:
@@ -1626,6 +1654,17 @@ definitions:
         type: string
       plate_state:
         example: OK
+        type: string
+      status:
+        description: |-
+          active: on the road. in_maintenance: in the shop (drivers come off,
+          the ELD stays). out_of_service: left the fleet (drivers and ELD come
+          off; no longer billed).
+        enum:
+        - active
+        - in_maintenance
+        - out_of_service
+        example: in_maintenance
         type: string
       unit_number:
         example: 101A
@@ -3997,6 +4036,14 @@ paths:
         in: query
         name: is_active
         type: boolean
+      - description: Only devices with this status
+        enum:
+        - active
+        - faulty
+        - retired
+        in: query
+        name: status
+        type: string
       - description: The device installed in this truck
         format: uuid
         in: query
@@ -5208,10 +5255,18 @@ paths:
         in: query
         name: company_id
         type: string
-      - description: Only active (true) or inactive (false) trucks
+      - description: Only trucks in the fleet (true) or out of service (false)
         in: query
         name: is_active
         type: boolean
+      - description: Only trucks with this status
+        enum:
+        - active
+        - in_maintenance
+        - out_of_service
+        in: query
+        name: status
+        type: string
       - default: 1
         description: Page number (1-based)
         in: query

@@ -47,12 +47,16 @@ type CreateELDDeviceInput struct {
 type UpdateELDDeviceInput struct {
 	Model           *string
 	FirmwareVersion *string
-	IsActive        *bool
+	Status          *model.ELDStatus
+	// IsActive is the pre-status way: true = active, false = retired. Kept
+	// for old clients; may be sent with Status only if they agree.
+	IsActive *bool
 }
 
 type ELDDeviceListParams struct {
 	CompanyID *uuid.UUID // platform users only
 	IsActive  *bool
+	Status    *model.ELDStatus
 	TruckID   *uuid.UUID
 	Page      int
 	PageSize  int
@@ -109,7 +113,7 @@ func (s *ELDDeviceService) Get(ctx context.Context, p auth.Principal, id uuid.UU
 func (s *ELDDeviceService) List(ctx context.Context, p auth.Principal, params ELDDeviceListParams) (*ELDDevicePage, error) {
 	page, size := normalizePage(ListParams{Page: params.Page, PageSize: params.PageSize})
 
-	f := model.ELDDeviceFilter{CompanyID: params.CompanyID, IsActive: params.IsActive, TruckID: params.TruckID}
+	f := model.ELDDeviceFilter{CompanyID: params.CompanyID, IsActive: params.IsActive, Status: params.Status, TruckID: params.TruckID}
 	if !p.IsPlatformUser() {
 		f.CompanyID = p.CompanyID // tenant scope, applied in SQL
 	}
@@ -138,15 +142,19 @@ func (s *ELDDeviceService) Update(ctx context.Context, p auth.Principal, id uuid
 	if in.FirmwareVersion != nil {
 		d.FirmwareVersion = strings.TrimSpace(*in.FirmwareVersion)
 	}
-	if in.IsActive != nil {
-		d.IsActive = *in.IsActive
-	}
-
 	var v validation.Validator
+	if st, ok := eldStatusFrom(&v, in.Status, in.IsActive); ok {
+		d.Status = st
+	}
 	validateELDText(&v, *d)
-	// An inactive device in a truck would leave the truck "with an ELD" that
-	// records nothing. Make the user take it out first, explicitly.
-	v.Check(d.IsActive || d.TruckID == nil, "is_active", "remove the device from its truck first")
+	// A retired device in a truck would leave the truck "with an ELD" that
+	// will never record again. Make the user take it out first, explicitly.
+	// A faulty one may stay until it is replaced (PUT .../truck, replace).
+	field := "status"
+	if in.Status == nil {
+		field = "is_active" // what the client sent
+	}
+	v.Check(d.Status != model.ELDRetired || d.TruckID == nil, field, "remove the device from its truck first")
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
@@ -207,8 +215,33 @@ func eldDeviceChanges(old, new model.ELDDevice) model.AuditChanges {
 	c.Set("model", old.Model, new.Model)
 	c.Set("firmware_version", old.FirmwareVersion, new.FirmwareVersion)
 	c.Set("truck_id", old.TruckID, new.TruckID)
-	c.Set("is_active", old.IsActive, new.IsActive)
+	c.Set("status", old.Status, new.Status) // is_active follows from it
 	return c
+}
+
+// eldStatusFrom: like truckStatusFrom, for devices (false = retired).
+func eldStatusFrom(v *validation.Validator, status *model.ELDStatus, isActive *bool) (model.ELDStatus, bool) {
+	var st model.ELDStatus
+	switch {
+	case status != nil:
+		st = *status
+		if !st.Valid() {
+			v.Check(false, "status", "must be active, faulty or retired")
+			return "", false
+		}
+		if isActive != nil && *isActive != (st == model.ELDActive) {
+			v.Check(false, "is_active", "contradicts status (send only status)")
+			return "", false
+		}
+	case isActive != nil:
+		st = model.ELDRetired
+		if *isActive {
+			st = model.ELDActive
+		}
+	default:
+		return "", false
+	}
+	return st, true
 }
 
 func (s *ELDDeviceService) getInScope(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error) {

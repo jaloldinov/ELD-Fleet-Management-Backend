@@ -18,7 +18,7 @@ import (
 const eldDeviceColumns = `id, company_id, serial_number, model, firmware_version,
 	(SELECT a.truck_id FROM eld_truck_assignments a
 	 WHERE a.eld_device_id = eld_devices.id AND a.ended_at IS NULL) AS truck_id,
-	is_active, created_at, updated_at, deleted_at`
+	status, is_active, created_at, updated_at, deleted_at`
 
 type ELDDeviceRepository struct {
 	db DBTX
@@ -67,18 +67,19 @@ func (r *ELDDeviceRepository) List(ctx context.Context, f model.ELDDeviceFilter,
 		  AND ($2::boolean IS NULL OR is_active = $2)
 		  AND ($3::uuid IS NULL OR EXISTS (
 		      SELECT 1 FROM eld_truck_assignments a
-		      WHERE a.eld_device_id = eld_devices.id AND a.ended_at IS NULL AND a.truck_id = $3))`
+		      WHERE a.eld_device_id = eld_devices.id AND a.ended_at IS NULL AND a.truck_id = $3))
+		  AND ($4::text IS NULL OR status = $4)`
 
 	var total int
 	if err := r.q(ctx).QueryRow(ctx, `SELECT count(*) FROM eld_devices`+where,
-		f.CompanyID, f.IsActive, f.TruckID).Scan(&total); err != nil {
+		f.CompanyID, f.IsActive, f.TruckID, f.Status).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count eld devices: %w", err)
 	}
 
 	rows, err := r.q(ctx).Query(ctx, `SELECT `+eldDeviceColumns+` FROM eld_devices`+where+`
 		ORDER BY id
-		LIMIT $4 OFFSET $5`,
-		f.CompanyID, f.IsActive, f.TruckID, limit, offset,
+		LIMIT $5 OFFSET $6`,
+		f.CompanyID, f.IsActive, f.TruckID, f.Status, limit, offset,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list eld devices: %w", err)
@@ -101,10 +102,10 @@ func (r *ELDDeviceRepository) List(ctx context.Context, f model.ELDDeviceFilter,
 func (r *ELDDeviceRepository) Update(ctx context.Context, d model.ELDDevice) (*model.ELDDevice, error) {
 	row := r.q(ctx).QueryRow(ctx, `
 		UPDATE eld_devices
-		SET model = $2, firmware_version = $3, is_active = $4
+		SET model = $2, firmware_version = $3, status = $4
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING `+eldDeviceColumns,
-		d.ID, d.Model, d.FirmwareVersion, d.IsActive,
+		d.ID, d.Model, d.FirmwareVersion, d.Status,
 	)
 	updated, err := scanELDDevice(row)
 	if err != nil {
@@ -150,7 +151,7 @@ func (r *ELDDeviceRepository) SoftDelete(ctx context.Context, id uuid.UUID) erro
 func scanELDDevice(row pgx.Row) (*model.ELDDevice, error) {
 	var d model.ELDDevice
 	err := row.Scan(&d.ID, &d.CompanyID, &d.SerialNumber, &d.Model, &d.FirmwareVersion,
-		&d.TruckID, &d.IsActive, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
+		&d.TruckID, &d.Status, &d.IsActive, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
 	if err != nil {
 		return nil, err
 	}
