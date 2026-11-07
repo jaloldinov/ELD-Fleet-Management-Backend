@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -20,13 +19,14 @@ type ELDDeviceRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error)
 	List(ctx context.Context, f model.ELDDeviceFilter, limit, offset int) ([]model.ELDDevice, int, error)
 	Update(ctx context.Context, d model.ELDDevice) (*model.ELDDevice, error)
-	SetTruck(ctx context.Context, id uuid.UUID, truckID *uuid.UUID) (*model.ELDDevice, error)
+	LockByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error)
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 }
 
-// TruckLookup finds the truck a device is being installed in.
-type TruckLookup interface {
-	GetByID(ctx context.Context, id uuid.UUID) (*model.Truck, error)
+// DeviceReleaser takes a device that is being deleted out of its truck
+// (AssignmentService, which also installs and removes devices).
+type DeviceReleaser interface {
+	ReleaseDevice(ctx context.Context, p auth.Principal, deviceID uuid.UUID) error
 }
 
 // Same rule as the eld_devices_serial_format CHECK constraint.
@@ -42,7 +42,8 @@ type CreateELDDeviceInput struct {
 }
 
 // UpdateELDDeviceInput: nil = unchanged. The serial number cannot be changed
-// (it is the device's identity); the truck is changed with AssignTruck.
+// (it is the device's identity); the truck is changed with
+// AssignmentService.InstallDevice / RemoveDevice.
 type UpdateELDDeviceInput struct {
 	Model           *string
 	FirmwareVersion *string
@@ -66,13 +67,13 @@ type ELDDevicePage struct {
 
 type ELDDeviceService struct {
 	repo      ELDDeviceRepository
-	trucks    TruckLookup
+	installs  DeviceReleaser
 	companies CompanyLookup
 	audit     *Auditor
 }
 
-func NewELDDeviceService(repo ELDDeviceRepository, trucks TruckLookup, companies CompanyLookup, audit *Auditor) *ELDDeviceService {
-	return &ELDDeviceService{repo: repo, trucks: trucks, companies: companies, audit: audit}
+func NewELDDeviceService(repo ELDDeviceRepository, installs DeviceReleaser, companies CompanyLookup, audit *Auditor) *ELDDeviceService {
+	return &ELDDeviceService{repo: repo, installs: installs, companies: companies, audit: audit}
 }
 
 func (s *ELDDeviceService) Create(ctx context.Context, p auth.Principal, in CreateELDDeviceInput) (*model.ELDDevice, error) {
@@ -154,53 +155,20 @@ func (s *ELDDeviceService) Update(ctx context.Context, p auth.Principal, id uuid
 	})
 }
 
-// AssignTruck installs the device in a truck of the same company, or moves it
-// there from its current truck.
-func (s *ELDDeviceService) AssignTruck(ctx context.Context, p auth.Principal, id, truckID uuid.UUID) (*model.ELDDevice, error) {
-	d, err := s.getInScope(ctx, p, id)
-	if err != nil {
-		return nil, err
-	}
-	if !d.IsActive {
-		return nil, &validation.ValidationError{Fields: map[string]string{"is_active": "an inactive device cannot be installed"}}
-	}
-
-	t, err := s.trucks.GetByID(ctx, truckID)
-	// Another company's truck gets the same answer as a missing one, so
-	// truck IDs of other tenants cannot be probed. Also checked by the
-	// composite foreign key in the database.
-	if errors.Is(err, model.ErrNotFound) || (err == nil && t.CompanyID != d.CompanyID) {
-		return nil, &validation.ValidationError{Fields: map[string]string{"truck_id": "truck not found"}}
-	} else if err != nil {
-		return nil, err
-	}
-	if !t.IsActive {
-		return nil, &validation.ValidationError{Fields: map[string]string{"truck_id": "truck is out of service"}}
-	}
-
-	return s.write(ctx, p, "eld_device.assign_truck", *d, func(ctx context.Context) (*model.ELDDevice, error) {
-		return s.repo.SetTruck(ctx, id, &truckID) // ErrTruckHasELD if the truck is taken
-	})
-}
-
-// UnassignTruck removes the device from its truck. Removing a device that is
-// not installed is not an error: the result is the same.
-func (s *ELDDeviceService) UnassignTruck(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error) {
-	d, err := s.getInScope(ctx, p, id)
-	if err != nil {
-		return nil, err
-	}
-	return s.write(ctx, p, "eld_device.unassign_truck", *d, func(ctx context.Context) (*model.ELDDevice, error) {
-		return s.repo.SetTruck(ctx, id, nil)
-	})
-}
-
 func (s *ELDDeviceService) Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error {
 	d, err := s.getInScope(ctx, p, id)
 	if err != nil {
 		return err
 	}
 	return s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		// Lock, take it out of its truck, delete: an install in progress
+		// finishes first, and its stint is ended too.
+		if _, err := s.repo.LockByID(ctx, id); err != nil {
+			return err
+		}
+		if err := s.installs.ReleaseDevice(ctx, p, id); err != nil {
+			return err
+		}
 		if err := s.repo.SoftDelete(ctx, id); err != nil {
 			return err
 		}

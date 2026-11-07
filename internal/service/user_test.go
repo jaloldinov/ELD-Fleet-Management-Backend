@@ -138,7 +138,7 @@ type userFixture struct {
 	repo     *memUserRepo
 	revoker  *fakeRevoker
 	releaser *fakeReleaser
-	audit   *memAuditStore
+	audit    *memAuditStore
 }
 
 func newUserFixture() *userFixture {

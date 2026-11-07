@@ -21,8 +21,6 @@ type ELDDeviceService interface {
 	Get(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error)
 	List(ctx context.Context, p auth.Principal, params service.ELDDeviceListParams) (*service.ELDDevicePage, error)
 	Update(ctx context.Context, p auth.Principal, id uuid.UUID, in service.UpdateELDDeviceInput) (*model.ELDDevice, error)
-	AssignTruck(ctx context.Context, p auth.Principal, id, truckID uuid.UUID) (*model.ELDDevice, error)
-	UnassignTruck(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error)
 	Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error
 }
 
@@ -38,15 +36,12 @@ type CreateELDDeviceRequest struct {
 }
 
 // UpdateELDDeviceRequest: omitted fields are unchanged. The serial number
-// cannot be changed; the truck is changed with PUT/DELETE .../truck.
+// cannot be changed; the truck is changed with PUT/DELETE .../truck
+// (AssignmentHandler).
 type UpdateELDDeviceRequest struct {
 	Model           *string `json:"model,omitempty" example:"PT30"`
 	FirmwareVersion *string `json:"firmware_version,omitempty" example:"2.0.0"`
 	IsActive        *bool   `json:"is_active,omitempty" example:"false"`
-}
-
-type AssignTruckRequest struct {
-	TruckID *uuid.UUID `json:"truck_id" swaggertype:"string" format:"uuid"`
 }
 
 type ELDDeviceResponse struct {
@@ -252,84 +247,6 @@ func (h *ELDDeviceHandler) Update(c *gin.Context) {
 	d, err := h.svc.Update(c.Request.Context(), p, id, service.UpdateELDDeviceInput{
 		Model: req.Model, FirmwareVersion: req.FirmwareVersion, IsActive: req.IsActive,
 	})
-	if err != nil {
-		handleError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, newELDDeviceResponse(d))
-}
-
-// AssignTruck handles PUT /api/v1/eld-devices/:id/truck.
-//
-//	@Summary		Install a device in a truck
-//	@Description	Requires permission: eld:update
-//	@Description	Installs the device in a truck of the same company, or moves it there from its current truck.
-//	@Tags			eld-devices
-//	@Accept			json
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id		path		string				true	"Device ID"	format(uuid)
-//	@Param			body	body		AssignTruckRequest	true	"Truck to install the device in"
-//	@Success		200		{object}	ELDDeviceResponse
-//	@Failure		400		{object}	apierror.Response	"truck not found, out of service, or device inactive"
-//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
-//	@Failure		403		{object}	apierror.Response	"missing permission eld:update"
-//	@Failure		404		{object}	apierror.Response	"device not found"
-//	@Failure		409		{object}	apierror.Response	"the truck already has a device"
-//	@Failure		500		{object}	apierror.Response
-//	@Router			/api/v1/eld-devices/{id}/truck [put]
-func (h *ELDDeviceHandler) AssignTruck(c *gin.Context) {
-	p, ok := principal(c)
-	if !ok {
-		return
-	}
-	id, ok := parseUUIDParam(c, "id")
-	if !ok {
-		return
-	}
-	var req AssignTruckRequest
-	if !bindJSON(c, &req) {
-		return
-	}
-	if req.TruckID == nil {
-		handleError(c, &validation.ValidationError{Fields: map[string]string{"truck_id": "is required"}})
-		return
-	}
-
-	d, err := h.svc.AssignTruck(c.Request.Context(), p, id, *req.TruckID)
-	if err != nil {
-		handleError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, newELDDeviceResponse(d))
-}
-
-// UnassignTruck handles DELETE /api/v1/eld-devices/:id/truck.
-//
-//	@Summary		Remove a device from its truck
-//	@Description	Requires permission: eld:update
-//	@Description	Succeeds also when the device is not installed.
-//	@Tags			eld-devices
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id	path		string	true	"Device ID"	format(uuid)
-//	@Success		200	{object}	ELDDeviceResponse
-//	@Failure		400	{object}	apierror.Response	"invalid id"
-//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
-//	@Failure		403	{object}	apierror.Response	"missing permission eld:update"
-//	@Failure		404	{object}	apierror.Response
-//	@Failure		500	{object}	apierror.Response
-//	@Router			/api/v1/eld-devices/{id}/truck [delete]
-func (h *ELDDeviceHandler) UnassignTruck(c *gin.Context) {
-	p, ok := principal(c)
-	if !ok {
-		return
-	}
-	id, ok := parseUUIDParam(c, "id")
-	if !ok {
-		return
-	}
-	d, err := h.svc.UnassignTruck(c.Request.Context(), p, id)
 	if err != nil {
 		handleError(c, err)
 		return

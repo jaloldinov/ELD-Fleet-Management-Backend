@@ -20,6 +20,8 @@ type AssignmentService interface {
 	AssignMe(ctx context.Context, p auth.Principal, in service.AssignDriverInput) (*model.DriverAssignment, error)
 	UnassignDriver(ctx context.Context, p auth.Principal, driverID uuid.UUID) error
 	UnassignMe(ctx context.Context, p auth.Principal) error
+	InstallDevice(ctx context.Context, p auth.Principal, deviceID, truckID uuid.UUID, replace bool) (*model.ELDDevice, error)
+	RemoveDevice(ctx context.Context, p auth.Principal, deviceID uuid.UUID) (*model.ELDDevice, error)
 }
 
 // ---------- DTOs ----------
@@ -28,6 +30,13 @@ type AssignDriverRequest struct {
 	TruckID *uuid.UUID `json:"truck_id" swaggertype:"string" format:"uuid"`
 	// Omit for primary. A truck has at most one of each.
 	Role string `json:"role,omitempty" enums:"primary,co_driver" example:"primary"`
+}
+
+type AssignTruckRequest struct {
+	TruckID *uuid.UUID `json:"truck_id" swaggertype:"string" format:"uuid"`
+	// true: if the truck already has another device, take it out (e.g. it
+	// broke and this one replaces it). false/omitted: 409 in that case.
+	Replace bool `json:"replace,omitempty" example:"false"`
 }
 
 // DriverAssignmentResponse is one stint of a driver on a truck.
@@ -194,6 +203,85 @@ func (h *AssignmentHandler) UnassignMe(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// InstallDevice handles PUT /api/v1/eld-devices/:id/truck.
+//
+//	@Summary		Install a device in a truck
+//	@Description	Requires permission: eld:update
+//	@Description	Installs the device in a truck of the same company, or moves it there from its current truck. With "replace": true, a device already in that truck is taken out first; without it, that is a 409.
+//	@Tags			eld-devices
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string				true	"Device ID"	format(uuid)
+//	@Param			body	body		AssignTruckRequest	true	"Truck to install the device in"
+//	@Success		200		{object}	ELDDeviceResponse
+//	@Failure		400		{object}	apierror.Response	"truck not found, out of service, or device inactive"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402		{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403		{object}	apierror.Response	"missing permission eld:update"
+//	@Failure		404		{object}	apierror.Response	"device not found"
+//	@Failure		409		{object}	apierror.Response	"the truck already has a device (send replace: true to swap it)"
+//	@Failure		500		{object}	apierror.Response
+//	@Router			/api/v1/eld-devices/{id}/truck [put]
+func (h *AssignmentHandler) InstallDevice(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req AssignTruckRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if req.TruckID == nil {
+		handleError(c, &validation.ValidationError{Fields: map[string]string{"truck_id": "is required"}})
+		return
+	}
+	d, err := h.svc.InstallDevice(c.Request.Context(), p, id, *req.TruckID, req.Replace)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newELDDeviceResponse(d))
+}
+
+// RemoveDevice handles DELETE /api/v1/eld-devices/:id/truck.
+//
+//	@Summary		Remove a device from its truck
+//	@Description	Requires permission: eld:update
+//	@Description	Succeeds also when the device is not installed.
+//	@Tags			eld-devices
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Device ID"	format(uuid)
+//	@Success		200	{object}	ELDDeviceResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402	{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403	{object}	apierror.Response	"missing permission eld:update"
+//	@Failure		404	{object}	apierror.Response
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/eld-devices/{id}/truck [delete]
+func (h *AssignmentHandler) RemoveDevice(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	d, err := h.svc.RemoveDevice(c.Request.Context(), p, id)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newELDDeviceResponse(d))
 }
 
 // bindAssignDriver reads the body; truck_id is required. The role is checked

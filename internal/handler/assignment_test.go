@@ -21,8 +21,12 @@ type fakeAssignmentService struct {
 	gotPrincipal auth.Principal
 	gotDriverID  uuid.UUID
 	gotInput     service.AssignDriverInput
+	gotDeviceID  uuid.UUID
+	gotTruckID   uuid.UUID
+	gotReplace   bool
 	calls        []string
 	assignment   *model.DriverAssignment
+	device       *model.ELDDevice
 	err          error
 }
 
@@ -47,6 +51,17 @@ func (f *fakeAssignmentService) UnassignMe(_ context.Context, p auth.Principal) 
 	return f.err
 }
 
+func (f *fakeAssignmentService) InstallDevice(_ context.Context, p auth.Principal, deviceID, truckID uuid.UUID, replace bool) (*model.ELDDevice, error) {
+	f.gotPrincipal, f.gotDeviceID, f.gotTruckID, f.gotReplace = p, deviceID, truckID, replace
+	f.calls = append(f.calls, "InstallDevice")
+	return f.device, f.err
+}
+func (f *fakeAssignmentService) RemoveDevice(_ context.Context, p auth.Principal, deviceID uuid.UUID) (*model.ELDDevice, error) {
+	f.gotPrincipal, f.gotDeviceID = p, deviceID
+	f.calls = append(f.calls, "RemoveDevice")
+	return f.device, f.err
+}
+
 func sampleAssignment() *model.DriverAssignment {
 	return &model.DriverAssignment{ID: uuid.New(), CompanyID: testCompanyID, DriverID: uuid.New(), TruckID: uuid.New(),
 		Role: model.AssignmentPrimary, StartedAt: time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC), StartedBy: &testUserID}
@@ -65,6 +80,9 @@ func assignmentRouter(svc AssignmentService) *gin.Engine {
 	g.DELETE("/me/truck", h.UnassignMe)
 	g.PUT("/:id/truck", h.Assign)
 	g.DELETE("/:id/truck", h.Unassign)
+	e := r.Group("/api/v1/eld-devices")
+	e.PUT("/:id/truck", h.InstallDevice)
+	e.DELETE("/:id/truck", h.RemoveDevice)
 	return r
 }
 
@@ -154,4 +172,59 @@ func TestAssignmentHandler_Errors(t *testing.T) {
 			assert.Equal(t, tt.want, rec.Code)
 		})
 	}
+}
+
+func TestAssignmentHandler_InstallDevice(t *testing.T) {
+	truckID := uuid.New()
+	installed := sampleELD()
+	installed.TruckID = &truckID
+	svc := &fakeAssignmentService{device: installed}
+
+	rec := do(assignmentRouter(svc), http.MethodPut, eldPath+testUserID.String()+"/truck",
+		`{"truck_id":"`+truckID.String()+`"}`)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, testUserID, svc.gotDeviceID)
+	assert.Equal(t, truckID, svc.gotTruckID)
+	assert.False(t, svc.gotReplace, "omitted = do not replace")
+	assert.Contains(t, rec.Body.String(), `"truck_id":"`+truckID.String()+`"`)
+}
+
+func TestAssignmentHandler_InstallDevice_Replace(t *testing.T) {
+	svc := &fakeAssignmentService{device: sampleELD()}
+
+	rec := do(assignmentRouter(svc), http.MethodPut, eldPath+testUserID.String()+"/truck",
+		`{"truck_id":"`+uuid.NewString()+`","replace":true}`)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, svc.gotReplace)
+}
+
+func TestAssignmentHandler_InstallDevice_MissingTruckID(t *testing.T) {
+	svc := &fakeAssignmentService{}
+
+	rec := do(assignmentRouter(svc), http.MethodPut, eldPath+testUserID.String()+"/truck", `{}`)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, decodeError(t, rec).Details, "truck_id")
+	assert.Empty(t, svc.calls)
+}
+
+func TestAssignmentHandler_RemoveDevice(t *testing.T) {
+	svc := &fakeAssignmentService{device: sampleELD()}
+
+	rec := do(assignmentRouter(svc), http.MethodDelete, eldPath+testUserID.String()+"/truck", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"RemoveDevice"}, svc.calls)
+	assert.Contains(t, rec.Body.String(), `"truck_id":null`)
+}
+
+func TestAssignmentHandler_InstallDevice_TruckHasELD(t *testing.T) {
+	svc := &fakeAssignmentService{err: model.ErrTruckHasELD}
+
+	rec := do(assignmentRouter(svc), http.MethodPut, eldPath+testUserID.String()+"/truck",
+		`{"truck_id":"`+uuid.NewString()+`"}`)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
 }

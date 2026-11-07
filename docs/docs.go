@@ -3190,7 +3190,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requires permission: eld:update\nInstalls the device in a truck of the same company, or moves it there from its current truck.",
+                "description": "Requires permission: eld:update\nInstalls the device in a truck of the same company, or moves it there from its current truck. With \"replace\": true, a device already in that truck is taken out first; without it, that is a 409.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3239,6 +3239,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/apierror.Response"
                         }
                     },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
                     "403": {
                         "description": "missing permission eld:update",
                         "schema": {
@@ -3252,7 +3258,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "the truck already has a device",
+                        "description": "the truck already has a device (send replace: true to swap it)",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -3304,6 +3310,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -5531,6 +5543,11 @@ const docTemplate = `{
         "handler.AssignTruckRequest": {
             "type": "object",
             "properties": {
+                "replace": {
+                    "description": "true: if the truck already has another device, take it out (e.g. it\nbroke and this one replaces it). false/omitted: 409 in that case.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "truck_id": {
                     "type": "string",
                     "format": "uuid"

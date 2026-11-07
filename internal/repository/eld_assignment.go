@@ -1,0 +1,110 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/jaloldinov/ELD-learning/internal/model"
+)
+
+const eldAssignmentColumns = `id, company_id, eld_device_id, truck_id,
+	started_at, ended_at, started_by, ended_by`
+
+// ELDAssignmentRepository stores ELD ↔ truck stints, like
+// DriverAssignmentRepository: only inserted and ended, never deleted.
+type ELDAssignmentRepository struct {
+	db DBTX
+}
+
+func NewELDAssignmentRepository(db DBTX) *ELDAssignmentRepository {
+	return &ELDAssignmentRepository{db: db}
+}
+
+func (r *ELDAssignmentRepository) q(ctx context.Context) DBTX {
+	return conn(ctx, r.db)
+}
+
+// Open installs a device in a truck now. ErrTruckHasELD if the truck already
+// has one (take it out first, or replace it).
+func (r *ELDAssignmentRepository) Open(ctx context.Context, a model.ELDAssignment) (*model.ELDAssignment, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		INSERT INTO eld_truck_assignments (company_id, eld_device_id, truck_id, started_by)
+		VALUES ($1, $2, $3, $4)
+		RETURNING `+eldAssignmentColumns,
+		a.CompanyID, a.ELDDeviceID, a.TruckID, a.StartedBy,
+	)
+	created, err := scanELDAssignment(row)
+	if err != nil {
+		return nil, mapELDAssignmentError("open eld assignment", err)
+	}
+	return created, nil
+}
+
+// GetOpenByDevice returns where the device is installed now, or ErrNotFound.
+func (r *ELDAssignmentRepository) GetOpenByDevice(ctx context.Context, deviceID uuid.UUID) (*model.ELDAssignment, error) {
+	return r.one(ctx, "get open eld assignment", `
+		SELECT `+eldAssignmentColumns+` FROM eld_truck_assignments
+		WHERE eld_device_id = $1 AND ended_at IS NULL`, deviceID)
+}
+
+// GetOpenByTruck returns the device installed in the truck now, or
+// ErrNotFound.
+func (r *ELDAssignmentRepository) GetOpenByTruck(ctx context.Context, truckID uuid.UUID) (*model.ELDAssignment, error) {
+	return r.one(ctx, "get truck's open eld assignment", `
+		SELECT `+eldAssignmentColumns+` FROM eld_truck_assignments
+		WHERE truck_id = $1 AND ended_at IS NULL`, truckID)
+}
+
+// EndOpenByDevice takes the device out of its truck and returns that stint,
+// or ErrNotFound if it was not installed.
+func (r *ELDAssignmentRepository) EndOpenByDevice(ctx context.Context, deviceID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error) {
+	return r.one(ctx, "end eld assignment", `
+		UPDATE eld_truck_assignments SET ended_at = now(), ended_by = $2
+		WHERE eld_device_id = $1 AND ended_at IS NULL
+		RETURNING `+eldAssignmentColumns, deviceID, endedBy)
+}
+
+// EndOpenByTruck takes whatever device is in the truck out of it and returns
+// that stint, or ErrNotFound if the truck had none.
+func (r *ELDAssignmentRepository) EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error) {
+	return r.one(ctx, "end truck's eld assignment", `
+		UPDATE eld_truck_assignments SET ended_at = now(), ended_by = $2
+		WHERE truck_id = $1 AND ended_at IS NULL
+		RETURNING `+eldAssignmentColumns, truckID, endedBy)
+}
+
+func (r *ELDAssignmentRepository) one(ctx context.Context, op, sql string, args ...any) (*model.ELDAssignment, error) {
+	a, err := scanELDAssignment(r.q(ctx).QueryRow(ctx, sql, args...))
+	if err != nil {
+		return nil, mapELDAssignmentError(op, err)
+	}
+	return a, nil
+}
+
+func scanELDAssignment(row pgx.Row) (*model.ELDAssignment, error) {
+	var a model.ELDAssignment
+	err := row.Scan(&a.ID, &a.CompanyID, &a.ELDDeviceID, &a.TruckID,
+		&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func mapELDAssignmentError(op string, err error) error {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return model.ErrNotFound
+	case isUniqueViolation(err, "eta_truck_open_uniq"):
+		return model.ErrTruckHasELD
+	default:
+		// eta_device_open_uniq lands here: the service locks the device and
+		// ends its stint first, so a second open stint means a bug. Same for
+		// the company foreign keys.
+		return fmt.Errorf("%s: %w", op, err)
+	}
+}

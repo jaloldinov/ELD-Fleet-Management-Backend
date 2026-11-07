@@ -13,7 +13,7 @@ type ELDDevice struct {
 	SerialNumber    string // immutable after creation
 	Model           string
 	FirmwareVersion string
-	TruckID         *uuid.UUID // nil = not installed in any truck
+	TruckID         *uuid.UUID // read from the open ELD stint; nil = not installed
 	IsActive        bool
 	CreatedAt       time.Time
 	UpdatedAt       time.Time

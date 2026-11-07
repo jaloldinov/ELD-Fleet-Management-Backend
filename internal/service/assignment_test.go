@@ -91,10 +91,88 @@ func (m *memAssignments) EndOpenByTruck(ctx context.Context, truckID uuid.UUID, 
 	return out, nil
 }
 
+// memELDAssignments: device ↔ truck stints, with the database's two rules.
+type memELDAssignments struct {
+	open  map[uuid.UUID]*model.ELDAssignment // by device
+	ended []model.ELDAssignment
+}
+
+func newMemELDAssignments() *memELDAssignments {
+	return &memELDAssignments{open: map[uuid.UUID]*model.ELDAssignment{}}
+}
+
+func (m *memELDAssignments) Open(_ context.Context, a model.ELDAssignment) (*model.ELDAssignment, error) {
+	for _, o := range m.open {
+		if o.TruckID == a.TruckID {
+			return nil, model.ErrTruckHasELD
+		}
+	}
+	if _, ok := m.open[a.ELDDeviceID]; ok {
+		return nil, errors.New("eta_device_open_uniq")
+	}
+	a.ID = uuid.New()
+	m.open[a.ELDDeviceID] = &a
+	c := a
+	return &c, nil
+}
+
+func (m *memELDAssignments) GetOpenByDevice(_ context.Context, deviceID uuid.UUID) (*model.ELDAssignment, error) {
+	a, ok := m.open[deviceID]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	c := *a
+	return &c, nil
+}
+
+func (m *memELDAssignments) GetOpenByTruck(_ context.Context, truckID uuid.UUID) (*model.ELDAssignment, error) {
+	for _, a := range m.open {
+		if a.TruckID == truckID {
+			c := *a
+			return &c, nil
+		}
+	}
+	return nil, model.ErrNotFound
+}
+
+func (m *memELDAssignments) EndOpenByDevice(_ context.Context, deviceID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error) {
+	a, ok := m.open[deviceID]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	delete(m.open, deviceID)
+	now := a.StartedAt
+	a.EndedAt, a.EndedBy = &now, endedBy
+	m.ended = append(m.ended, *a)
+	c := *a
+	return &c, nil
+}
+
+func (m *memELDAssignments) EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error) {
+	a, err := m.GetOpenByTruck(ctx, truckID)
+	if err != nil {
+		return nil, err
+	}
+	return m.EndOpenByDevice(ctx, a.ELDDeviceID, endedBy)
+}
+
+type lockingDevices struct {
+	*memELDRepo
+	log *lockLog
+}
+
+func (l lockingDevices) LockByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error) {
+	if !inTx(ctx) {
+		return nil, errors.New("lock outside transaction")
+	}
+	*l.log = append(*l.log, "device")
+	return l.GetByID(ctx, id)
+}
+
 // fakeReleaser stands in for AssignmentService in TruckService and
 // UserService tests.
 type fakeReleaser struct {
-	trucks, users []uuid.UUID
+	trucks, users, devices []uuid.UUID
 	allInTx       bool
 	calls         int
 	log           *[]string // optional: shared event log, to check order
@@ -111,6 +189,12 @@ func (f *fakeReleaser) called(ctx context.Context) {
 func (f *fakeReleaser) ReleaseTruck(ctx context.Context, _ auth.Principal, truckID uuid.UUID) error {
 	f.called(ctx)
 	f.trucks = append(f.trucks, truckID)
+	return nil
+}
+
+func (f *fakeReleaser) ReleaseDevice(ctx context.Context, _ auth.Principal, deviceID uuid.UUID) error {
+	f.called(ctx)
+	f.devices = append(f.devices, deviceID)
 	return nil
 }
 
@@ -153,18 +237,21 @@ func (l lockingTrucks) LockByID(ctx context.Context, id uuid.UUID) (*model.Truck
 type assignmentSvcFixture struct {
 	svc         *AssignmentService
 	assignments *memAssignments
+	elds        *memELDAssignments
 	drivers     *memDriverRepo
+	devices     *memELDRepo
 	trucks      *memTruckRepo
 	audit       *memAuditStore
 	locks       lockLog
 }
 
 func newAssignmentSvcFixture() *assignmentSvcFixture {
-	f := &assignmentSvcFixture{assignments: newMemAssignments(), drivers: newMemDriverRepo(), trucks: newMemTruckRepo()}
+	f := &assignmentSvcFixture{assignments: newMemAssignments(), elds: newMemELDAssignments(),
+		drivers: newMemDriverRepo(), devices: newMemELDRepo(), trucks: newMemTruckRepo()}
 	var audit *Auditor
 	audit, f.audit = newTestAuditor()
-	f.svc = NewAssignmentService(f.assignments,
-		lockingDrivers{f.drivers, &f.locks}, lockingTrucks{f.trucks, &f.locks}, audit)
+	f.svc = NewAssignmentService(f.assignments, f.elds,
+		lockingDrivers{f.drivers, &f.locks}, lockingDevices{f.devices, &f.locks}, lockingTrucks{f.trucks, &f.locks}, audit)
 	return f
 }
 
@@ -501,4 +588,198 @@ func TestAssignmentService_ReleaseUser(t *testing.T) {
 
 		assert.Empty(t, f.audit.entries)
 	})
+}
+
+// ---------- ELD devices ----------
+
+func TestAssignmentService_InstallDevice(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("installs, locking device then truck", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		tr := f.trucks.add(companyA)
+
+		got, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+
+		require.NoError(t, err)
+		assert.Equal(t, tr.ID, *got.TruckID)
+		assert.Equal(t, lockLog{"device", "truck"}, f.locks)
+		require.Contains(t, f.elds.open, d.ID)
+		assert.Equal(t, companyAUser.UserID, *f.elds.open[d.ID].StartedBy)
+	})
+
+	t.Run("audit: install, move, remove", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		first, second := f.trucks.add(companyA), f.trucks.add(companyA)
+
+		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, first.ID, false)
+		require.NoError(t, err)
+		_, err = f.svc.InstallDevice(ctx, companyAUser, d.ID, second.ID, false)
+		require.NoError(t, err)
+		got, err := f.svc.RemoveDevice(ctx, companyAUser, d.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.TruckID)
+
+		require.Equal(t, []string{"eld_device.assign_truck", "eld_device.assign_truck", "eld_device.unassign_truck"}, f.audit.actions())
+		assert.Equal(t, model.AuditChange{Old: nil, New: first.ID}, f.audit.entries[0].Changes["truck_id"])
+		assert.Equal(t, model.AuditChange{Old: first.ID, New: second.ID}, f.audit.entries[1].Changes["truck_id"], "moved between trucks")
+		assert.Equal(t, model.AuditChange{Old: second.ID, New: nil}, f.audit.entries[2].Changes["truck_id"])
+		assert.Equal(t, model.AuditELDDevice, f.audit.entries[0].Entity)
+		assert.Equal(t, &companyA, f.audit.entries[0].CompanyID)
+		assert.Len(t, f.elds.ended, 2, "history kept")
+		f.audit.requireAllInTx(t)
+	})
+
+	t.Run("same truck again changes nothing", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		tr := f.trucks.add(companyA)
+		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+		require.NoError(t, err)
+
+		got, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+
+		require.NoError(t, err)
+		assert.Equal(t, tr.ID, *got.TruckID)
+		assert.Empty(t, f.elds.ended)
+		assert.Len(t, f.audit.entries, 1)
+	})
+
+	t.Run("truck has another device: 409 without replace", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		old, d := f.devices.add(companyA), f.devices.add(companyA)
+		tr := f.trucks.add(companyA)
+		_, err := f.svc.InstallDevice(ctx, companyAUser, old.ID, tr.ID, false)
+		require.NoError(t, err)
+
+		_, err = f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+
+		assert.ErrorIs(t, err, model.ErrTruckHasELD)
+	})
+
+	t.Run("replace takes the old device out", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		old, d := f.devices.add(companyA), f.devices.add(companyA)
+		tr := f.trucks.add(companyA)
+		_, err := f.svc.InstallDevice(ctx, companyAUser, old.ID, tr.ID, false)
+		require.NoError(t, err)
+
+		got, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, true)
+
+		require.NoError(t, err)
+		assert.Equal(t, tr.ID, *got.TruckID)
+		assert.NotContains(t, f.elds.open, old.ID, "old device is out")
+		assert.Contains(t, f.elds.open, d.ID)
+		assert.Equal(t, []string{"eld_device.assign_truck", "eld_device.unassign_truck", "eld_device.assign_truck"}, f.audit.actions())
+		assert.Equal(t, old.ID.String(), f.audit.entries[1].EntityID, "the removal is recorded on the old device")
+	})
+
+	t.Run("replace into an empty truck is just an install", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		tr := f.trucks.add(companyA)
+
+		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, true)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"eld_device.assign_truck"}, f.audit.actions())
+	})
+
+	t.Run("other company's truck looks like a missing one", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		foreign := f.trucks.add(uuid.New())
+
+		_, errForeign := f.svc.InstallDevice(ctx, companyAUser, d.ID, foreign.ID, false)
+		_, errMissing := f.svc.InstallDevice(ctx, companyAUser, d.ID, uuid.New(), false)
+
+		requireValidationField(t, errForeign, "truck_id")
+		assert.Equal(t, errMissing.Error(), errForeign.Error())
+		assert.Empty(t, f.elds.open)
+	})
+
+	t.Run("platform admin cannot cross companies either", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		foreign := f.trucks.add(uuid.New())
+
+		_, err := f.svc.InstallDevice(ctx, platformAdmin, d.ID, foreign.ID, false)
+
+		requireValidationField(t, err, "truck_id")
+	})
+
+	t.Run("out-of-service truck", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		tr := f.trucks.add(companyA)
+		tr.IsActive = false
+
+		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+
+		requireValidationField(t, err, "truck_id")
+	})
+
+	t.Run("inactive device", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(companyA)
+		d.IsActive = false
+		tr := f.trucks.add(companyA)
+
+		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+
+		requireValidationField(t, err, "is_active")
+	})
+
+	t.Run("device of another company does not exist", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.devices.add(uuid.New())
+		tr := f.trucks.add(companyA)
+
+		_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+
+		assert.ErrorIs(t, err, model.ErrNotFound)
+	})
+}
+
+func TestAssignmentService_RemoveDevice_NotInstalled(t *testing.T) {
+	f := newAssignmentSvcFixture()
+	d := f.devices.add(companyA)
+
+	got, err := f.svc.RemoveDevice(context.Background(), companyAUser, d.ID)
+
+	require.NoError(t, err)
+	assert.Nil(t, got.TruckID)
+	assert.Empty(t, f.audit.entries, "nothing changed, nothing recorded")
+}
+
+func TestAssignmentService_ReleaseTruck_TakesTheDeviceOutToo(t *testing.T) {
+	ctx := context.Background()
+	f := newAssignmentSvcFixture()
+	d := f.devices.add(companyA)
+	tr := f.trucks.add(companyA)
+	_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+	require.NoError(t, err)
+
+	require.NoError(t, f.svc.ReleaseTruck(ctx, companyAUser, tr.ID))
+
+	assert.Empty(t, f.elds.open)
+	e := f.audit.last(t)
+	assert.Equal(t, "eld_device.unassign_truck", e.Action)
+	assert.Equal(t, d.ID.String(), e.EntityID)
+}
+
+func TestAssignmentService_ReleaseDevice(t *testing.T) {
+	ctx := context.Background()
+	f := newAssignmentSvcFixture()
+	d := f.devices.add(companyA)
+	tr := f.trucks.add(companyA)
+	_, err := f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+	require.NoError(t, err)
+
+	require.NoError(t, f.svc.ReleaseDevice(ctx, companyAUser, d.ID))
+	assert.Empty(t, f.elds.open)
+
+	require.NoError(t, f.svc.ReleaseDevice(ctx, companyAUser, d.ID), "not installed: nothing to do")
 }

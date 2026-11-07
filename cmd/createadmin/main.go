@@ -71,8 +71,10 @@ func run() error {
 	auditor := service.NewAuditor(repository.NewTxManager(pool), repository.NewAuditRepository(pool))
 	users := service.NewUserService(
 		repository.NewUserRepository(pool),
-		service.NewAssignmentService(repository.NewDriverAssignmentRepository(pool),
-			repository.NewDriverRepository(pool), repository.NewTruckRepository(pool), auditor),
+		service.NewAssignmentService(
+			repository.NewDriverAssignmentRepository(pool), repository.NewELDAssignmentRepository(pool),
+			repository.NewDriverRepository(pool), repository.NewELDDeviceRepository(pool),
+			repository.NewTruckRepository(pool), auditor),
 		repository.NewCompanyRepository(pool),
 		repository.NewSessionRepository(pool),
 		auth.NewBcryptHasher(auth.DefaultBcryptCost),

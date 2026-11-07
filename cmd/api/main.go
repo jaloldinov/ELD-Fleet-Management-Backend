@@ -132,11 +132,15 @@ func run() error {
 		return err
 	}
 
-	// Who drives which truck. Built first: deactivating a user or a truck
-	// takes the driver off the truck (UserService, TruckService use it).
+	// The dispatch board: who drives which truck, which device is in it.
+	// Built first: deleting or deactivating a user, truck or device takes it
+	// off the board (UserService, TruckService, ELDDeviceService use it).
 	driverRepo := repository.NewDriverRepository(pool)
 	truckRepo := repository.NewTruckRepository(pool)
-	assignmentSvc := service.NewAssignmentService(repository.NewDriverAssignmentRepository(pool), driverRepo, truckRepo, auditor)
+	eldRepo := repository.NewELDDeviceRepository(pool)
+	assignmentSvc := service.NewAssignmentService(
+		repository.NewDriverAssignmentRepository(pool), repository.NewELDAssignmentRepository(pool),
+		driverRepo, eldRepo, truckRepo, auditor)
 
 	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)
@@ -331,7 +335,7 @@ func run() error {
 		Company:       handler.NewCompanyHandler(companySvc),
 		Driver:        handler.NewDriverHandler(driverSvc),
 		Truck:         handler.NewTruckHandler(truckSvc),
-		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(repository.NewELDDeviceRepository(pool), truckRepo, companyRepo, auditor)),
+		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(eldRepo, assignmentSvc, companyRepo, auditor)),
 		Assignment:    handler.NewAssignmentHandler(assignmentSvc),
 		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),
 		Password:      handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),

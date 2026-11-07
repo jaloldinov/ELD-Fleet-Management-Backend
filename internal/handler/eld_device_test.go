@@ -22,9 +22,6 @@ type fakeELDService struct {
 	gotCreate     service.CreateELDDeviceInput
 	gotUpdate     service.UpdateELDDeviceInput
 	gotList       service.ELDDeviceListParams
-	gotTruckID    uuid.UUID
-	assignCalled  bool
-	unassignCalls int
 	device        *model.ELDDevice
 	err           error
 }
@@ -46,15 +43,6 @@ func (f *fakeELDService) List(_ context.Context, p auth.Principal, params servic
 }
 func (f *fakeELDService) Update(_ context.Context, p auth.Principal, _ uuid.UUID, in service.UpdateELDDeviceInput) (*model.ELDDevice, error) {
 	f.gotPrincipal, f.gotUpdate = p, in
-	return f.device, f.err
-}
-func (f *fakeELDService) AssignTruck(_ context.Context, p auth.Principal, _, truckID uuid.UUID) (*model.ELDDevice, error) {
-	f.gotPrincipal, f.gotTruckID, f.assignCalled = p, truckID, true
-	return f.device, f.err
-}
-func (f *fakeELDService) UnassignTruck(_ context.Context, p auth.Principal, _ uuid.UUID) (*model.ELDDevice, error) {
-	f.gotPrincipal = p
-	f.unassignCalls++
 	return f.device, f.err
 }
 func (f *fakeELDService) Delete(_ context.Context, p auth.Principal, _ uuid.UUID) error {
@@ -81,8 +69,6 @@ func eldRouter(svc ELDDeviceService) *gin.Engine {
 	g.GET("/:id", h.Get)
 	g.PATCH("/:id", h.Update)
 	g.DELETE("/:id", h.Delete)
-	g.PUT("/:id/truck", h.AssignTruck)
-	g.DELETE("/:id/truck", h.UnassignTruck)
 	return r
 }
 
@@ -124,39 +110,6 @@ func TestELDDeviceHandler_List_BadQuery(t *testing.T) {
 	assert.Contains(t, details, "is_active", "all problems reported at once")
 }
 
-func TestELDDeviceHandler_AssignTruck(t *testing.T) {
-	truckID := uuid.New()
-	installed := sampleELD()
-	installed.TruckID = &truckID
-	svc := &fakeELDService{device: installed}
-
-	rec := do(eldRouter(svc), http.MethodPut, eldPath+testUserID.String()+"/truck",
-		`{"truck_id":"`+truckID.String()+`"}`)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, truckID, svc.gotTruckID)
-	assert.Contains(t, rec.Body.String(), `"truck_id":"`+truckID.String()+`"`)
-}
-
-func TestELDDeviceHandler_AssignTruck_MissingTruckID(t *testing.T) {
-	svc := &fakeELDService{}
-
-	rec := do(eldRouter(svc), http.MethodPut, eldPath+testUserID.String()+"/truck", `{}`)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, decodeError(t, rec).Details, "truck_id")
-	assert.False(t, svc.assignCalled)
-}
-
-func TestELDDeviceHandler_UnassignTruck(t *testing.T) {
-	svc := &fakeELDService{device: sampleELD()}
-
-	rec := do(eldRouter(svc), http.MethodDelete, eldPath+testUserID.String()+"/truck", "")
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, 1, svc.unassignCalls, `"/:id/truck" is not mistaken for "/:id"`)
-}
-
 func TestELDDeviceHandler_Update(t *testing.T) {
 	svc := &fakeELDService{device: sampleELD()}
 
@@ -179,7 +132,6 @@ func TestELDDeviceHandler_Errors(t *testing.T) {
 		want   int
 	}{
 		{"serial taken", http.MethodPost, "/api/v1/eld-devices", `{}`, model.ErrSerialTaken, http.StatusConflict},
-		{"truck has ELD", http.MethodPut, eldPath + id + "/truck", `{"truck_id":"` + id + `"}`, model.ErrTruckHasELD, http.StatusConflict},
 		{"other tenant", http.MethodGet, eldPath + id, "", model.ErrNotFound, http.StatusNotFound},
 		{"validation", http.MethodPatch, eldPath + id, `{"is_active":false}`,
 			&validation.ValidationError{Fields: map[string]string{"is_active": "x"}}, http.StatusBadRequest},

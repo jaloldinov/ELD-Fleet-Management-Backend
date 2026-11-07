@@ -20,6 +20,21 @@ type DriverAssignmentRepository interface {
 	EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error)
 }
 
+// ELDAssignmentRepository is what AssignmentService needs to store which
+// device is in which truck.
+type ELDAssignmentRepository interface {
+	Open(ctx context.Context, a model.ELDAssignment) (*model.ELDAssignment, error)
+	GetOpenByDevice(ctx context.Context, deviceID uuid.UUID) (*model.ELDAssignment, error)
+	GetOpenByTruck(ctx context.Context, truckID uuid.UUID) (*model.ELDAssignment, error)
+	EndOpenByDevice(ctx context.Context, deviceID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error)
+	EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error)
+}
+
+// DeviceLocker locks an ELD device's row (repository.ELDDeviceRepository).
+type DeviceLocker interface {
+	LockByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error)
+}
+
 // AssignmentDrivers finds and locks drivers (repository.DriverRepository).
 type AssignmentDrivers interface {
 	LockByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error)
@@ -38,24 +53,30 @@ type AssignDriverInput struct {
 	Role    model.AssignmentRole
 }
 
-// AssignmentService puts drivers on trucks and takes them off: the office
-// (dispatchers, managers, admins) for any driver of the company, or a
-// driver for themselves (the *Me methods, like picking a truck at login in
-// a real ELD app).
+// AssignmentService is the dispatch board: which drivers drive which truck,
+// and which ELD device is installed in it.
 //
-// Every write runs in one transaction that first LOCKS the driver, then the
-// truck. Always in that order: if one request locked the truck first and
-// another the driver first, each would wait for the other forever (a
-// deadlock; Postgres would kill one of them).
+// Drivers are put on trucks by the office (dispatchers, managers, admins)
+// for any driver of the company, or by a driver for themselves (the *Me
+// methods, like picking a truck at login in a real ELD app). Devices are
+// installed by managers.
+//
+// Every write runs in one transaction that first LOCKS the driver (or the
+// device), then the truck. Always in that order: if one request locked the
+// truck first and another the driver first, each would wait for the other
+// forever (a deadlock; Postgres would kill one of them).
 type AssignmentService struct {
 	assignments DriverAssignmentRepository
+	elds        ELDAssignmentRepository
 	drivers     AssignmentDrivers
+	devices     DeviceLocker
 	trucks      TruckLocker
 	audit       *Auditor
 }
 
-func NewAssignmentService(assignments DriverAssignmentRepository, drivers AssignmentDrivers, trucks TruckLocker, audit *Auditor) *AssignmentService {
-	return &AssignmentService{assignments: assignments, drivers: drivers, trucks: trucks, audit: audit}
+func NewAssignmentService(assignments DriverAssignmentRepository, elds ELDAssignmentRepository,
+	drivers AssignmentDrivers, devices DeviceLocker, trucks TruckLocker, audit *Auditor) *AssignmentService {
+	return &AssignmentService{assignments: assignments, elds: elds, drivers: drivers, devices: devices, trucks: trucks, audit: audit}
 }
 
 // AssignDriver puts the driver on the truck in the given role. A driver
@@ -186,12 +207,23 @@ func (s *AssignmentService) unassign(ctx context.Context, p auth.Principal, driv
 // sees the data as it was when it STARTED. If it waits for the truck's lock
 // while an assignment commits, the CTE never sees that new stint, and it
 // stays open on a deleted truck. Separate statements after the lock do.
+//
+// The truck's ELD device is taken out too: it is ready for another truck.
 func (s *AssignmentService) ReleaseTruck(ctx context.Context, p auth.Principal, truckID uuid.UUID) error {
 	ended, err := s.assignments.EndOpenByTruck(ctx, truckID, actorID(p))
 	if err != nil {
 		return err
 	}
-	return s.recordReleased(ctx, p, ended)
+	if err := s.recordReleased(ctx, p, ended); err != nil {
+		return err
+	}
+	device, err := s.elds.EndOpenByTruck(ctx, truckID, actorID(p))
+	if errors.Is(err, model.ErrNotFound) {
+		return nil // no device in it
+	} else if err != nil {
+		return err
+	}
+	return s.recordDevice(ctx, p, "eld_device.unassign_truck", device.ELDDeviceID, device.CompanyID, &device.TruckID, nil)
 }
 
 // ReleaseUser ends the stint of the driver behind a user account that is
@@ -205,6 +237,144 @@ func (s *AssignmentService) ReleaseUser(ctx context.Context, p auth.Principal, u
 		return err
 	}
 	return s.recordReleased(ctx, p, ended)
+}
+
+// ---------- ELD devices ----------
+
+// InstallDevice installs the device in a truck of the same company, or moves
+// it there from its current truck. If the truck already has another device:
+// ErrTruckHasELD, unless replace is true, in which case that device is taken
+// out first (e.g. it broke and this one replaces it). Installing a device
+// where it already is changes nothing.
+func (s *AssignmentService) InstallDevice(ctx context.Context, p auth.Principal, deviceID, truckID uuid.UUID, replace bool) (*model.ELDDevice, error) {
+	var result *model.ELDDevice
+	err := s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		// 1. The device, locked: a concurrent delete or second install waits.
+		d, err := s.lockDeviceInScope(ctx, p, deviceID)
+		if err != nil {
+			return err
+		}
+		if !d.IsActive {
+			return &validation.ValidationError{Fields: map[string]string{"is_active": "an inactive device cannot be installed"}}
+		}
+
+		// 2. The truck, locked: it cannot be deleted or deactivated before
+		// we commit (this was a race before Phase 3: check, then write).
+		t, err := s.trucks.LockByID(ctx, truckID)
+		if errors.Is(err, model.ErrNotFound) || (err == nil && t.CompanyID != d.CompanyID) {
+			return &validation.ValidationError{Fields: map[string]string{"truck_id": "truck not found"}}
+		} else if err != nil {
+			return err
+		}
+		if !t.IsActive {
+			return &validation.ValidationError{Fields: map[string]string{"truck_id": "truck is out of service"}}
+		}
+
+		// 3. Already there? Nothing to do.
+		current, err := s.elds.GetOpenByDevice(ctx, deviceID)
+		if err != nil && !errors.Is(err, model.ErrNotFound) {
+			return err
+		}
+		if current != nil && current.TruckID == truckID {
+			d.TruckID = &truckID
+			result = d
+			return nil
+		}
+
+		// 4. The truck's current device: refuse, or take it out (replace).
+		if replace {
+			old, err := s.elds.EndOpenByTruck(ctx, truckID, actorID(p))
+			if err != nil && !errors.Is(err, model.ErrNotFound) {
+				return err
+			}
+			if old != nil {
+				err := s.recordDevice(ctx, p, "eld_device.unassign_truck", old.ELDDeviceID, old.CompanyID, &old.TruckID, nil)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		// 5. Moving from another truck: end that stint first.
+		if current != nil {
+			if _, err := s.elds.EndOpenByDevice(ctx, deviceID, actorID(p)); err != nil && !errors.Is(err, model.ErrNotFound) {
+				return err
+			}
+		}
+		if _, err := s.elds.Open(ctx, model.ELDAssignment{
+			CompanyID: d.CompanyID, ELDDeviceID: deviceID, TruckID: truckID, StartedBy: actorID(p),
+		}); err != nil {
+			return err // ErrTruckHasELD: the truck has a device and replace was false
+		}
+
+		var oldTruck *uuid.UUID
+		if current != nil {
+			oldTruck = &current.TruckID
+		}
+		d.TruckID = &truckID
+		result = d
+		return s.recordDevice(ctx, p, "eld_device.assign_truck", deviceID, d.CompanyID, oldTruck, &truckID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// RemoveDevice takes the device out of its truck. A device that is not
+// installed is not an error: the result is the same.
+func (s *AssignmentService) RemoveDevice(ctx context.Context, p auth.Principal, deviceID uuid.UUID) (*model.ELDDevice, error) {
+	var result *model.ELDDevice
+	err := s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		d, err := s.lockDeviceInScope(ctx, p, deviceID)
+		if err != nil {
+			return err
+		}
+		d.TruckID = nil
+		result = d
+		return s.releaseDevice(ctx, p, deviceID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ReleaseDevice takes a device that is being deleted out of its truck. It
+// runs in the CALLER's transaction, which must have locked the device.
+func (s *AssignmentService) ReleaseDevice(ctx context.Context, p auth.Principal, deviceID uuid.UUID) error {
+	return s.releaseDevice(ctx, p, deviceID)
+}
+
+func (s *AssignmentService) releaseDevice(ctx context.Context, p auth.Principal, deviceID uuid.UUID) error {
+	ended, err := s.elds.EndOpenByDevice(ctx, deviceID, actorID(p))
+	if errors.Is(err, model.ErrNotFound) {
+		return nil // not installed: nothing to end, nothing to record
+	} else if err != nil {
+		return err
+	}
+	return s.recordDevice(ctx, p, "eld_device.unassign_truck", deviceID, ended.CompanyID, &ended.TruckID, nil)
+}
+
+func (s *AssignmentService) lockDeviceInScope(ctx context.Context, p auth.Principal, deviceID uuid.UUID) (*model.ELDDevice, error) {
+	d, err := s.devices.LockByID(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	if !p.IsPlatformUser() && d.CompanyID != *p.CompanyID {
+		return nil, model.ErrNotFound
+	}
+	return d, nil
+}
+
+// recordDevice audits a device going from truck old to truck new (nil = no
+// truck), with the same actions and fields as before Phase 3.
+func (s *AssignmentService) recordDevice(ctx context.Context, p auth.Principal, action string, deviceID, companyID uuid.UUID, old, new *uuid.UUID) error {
+	c := model.AuditChanges{}
+	c.Set("truck_id", old, new)
+	return s.audit.Record(ctx, p, model.AuditEntry{
+		Action: action, Entity: model.AuditELDDevice, EntityID: deviceID.String(), CompanyID: &companyID, Changes: c,
+	})
 }
 
 // recordReleased audits each ended stint on its driver, like an unassign.

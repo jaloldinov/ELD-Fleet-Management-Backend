@@ -42,6 +42,12 @@ definitions:
     type: object
   handler.AssignTruckRequest:
     properties:
+      replace:
+        description: |-
+          true: if the truck already has another device, take it out (e.g. it
+          broke and this one replaces it). false/omitted: 409 in that case.
+        example: false
+        type: boolean
       truck_id:
         format: uuid
         type: string
@@ -3708,6 +3714,10 @@ paths:
           description: missing or invalid access token
           schema:
             $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
         "403":
           description: missing permission eld:update
           schema:
@@ -3730,7 +3740,7 @@ paths:
       - application/json
       description: |-
         Requires permission: eld:update
-        Installs the device in a truck of the same company, or moves it there from its current truck.
+        Installs the device in a truck of the same company, or moves it there from its current truck. With "replace": true, a device already in that truck is taken out first; without it, that is a 409.
       parameters:
       - description: Device ID
         format: uuid
@@ -3759,6 +3769,10 @@ paths:
           description: missing or invalid access token
           schema:
             $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
         "403":
           description: missing permission eld:update
           schema:
@@ -3768,7 +3782,8 @@ paths:
           schema:
             $ref: '#/definitions/apierror.Response'
         "409":
-          description: the truck already has a device
+          description: 'the truck already has a device (send replace: true to swap
+            it)'
           schema:
             $ref: '#/definitions/apierror.Response'
         "500":

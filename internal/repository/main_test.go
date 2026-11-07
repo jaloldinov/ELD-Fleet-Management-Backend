@@ -56,6 +56,7 @@ func newTestDB(t *testing.T) *pgxpool.Pool {
 		DELETE FROM prices;
 		DELETE FROM products;
 		DELETE FROM driver_truck_assignments; -- history: before drivers and trucks
+		DELETE FROM eld_truck_assignments;    -- history: before devices and trucks
 		DELETE FROM eld_devices;
 		DELETE FROM trucks;
 		DELETE FROM drivers;

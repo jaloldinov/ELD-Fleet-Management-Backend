@@ -205,8 +205,8 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	elds.GET("/:id", perm.Require(model.PermELDRead), h.ELDDevice.Get)
 	elds.PATCH("/:id", perm.Require(model.PermELDUpdate), h.ELDDevice.Update)
 	elds.DELETE("/:id", perm.Require(model.PermELDDelete), h.ELDDevice.Delete)
-	elds.PUT("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.AssignTruck)
-	elds.DELETE("/:id/truck", perm.Require(model.PermELDUpdate), h.ELDDevice.UnassignTruck)
+	elds.PUT("/:id/truck", perm.Require(model.PermELDUpdate), h.Assignment.InstallDevice)
+	elds.DELETE("/:id/truck", perm.Require(model.PermELDUpdate), h.Assignment.RemoveDevice)
 
 	// History of changes; tenant scope applied by the service.
 	protected.GET("/audit-logs", perm.Require(model.PermAuditRead), h.AuditLog.List)

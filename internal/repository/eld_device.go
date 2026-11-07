@@ -11,8 +11,14 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
+// The truck comes from the device's open stint (at most one, thanks to
+// eta_device_open_uniq; the subquery uses that index). As a column
+// expression it also works in RETURNING, so every query returns the same
+// shape.
 const eldDeviceColumns = `id, company_id, serial_number, model, firmware_version,
-	truck_id, is_active, created_at, updated_at, deleted_at`
+	(SELECT a.truck_id FROM eld_truck_assignments a
+	 WHERE a.eld_device_id = eld_devices.id AND a.ended_at IS NULL) AS truck_id,
+	is_active, created_at, updated_at, deleted_at`
 
 type ELDDeviceRepository struct {
 	db DBTX
@@ -28,7 +34,7 @@ func (r *ELDDeviceRepository) q(ctx context.Context) DBTX {
 	return conn(ctx, r.db)
 }
 
-// Create inserts an unassigned device. Use SetTruck to install it.
+// Create inserts a device that is not installed anywhere yet.
 func (r *ELDDeviceRepository) Create(ctx context.Context, d model.ELDDevice) (*model.ELDDevice, error) {
 	row := r.q(ctx).QueryRow(ctx, `
 		INSERT INTO eld_devices (company_id, serial_number, model, firmware_version)
@@ -59,7 +65,9 @@ func (r *ELDDeviceRepository) List(ctx context.Context, f model.ELDDeviceFilter,
 		WHERE deleted_at IS NULL
 		  AND ($1::uuid IS NULL OR company_id = $1)
 		  AND ($2::boolean IS NULL OR is_active = $2)
-		  AND ($3::uuid IS NULL OR truck_id = $3)`
+		  AND ($3::uuid IS NULL OR EXISTS (
+		      SELECT 1 FROM eld_truck_assignments a
+		      WHERE a.eld_device_id = eld_devices.id AND a.ended_at IS NULL AND a.truck_id = $3))`
 
 	var total int
 	if err := r.q(ctx).QueryRow(ctx, `SELECT count(*) FROM eld_devices`+where,
@@ -89,7 +97,7 @@ func (r *ELDDeviceRepository) List(ctx context.Context, f model.ELDDeviceFilter,
 }
 
 // Update saves the editable fields. The serial number (identity) and the
-// truck (see SetTruck) are not changed here.
+// truck (an ELD stint, see ELDAssignmentRepository) are not changed here.
 func (r *ELDDeviceRepository) Update(ctx context.Context, d model.ELDDevice) (*model.ELDDevice, error) {
 	row := r.q(ctx).QueryRow(ctx, `
 		UPDATE eld_devices
@@ -105,25 +113,30 @@ func (r *ELDDeviceRepository) Update(ctx context.Context, d model.ELDDevice) (*m
 	return updated, nil
 }
 
-// SetTruck installs the device in a truck, moves it to another truck, or
-// (truckID nil) removes it from its truck.
-func (r *ELDDeviceRepository) SetTruck(ctx context.Context, id uuid.UUID, truckID *uuid.UUID) (*model.ELDDevice, error) {
+// LockByID reads an alive device and locks its row until the transaction
+// ends (ctx must carry one); see TruckRepository.LockByID. Its TruckID is
+// read as the statement started: after waiting for the lock, ask
+// ELDAssignmentRepository.GetOpenByDevice for the current truck.
+func (r *ELDDeviceRepository) LockByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error) {
+	if err := requireTx(ctx); err != nil {
+		return nil, err
+	}
 	row := r.q(ctx).QueryRow(ctx, `
-		UPDATE eld_devices SET truck_id = $2
+		SELECT `+eldDeviceColumns+` FROM eld_devices
 		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING `+eldDeviceColumns, id, truckID)
+		FOR UPDATE`, id)
 	d, err := scanELDDevice(row)
 	if err != nil {
-		return nil, mapELDDeviceError("set eld device truck", err)
+		return nil, mapELDDeviceError("lock eld device", err)
 	}
 	return d, nil
 }
 
-// SoftDelete also removes the device from its truck, so the truck is free
-// for another device.
+// SoftDelete marks the device deleted. Take it out of its truck first
+// (AssignmentService.ReleaseDevice), in the same transaction.
 func (r *ELDDeviceRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	tag, err := r.q(ctx).Exec(ctx, `
-		UPDATE eld_devices SET deleted_at = now(), truck_id = NULL
+		UPDATE eld_devices SET deleted_at = now()
 		WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
 		return fmt.Errorf("delete eld device: %w", err)
@@ -150,11 +163,7 @@ func mapELDDeviceError(op string, err error) error {
 		return model.ErrNotFound
 	case isUniqueViolation(err, "eld_devices_serial_alive_uniq"):
 		return model.ErrSerialTaken
-	case isUniqueViolation(err, "eld_devices_truck_uniq"):
-		return model.ErrTruckHasELD
 	default:
-		// eld_devices_truck_company_fkey lands here: the service checks the
-		// truck's company first, so reaching the FK means a bug, not bad input.
 		return fmt.Errorf("%s: %w", op, err)
 	}
 }

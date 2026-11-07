@@ -36,3 +36,16 @@ type DriverAssignment struct {
 func (a DriverAssignment) IsCurrent() bool {
 	return a.EndedAt == nil
 }
+
+// ELDAssignment is one stint of an ELD device installed in a truck. EndedAt
+// nil means it is installed there now.
+type ELDAssignment struct {
+	ID          uuid.UUID
+	CompanyID   uuid.UUID
+	ELDDeviceID uuid.UUID
+	TruckID     uuid.UUID
+	StartedAt   time.Time
+	EndedAt     *time.Time
+	StartedBy   *uuid.UUID // nil = done by the system
+	EndedBy     *uuid.UUID
+}
