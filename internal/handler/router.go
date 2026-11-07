@@ -186,8 +186,10 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 
 	// Which truck a driver drives. The office assigns any driver of the
 	// company; a driver picks their own truck (login only, like /me).
+	drivers.GET("/me/truck", h.Assignment.MyTruck)
 	drivers.PUT("/me/truck", h.Assignment.AssignMe)
 	drivers.DELETE("/me/truck", h.Assignment.UnassignMe)
+	drivers.GET("/:id/truck", perm.Require(model.PermAssignmentRead), h.Assignment.DriverTruck)
 	drivers.PUT("/:id/truck", perm.Require(model.PermAssignmentManage), h.Assignment.Assign)
 	drivers.DELETE("/:id/truck", perm.Require(model.PermAssignmentManage), h.Assignment.Unassign)
 
@@ -197,6 +199,8 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	trucks.GET("/:id", perm.Require(model.PermTruckRead), h.Truck.Get)
 	trucks.PATCH("/:id", perm.Require(model.PermTruckUpdate), h.Truck.Update)
 	trucks.DELETE("/:id", perm.Require(model.PermTruckDelete), h.Truck.Delete)
+	// Who drives it now and which device is in it.
+	trucks.GET("/:id/current", perm.Require(model.PermAssignmentRead), h.Assignment.TruckBoard)
 
 	// Installing/removing a device is an edit of the device: eld:update.
 	elds := product.Group("/eld-devices")

@@ -190,6 +190,7 @@ var authenticatedOnlyRoutes = map[string]bool{
 	"GET /api/v1/auth/me":    true,
 	"GET /api/v1/drivers/me": true,
 	// A driver picks / leaves their own truck: identity, not a permission.
+	"GET /api/v1/drivers/me/truck":    true,
 	"PUT /api/v1/drivers/me/truck":    true,
 	"DELETE /api/v1/drivers/me/truck": true,
 	"GET /api/v1/billing/config":      true,

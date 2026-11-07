@@ -66,9 +66,10 @@ var (
 	PermELDUpdate = define("eld:update", "Edit ELD devices", RoleAdmin, RoleManager)
 	PermELDDelete = define("eld:delete", "Delete ELD devices", RoleAdmin, RoleManager)
 
-	// Putting drivers on trucks is the dispatcher's daily job. Drivers pick
-	// their own truck without it (PUT /drivers/me/truck: identity, not a
-	// permission).
+	// The dispatch board. Putting drivers on trucks is the dispatcher's daily
+	// job. Drivers see and pick their own truck without these
+	// (/drivers/me/truck: identity, not a permission).
+	PermAssignmentRead   = define("assignment:read", "View who drives which truck and which device is in it", RoleAdmin, RoleManager, RoleDispatcher)
 	PermAssignmentManage = define("assignment:manage", "Assign drivers to trucks", RoleAdmin, RoleManager, RoleDispatcher)
 
 	// History of changes. Company admins see their own company's.

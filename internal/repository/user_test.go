@@ -51,8 +51,8 @@ func TestUserRepository_Create_WithRoles(t *testing.T) {
 
 	perms, err := repo.GetPermissions(context.Background(), u.ID)
 	require.NoError(t, err)
-	// manager ∪ dispatcher = manager's 15 permissions (dispatcher's 5 are a subset).
-	assert.Len(t, perms, 15)
+	// manager ∪ dispatcher = manager's 16 permissions (dispatcher's 6 are a subset).
+	assert.Len(t, perms, 16)
 	assert.Contains(t, perms, model.PermTruckCreate)
 	assert.Contains(t, perms, model.PermAssignmentManage, "both roles assign drivers")
 	assert.NotContains(t, perms, model.PermUserCreate, "only admin may create users")

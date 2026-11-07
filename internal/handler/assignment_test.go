@@ -27,6 +27,8 @@ type fakeAssignmentService struct {
 	calls        []string
 	assignment   *model.DriverAssignment
 	device       *model.ELDDevice
+	board        *model.TruckBoard
+	driverTruck  *model.DriverTruck
 	err          error
 }
 
@@ -62,6 +64,22 @@ func (f *fakeAssignmentService) RemoveDevice(_ context.Context, p auth.Principal
 	return f.device, f.err
 }
 
+func (f *fakeAssignmentService) TruckBoard(_ context.Context, p auth.Principal, truckID uuid.UUID) (*model.TruckBoard, error) {
+	f.gotPrincipal, f.gotTruckID = p, truckID
+	f.calls = append(f.calls, "TruckBoard")
+	return f.board, f.err
+}
+func (f *fakeAssignmentService) DriverTruck(_ context.Context, p auth.Principal, driverID uuid.UUID) (*model.DriverTruck, error) {
+	f.gotPrincipal, f.gotDriverID = p, driverID
+	f.calls = append(f.calls, "DriverTruck")
+	return f.driverTruck, f.err
+}
+func (f *fakeAssignmentService) MyTruck(_ context.Context, p auth.Principal) (*model.DriverTruck, error) {
+	f.gotPrincipal = p
+	f.calls = append(f.calls, "MyTruck")
+	return f.driverTruck, f.err
+}
+
 func sampleAssignment() *model.DriverAssignment {
 	return &model.DriverAssignment{ID: uuid.New(), CompanyID: testCompanyID, DriverID: uuid.New(), TruckID: uuid.New(),
 		Role: model.AssignmentPrimary, StartedAt: time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC), StartedBy: &testUserID}
@@ -76,10 +94,13 @@ func assignmentRouter(svc AssignmentService) *gin.Engine {
 		c.Request = c.Request.WithContext(auth.WithPrincipal(c.Request.Context(), testCaller))
 	})
 	g := r.Group("/api/v1/drivers")
+	g.GET("/me/truck", h.MyTruck)
+	g.GET("/:id/truck", h.DriverTruck)
 	g.PUT("/me/truck", h.AssignMe)
 	g.DELETE("/me/truck", h.UnassignMe)
 	g.PUT("/:id/truck", h.Assign)
 	g.DELETE("/:id/truck", h.Unassign)
+	r.GET("/api/v1/trucks/:id/current", h.TruckBoard)
 	e := r.Group("/api/v1/eld-devices")
 	e.PUT("/:id/truck", h.InstallDevice)
 	e.DELETE("/:id/truck", h.RemoveDevice)
@@ -227,4 +248,94 @@ func TestAssignmentHandler_InstallDevice_TruckHasELD(t *testing.T) {
 		`{"truck_id":"`+uuid.NewString()+`"}`)
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func sampleBoard() *model.TruckBoard {
+	since := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	return &model.TruckBoard{
+		Truck: model.Truck{ID: uuid.New(), UnitNumber: "101", IsActive: true},
+		Crew: []model.CrewMember{{
+			Assignment: model.DriverAssignment{ID: uuid.New(), DriverID: uuid.New(), Role: model.AssignmentPrimary, StartedAt: since},
+			FirstName:  "Ali", LastName: "Valiyev",
+		}},
+		Device: &model.InstalledDevice{
+			Assignment:   model.ELDAssignment{ID: uuid.New(), ELDDeviceID: uuid.New(), StartedAt: since},
+			SerialNumber: "PT30-0001",
+		},
+	}
+}
+
+func TestAssignmentHandler_TruckBoard(t *testing.T) {
+	b := sampleBoard()
+	svc := &fakeAssignmentService{board: b}
+
+	rec := do(assignmentRouter(svc), http.MethodGet, "/api/v1/trucks/"+b.Truck.ID.String()+"/current", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, b.Truck.ID, svc.gotTruckID)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"unit_number":"101"`)
+	assert.Contains(t, body, `"first_name":"Ali"`)
+	assert.Contains(t, body, `"role":"primary"`)
+	assert.Contains(t, body, `"since":"2026-11-07T08:00:00Z"`)
+	assert.Contains(t, body, `"serial_number":"PT30-0001"`)
+}
+
+func TestAssignmentHandler_TruckBoard_EmptyTruck(t *testing.T) {
+	svc := &fakeAssignmentService{board: &model.TruckBoard{Truck: model.Truck{ID: uuid.New(), UnitNumber: "205"}}}
+
+	rec := do(assignmentRouter(svc), http.MethodGet, "/api/v1/trucks/"+uuid.NewString()+"/current", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"drivers":[]`, "nobody is an empty list, not null")
+	assert.Contains(t, body, `"eld_device":null`)
+}
+
+func TestAssignmentHandler_DriverTruck(t *testing.T) {
+	b := sampleBoard()
+	driverID := b.Crew[0].Assignment.DriverID
+	a := b.Crew[0].Assignment
+	svc := &fakeAssignmentService{driverTruck: &model.DriverTruck{DriverID: driverID, Assignment: &a, Board: b}}
+
+	rec := do(assignmentRouter(svc), http.MethodGet, "/api/v1/drivers/"+driverID.String()+"/truck", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"DriverTruck"}, svc.calls)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"driver_id":"`+driverID.String()+`"`)
+	assert.Contains(t, body, `"truck":{"truck":{"id":"`+b.Truck.ID.String())
+}
+
+func TestAssignmentHandler_DriverTruck_OnNoTruck(t *testing.T) {
+	svc := &fakeAssignmentService{driverTruck: &model.DriverTruck{DriverID: uuid.New()}}
+
+	rec := do(assignmentRouter(svc), http.MethodGet, "/api/v1/drivers/me/truck", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"MyTruck"}, svc.calls, `"me" is not taken for an id`)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"role":null`)
+	assert.Contains(t, body, `"since":null`)
+	assert.Contains(t, body, `"truck":null`)
+}
+
+func TestAssignmentHandler_Board_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		err  error
+		want int
+	}{
+		{"truck not found", "/api/v1/trucks/" + uuid.NewString() + "/current", model.ErrNotFound, http.StatusNotFound},
+		{"bad truck id", "/api/v1/trucks/xyz/current", nil, http.StatusBadRequest},
+		{"driver not found", "/api/v1/drivers/" + uuid.NewString() + "/truck", model.ErrNotFound, http.StatusNotFound},
+		{"not a driver", "/api/v1/drivers/me/truck", model.ErrNotFound, http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := do(assignmentRouter(&fakeAssignmentService{err: tt.err}), http.MethodGet, tt.path, "")
+			assert.Equal(t, tt.want, rec.Code)
+		})
+	}
 }

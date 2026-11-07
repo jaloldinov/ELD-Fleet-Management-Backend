@@ -18,6 +18,7 @@ type DriverAssignmentRepository interface {
 	EndOpenByDriver(ctx context.Context, driverID uuid.UUID, endedBy *uuid.UUID) (*model.DriverAssignment, error)
 	EndOpenByDriverUser(ctx context.Context, userID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error)
 	EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) ([]model.DriverAssignment, error)
+	ListCrew(ctx context.Context, truckID uuid.UUID) ([]model.CrewMember, error)
 }
 
 // ELDAssignmentRepository is what AssignmentService needs to store which
@@ -28,6 +29,7 @@ type ELDAssignmentRepository interface {
 	GetOpenByTruck(ctx context.Context, truckID uuid.UUID) (*model.ELDAssignment, error)
 	EndOpenByDevice(ctx context.Context, deviceID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error)
 	EndOpenByTruck(ctx context.Context, truckID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error)
+	GetInstalled(ctx context.Context, truckID uuid.UUID) (*model.InstalledDevice, error)
 }
 
 // DeviceLocker locks an ELD device's row (repository.ELDDeviceRepository).
@@ -37,14 +39,21 @@ type DeviceLocker interface {
 
 // AssignmentDrivers finds and locks drivers (repository.DriverRepository).
 type AssignmentDrivers interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error)
 	LockByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*model.DriverDetails, error)
 }
 
-// TruckLocker locks a truck's row for the rest of the transaction
-// (repository.TruckRepository).
-type TruckLocker interface {
+// AssignmentTrucks finds and locks trucks (repository.TruckRepository).
+type AssignmentTrucks interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Truck, error)
 	LockByID(ctx context.Context, id uuid.UUID) (*model.Truck, error)
+}
+
+// Snapshotter runs several reads as one consistent picture
+// (repository.TxManager.WithinSnapshot).
+type Snapshotter interface {
+	WithinSnapshot(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 // AssignDriverInput: Role empty means primary.
@@ -66,18 +75,120 @@ type AssignDriverInput struct {
 // truck first and another the driver first, each would wait for the other
 // forever (a deadlock; Postgres would kill one of them).
 type AssignmentService struct {
+	tx          Snapshotter
 	assignments DriverAssignmentRepository
 	elds        ELDAssignmentRepository
 	drivers     AssignmentDrivers
 	devices     DeviceLocker
-	trucks      TruckLocker
+	trucks      AssignmentTrucks
 	audit       *Auditor
 }
 
-func NewAssignmentService(assignments DriverAssignmentRepository, elds ELDAssignmentRepository,
-	drivers AssignmentDrivers, devices DeviceLocker, trucks TruckLocker, audit *Auditor) *AssignmentService {
-	return &AssignmentService{assignments: assignments, elds: elds, drivers: drivers, devices: devices, trucks: trucks, audit: audit}
+// AssignmentDeps lists what AssignmentService needs. A struct instead of
+// seven positional parameters: every call site names what it passes.
+type AssignmentDeps struct {
+	Tx           Snapshotter
+	DriverStints DriverAssignmentRepository
+	ELDStints    ELDAssignmentRepository
+	Drivers      AssignmentDrivers
+	Devices      DeviceLocker
+	Trucks       AssignmentTrucks
+	Audit        *Auditor
 }
+
+func NewAssignmentService(d AssignmentDeps) *AssignmentService {
+	return &AssignmentService{tx: d.Tx, assignments: d.DriverStints, elds: d.ELDStints,
+		drivers: d.Drivers, devices: d.Devices, trucks: d.Trucks, audit: d.Audit}
+}
+
+// ---------- reading the board ----------
+
+// TruckBoard returns who drives the truck now and which device is in it.
+func (s *AssignmentService) TruckBoard(ctx context.Context, p auth.Principal, truckID uuid.UUID) (*model.TruckBoard, error) {
+	var b *model.TruckBoard
+	err := s.tx.WithinSnapshot(ctx, func(ctx context.Context) error {
+		t, err := s.trucks.GetByID(ctx, truckID)
+		if err != nil {
+			return err
+		}
+		if !p.IsPlatformUser() && t.CompanyID != *p.CompanyID {
+			return model.ErrNotFound // outside your tenant, nothing exists
+		}
+		b, err = s.board(ctx, *t)
+		return err
+	})
+	return b, err
+}
+
+// DriverTruck returns where the driver is now: their stint and their
+// truck's board (with the co-driver and the device), or neither.
+func (s *AssignmentService) DriverTruck(ctx context.Context, p auth.Principal, driverID uuid.UUID) (*model.DriverTruck, error) {
+	var dt *model.DriverTruck
+	err := s.tx.WithinSnapshot(ctx, func(ctx context.Context) error {
+		dd, err := s.drivers.GetByID(ctx, driverID)
+		if err != nil {
+			return err
+		}
+		if !p.IsPlatformUser() && dd.Driver.CompanyID != *p.CompanyID {
+			return model.ErrNotFound
+		}
+		dt, err = s.driverTruck(ctx, driverID)
+		return err
+	})
+	return dt, err
+}
+
+// MyTruck is DriverTruck for the caller's own driver profile (the driver
+// app: "which truck, which co-driver, which ELD do I connect to?").
+// ErrNotFound if the caller is not a driver.
+func (s *AssignmentService) MyTruck(ctx context.Context, p auth.Principal) (*model.DriverTruck, error) {
+	var dt *model.DriverTruck
+	err := s.tx.WithinSnapshot(ctx, func(ctx context.Context) error {
+		dd, err := s.drivers.GetByUserID(ctx, p.UserID)
+		if err != nil {
+			return err
+		}
+		dt, err = s.driverTruck(ctx, dd.Driver.ID)
+		return err
+	})
+	return dt, err
+}
+
+func (s *AssignmentService) driverTruck(ctx context.Context, driverID uuid.UUID) (*model.DriverTruck, error) {
+	dt := &model.DriverTruck{DriverID: driverID}
+	a, err := s.assignments.GetOpenByDriver(ctx, driverID)
+	if errors.Is(err, model.ErrNotFound) {
+		return dt, nil // on no truck
+	} else if err != nil {
+		return nil, err
+	}
+	t, err := s.trucks.GetByID(ctx, a.TruckID)
+	if err != nil {
+		return nil, err
+	}
+	dt.Assignment = a
+	if dt.Board, err = s.board(ctx, *t); err != nil {
+		return nil, err
+	}
+	return dt, nil
+}
+
+func (s *AssignmentService) board(ctx context.Context, t model.Truck) (*model.TruckBoard, error) {
+	crew, err := s.assignments.ListCrew(ctx, t.ID)
+	if err != nil {
+		return nil, err
+	}
+	b := &model.TruckBoard{Truck: t, Crew: crew}
+	b.Device, err = s.elds.GetInstalled(ctx, t.ID)
+	if errors.Is(err, model.ErrNotFound) {
+		b.Device = nil // no device installed
+	} else if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// ---------- drivers ----------
 
 // AssignDriver puts the driver on the truck in the given role. A driver
 // already on another truck (or in another role) is moved: the old stint

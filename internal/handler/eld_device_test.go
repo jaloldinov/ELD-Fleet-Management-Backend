@@ -18,12 +18,12 @@ import (
 )
 
 type fakeELDService struct {
-	gotPrincipal  auth.Principal
-	gotCreate     service.CreateELDDeviceInput
-	gotUpdate     service.UpdateELDDeviceInput
-	gotList       service.ELDDeviceListParams
-	device        *model.ELDDevice
-	err           error
+	gotPrincipal auth.Principal
+	gotCreate    service.CreateELDDeviceInput
+	gotUpdate    service.UpdateELDDeviceInput
+	gotList      service.ELDDeviceListParams
+	device       *model.ELDDevice
+	err          error
 }
 
 func (f *fakeELDService) Create(_ context.Context, p auth.Principal, in service.CreateELDDeviceInput) (*model.ELDDevice, error) {

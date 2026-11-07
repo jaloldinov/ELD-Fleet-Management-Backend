@@ -71,13 +71,14 @@ func TestDriverAssignmentRepository_OpenAndCurrent(t *testing.T) {
 	assert.Equal(t, opened.ID, got.ID)
 	assert.Equal(t, model.AssignmentPrimary, got.Role)
 
-	inTruck, err := f.assignments.ListOpenByTruck(ctx, f.t1.ID)
+	crew, err := f.assignments.ListCrew(ctx, f.t1.ID)
 	require.NoError(t, err)
-	require.Len(t, inTruck, 2)
-	assert.Equal(t, f.ali, inTruck[0].DriverID, "primary first")
-	assert.Equal(t, f.bob, inTruck[1].DriverID)
+	require.Len(t, crew, 2)
+	assert.Equal(t, f.ali, crew[0].Assignment.DriverID, "primary first")
+	assert.Equal(t, f.bob, crew[1].Assignment.DriverID)
+	assert.NotEmpty(t, crew[0].FirstName, "with the name people know them by")
 
-	empty, err := f.assignments.ListOpenByTruck(ctx, f.t2.ID)
+	empty, err := f.assignments.ListCrew(ctx, f.t2.ID)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 

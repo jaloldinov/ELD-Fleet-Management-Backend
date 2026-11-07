@@ -187,6 +187,18 @@ definitions:
         description: All subscriptions (ended ones too) by status.
         type: object
     type: object
+  handler.BoardTruckResponse:
+    properties:
+      id:
+        format: uuid
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      unit_number:
+        example: "101"
+        type: string
+    type: object
   handler.CancelSubscriptionRequest:
     properties:
       at_period_end:
@@ -493,6 +505,30 @@ definitions:
         example: 5000
         type: integer
     type: object
+  handler.CrewMemberResponse:
+    properties:
+      assignment_id:
+        format: uuid
+        type: string
+      driver_id:
+        format: uuid
+        type: string
+      first_name:
+        example: Ali
+        type: string
+      last_name:
+        example: Valiyev
+        type: string
+      role:
+        enum:
+        - primary
+        - co_driver
+        example: primary
+        type: string
+      since:
+        example: "2026-11-07T08:00:00Z"
+        type: string
+    type: object
   handler.DriverAssignmentResponse:
     properties:
       company_id:
@@ -569,6 +605,23 @@ definitions:
         example: driver.bob
         type: string
     type: object
+  handler.DriverTruckResponse:
+    properties:
+      driver_id:
+        format: uuid
+        type: string
+      role:
+        enum:
+        - primary
+        - co_driver
+        example: primary
+        type: string
+      since:
+        example: "2026-11-07T08:00:00Z"
+        type: string
+      truck:
+        $ref: '#/definitions/handler.TruckBoardResponse'
+    type: object
   handler.ELDDeviceResponse:
     properties:
       company_id:
@@ -616,6 +669,21 @@ definitions:
     properties:
       status:
         example: ok
+        type: string
+    type: object
+  handler.InstalledDeviceResponse:
+    properties:
+      assignment_id:
+        format: uuid
+        type: string
+      id:
+        format: uuid
+        type: string
+      serial_number:
+        example: PT30-0001
+        type: string
+      since:
+        example: "2026-11-07T07:30:00Z"
         type: string
     type: object
   handler.InvoiceLineResponse:
@@ -1297,6 +1365,17 @@ definitions:
         description: 'Always "Bearer": send the token as "Authorization: Bearer <access_token>".'
         example: Bearer
         type: string
+    type: object
+  handler.TruckBoardResponse:
+    properties:
+      drivers:
+        items:
+          $ref: '#/definitions/handler.CrewMemberResponse'
+        type: array
+      eld_device:
+        $ref: '#/definitions/handler.InstalledDeviceResponse'
+      truck:
+        $ref: '#/definitions/handler.BoardTruckResponse'
     type: object
   handler.TruckResponse:
     properties:
@@ -3280,6 +3359,53 @@ paths:
       summary: Take a driver off their truck
       tags:
       - assignments
+    get:
+      description: |-
+        Requires permission: assignment:read
+        The driver's role and the board of their truck (co-driver, ELD device). role, since and truck are null when the driver is on no truck.
+      parameters:
+      - description: Driver ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DriverTruckResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: driver not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Which truck a driver is on now
+      tags:
+      - assignments
     put:
       consumes:
       - application/json
@@ -3394,6 +3520,37 @@ paths:
       security:
       - BearerAuth: []
       summary: Leave my truck
+      tags:
+      - assignments
+    get:
+      description: 'For the driver app: the caller''s truck, co-driver and the ELD
+        device to connect to. Needs a login, no extra permission.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DriverTruckResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: My truck now
       tags:
       - assignments
     put:
@@ -4899,6 +5056,54 @@ paths:
       summary: Update a truck
       tags:
       - trucks
+  /api/v1/trucks/{id}/current:
+    get:
+      description: |-
+        Requires permission: assignment:read
+        The truck's drivers (primary first, at most two) and its ELD device, read as one consistent picture.
+      parameters:
+      - description: Truck ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.TruckBoardResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission assignment:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: truck not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Who is in a truck now
+      tags:
+      - assignments
   /api/v1/users:
     get:
       description: |-

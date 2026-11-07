@@ -39,6 +39,28 @@ func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context) e
 	})
 }
 
+// WithinSnapshot runs fn in a READ ONLY, REPEATABLE READ transaction: every
+// query in fn sees the database as it was at fn's first query, so several
+// reads form one consistent picture (a driver moved between two of them is
+// seen either before or after the move, never half-way). In the default
+// READ COMMITTED level, each statement would see a newer picture.
+//
+// Read only: a write inside fn fails, so a snapshot cannot be used to make
+// decisions that should have locked rows instead. If ctx already carries a
+// transaction, fn joins it (its isolation is the outer one's).
+func (m *TxManager) WithinSnapshot(ctx context.Context, fn func(ctx context.Context) error) error {
+	if _, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		return fn(ctx)
+	}
+	return pgx.BeginFunc(ctx, m.db, func(tx pgx.Tx) error {
+		// Must be the transaction's first statement.
+		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`); err != nil {
+			return err
+		}
+		return fn(context.WithValue(ctx, txKey{}, tx))
+	})
+}
+
 // errNoTx: a row lock was requested outside a transaction. Without one, each
 // statement is its own transaction and the lock is released right after the
 // SELECT, before the caller acts on what it read: the lock would protect

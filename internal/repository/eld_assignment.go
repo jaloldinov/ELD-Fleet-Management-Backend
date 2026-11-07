@@ -59,6 +59,25 @@ func (r *ELDAssignmentRepository) GetOpenByTruck(ctx context.Context, truckID uu
 		WHERE truck_id = $1 AND ended_at IS NULL`, truckID)
 }
 
+// GetInstalled returns the device in the truck now, with its serial
+// number, or ErrNotFound if the truck has none.
+func (r *ELDAssignmentRepository) GetInstalled(ctx context.Context, truckID uuid.UUID) (*model.InstalledDevice, error) {
+	var d model.InstalledDevice
+	a := &d.Assignment
+	err := r.q(ctx).QueryRow(ctx, `
+		SELECT a.id, a.company_id, a.eld_device_id, a.truck_id,
+		       a.started_at, a.ended_at, a.started_by, a.ended_by, e.serial_number
+		FROM eld_truck_assignments a
+		JOIN eld_devices e ON e.id = a.eld_device_id
+		WHERE a.truck_id = $1 AND a.ended_at IS NULL`, truckID,
+	).Scan(&a.ID, &a.CompanyID, &a.ELDDeviceID, &a.TruckID,
+		&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy, &d.SerialNumber)
+	if err != nil {
+		return nil, mapELDAssignmentError("get installed device", err)
+	}
+	return &d, nil
+}
+
 // EndOpenByDevice takes the device out of its truck and returns that stint,
 // or ErrNotFound if it was not installed.
 func (r *ELDAssignmentRepository) EndOpenByDevice(ctx context.Context, deviceID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error) {

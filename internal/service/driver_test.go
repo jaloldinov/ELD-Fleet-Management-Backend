@@ -25,6 +25,11 @@ func (f *fakeTx) WithinTx(ctx context.Context, fn func(ctx context.Context) erro
 	return fn(context.WithValue(ctx, inTxKey{}, true))
 }
 
+// WithinSnapshot marks the ctx the same way: a snapshot is a transaction.
+func (f *fakeTx) WithinSnapshot(ctx context.Context, fn func(ctx context.Context) error) error {
+	return f.WithinTx(ctx, fn)
+}
+
 func inTx(ctx context.Context) bool { v, _ := ctx.Value(inTxKey{}).(bool); return v }
 
 // fakeDriverUsers stands in for UserService.

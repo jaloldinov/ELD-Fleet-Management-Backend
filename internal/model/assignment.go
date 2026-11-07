@@ -49,3 +49,32 @@ type ELDAssignment struct {
 	StartedBy   *uuid.UUID // nil = done by the system
 	EndedBy     *uuid.UUID
 }
+
+// CrewMember is a driver on a truck now, with the name people know them by.
+type CrewMember struct {
+	Assignment DriverAssignment
+	FirstName  string
+	LastName   string
+}
+
+// InstalledDevice is the ELD device in a truck now.
+type InstalledDevice struct {
+	Assignment   ELDAssignment
+	SerialNumber string
+}
+
+// TruckBoard is a truck's line on the dispatch board: who drives it now
+// (primary first, at most two) and which device is installed (nil = none).
+type TruckBoard struct {
+	Truck  Truck
+	Crew   []CrewMember
+	Device *InstalledDevice
+}
+
+// DriverTruck answers "where is this driver now?". Assignment and Board are
+// nil when the driver is on no truck.
+type DriverTruck struct {
+	DriverID   uuid.UUID
+	Assignment *DriverAssignment
+	Board      *TruckBoard
+}

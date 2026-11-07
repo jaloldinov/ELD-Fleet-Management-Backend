@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -19,13 +20,16 @@ type memAssignments struct {
 	open        map[uuid.UUID]*model.DriverAssignment // by driver
 	ended       []model.DriverAssignment
 	userDrivers map[uuid.UUID]uuid.UUID // user id → driver id
+	names       map[uuid.UUID]string    // driver id → first name, for ListCrew
+	readOutside int                     // ListCrew calls outside a snapshot
 	// endedMeanwhile: EndOpenByDriver finds nothing, as when the old truck
 	// was deleted (ending its stints) while we waited for its lock.
 	endedMeanwhile bool
 }
 
 func newMemAssignments() *memAssignments {
-	return &memAssignments{open: map[uuid.UUID]*model.DriverAssignment{}, userDrivers: map[uuid.UUID]uuid.UUID{}}
+	return &memAssignments{open: map[uuid.UUID]*model.DriverAssignment{},
+		userDrivers: map[uuid.UUID]uuid.UUID{}, names: map[uuid.UUID]string{}}
 }
 
 func (m *memAssignments) Open(_ context.Context, a model.DriverAssignment) (*model.DriverAssignment, error) {
@@ -91,6 +95,20 @@ func (m *memAssignments) EndOpenByTruck(ctx context.Context, truckID uuid.UUID, 
 	return out, nil
 }
 
+func (m *memAssignments) ListCrew(ctx context.Context, truckID uuid.UUID) ([]model.CrewMember, error) {
+	if !inTx(ctx) {
+		m.readOutside++
+	}
+	var crew []model.CrewMember
+	for _, a := range m.open {
+		if a.TruckID == truckID {
+			crew = append(crew, model.CrewMember{Assignment: *a, FirstName: m.names[a.DriverID]})
+		}
+	}
+	sort.Slice(crew, func(i, j int) bool { return crew[i].Assignment.Role == model.AssignmentPrimary })
+	return crew, nil
+}
+
 // memELDAssignments: device ↔ truck stints, with the database's two rules.
 type memELDAssignments struct {
 	open  map[uuid.UUID]*model.ELDAssignment // by device
@@ -135,6 +153,14 @@ func (m *memELDAssignments) GetOpenByTruck(_ context.Context, truckID uuid.UUID)
 	return nil, model.ErrNotFound
 }
 
+func (m *memELDAssignments) GetInstalled(ctx context.Context, truckID uuid.UUID) (*model.InstalledDevice, error) {
+	a, err := m.GetOpenByTruck(ctx, truckID)
+	if err != nil {
+		return nil, err
+	}
+	return &model.InstalledDevice{Assignment: *a, SerialNumber: "PT30-0001"}, nil // memELDRepo.add's serial
+}
+
 func (m *memELDAssignments) EndOpenByDevice(_ context.Context, deviceID uuid.UUID, endedBy *uuid.UUID) (*model.ELDAssignment, error) {
 	a, ok := m.open[deviceID]
 	if !ok {
@@ -173,9 +199,9 @@ func (l lockingDevices) LockByID(ctx context.Context, id uuid.UUID) (*model.ELDD
 // UserService tests.
 type fakeReleaser struct {
 	trucks, users, devices []uuid.UUID
-	allInTx       bool
-	calls         int
-	log           *[]string // optional: shared event log, to check order
+	allInTx                bool
+	calls                  int
+	log                    *[]string // optional: shared event log, to check order
 }
 
 func (f *fakeReleaser) called(ctx context.Context) {
@@ -250,8 +276,15 @@ func newAssignmentSvcFixture() *assignmentSvcFixture {
 		drivers: newMemDriverRepo(), devices: newMemELDRepo(), trucks: newMemTruckRepo()}
 	var audit *Auditor
 	audit, f.audit = newTestAuditor()
-	f.svc = NewAssignmentService(f.assignments, f.elds,
-		lockingDrivers{f.drivers, &f.locks}, lockingDevices{f.devices, &f.locks}, lockingTrucks{f.trucks, &f.locks}, audit)
+	f.svc = NewAssignmentService(AssignmentDeps{
+		Tx:           &fakeTx{},
+		DriverStints: f.assignments,
+		ELDStints:    f.elds,
+		Drivers:      lockingDrivers{f.drivers, &f.locks},
+		Devices:      lockingDevices{f.devices, &f.locks},
+		Trucks:       lockingTrucks{f.trucks, &f.locks},
+		Audit:        audit,
+	})
 	return f
 }
 
@@ -260,6 +293,7 @@ func (f *assignmentSvcFixture) driver(companyID uuid.UUID) *model.DriverDetails 
 	dd := f.drivers.add(companyID)
 	dd.User.IsActive = true
 	f.assignments.userDrivers[dd.Driver.UserID] = dd.Driver.ID
+	f.assignments.names[dd.Driver.ID] = "Driver-" + dd.Driver.ID.String()[:4]
 	return dd
 }
 
@@ -782,4 +816,115 @@ func TestAssignmentService_ReleaseDevice(t *testing.T) {
 	assert.Empty(t, f.elds.open)
 
 	require.NoError(t, f.svc.ReleaseDevice(ctx, companyAUser, d.ID), "not installed: nothing to do")
+}
+
+// ---------- reading the board ----------
+
+func TestAssignmentService_TruckBoard(t *testing.T) {
+	ctx := context.Background()
+	f := newAssignmentSvcFixture()
+	tr := f.trucks.add(companyA)
+	ali, bob := f.driver(companyA), f.driver(companyA)
+	_, err := f.svc.AssignDriver(ctx, companyAUser, bob.Driver.ID, AssignDriverInput{TruckID: tr.ID, Role: model.AssignmentCoDriver})
+	require.NoError(t, err)
+	_, err = f.svc.AssignDriver(ctx, companyAUser, ali.Driver.ID, AssignDriverInput{TruckID: tr.ID})
+	require.NoError(t, err)
+	d := f.devices.add(companyA)
+	_, err = f.svc.InstallDevice(ctx, companyAUser, d.ID, tr.ID, false)
+	require.NoError(t, err)
+
+	b, err := f.svc.TruckBoard(ctx, companyAUser, tr.ID)
+
+	require.NoError(t, err)
+	assert.Equal(t, tr.ID, b.Truck.ID)
+	require.Len(t, b.Crew, 2)
+	assert.Equal(t, ali.Driver.ID, b.Crew[0].Assignment.DriverID, "primary first")
+	assert.Equal(t, f.assignments.names[ali.Driver.ID], b.Crew[0].FirstName)
+	require.NotNil(t, b.Device)
+	assert.Equal(t, d.ID, b.Device.Assignment.ELDDeviceID)
+	assert.Zero(t, f.assignments.readOutside, "all reads in one snapshot")
+}
+
+func TestAssignmentService_TruckBoard_Empty(t *testing.T) {
+	f := newAssignmentSvcFixture()
+	tr := f.trucks.add(companyA)
+
+	b, err := f.svc.TruckBoard(context.Background(), companyAUser, tr.ID)
+
+	require.NoError(t, err)
+	assert.Empty(t, b.Crew)
+	assert.Nil(t, b.Device)
+}
+
+func TestAssignmentService_TruckBoard_Scope(t *testing.T) {
+	f := newAssignmentSvcFixture()
+	foreign := f.trucks.add(uuid.New())
+
+	_, err := f.svc.TruckBoard(context.Background(), companyAUser, foreign.ID)
+	assert.ErrorIs(t, err, model.ErrNotFound)
+
+	_, err = f.svc.TruckBoard(context.Background(), platformAdmin, foreign.ID)
+	assert.NoError(t, err, "platform users see every truck")
+}
+
+func TestAssignmentService_DriverTruck(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("on a truck: stint and the truck's board", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		tr := f.trucks.add(companyA)
+		ali, bob := f.driver(companyA), f.driver(companyA)
+		_, err := f.svc.AssignDriver(ctx, companyAUser, ali.Driver.ID, AssignDriverInput{TruckID: tr.ID})
+		require.NoError(t, err)
+		_, err = f.svc.AssignDriver(ctx, companyAUser, bob.Driver.ID, AssignDriverInput{TruckID: tr.ID, Role: model.AssignmentCoDriver})
+		require.NoError(t, err)
+
+		dt, err := f.svc.DriverTruck(ctx, companyAUser, bob.Driver.ID)
+
+		require.NoError(t, err)
+		assert.Equal(t, bob.Driver.ID, dt.DriverID)
+		require.NotNil(t, dt.Assignment)
+		assert.Equal(t, model.AssignmentCoDriver, dt.Assignment.Role)
+		require.NotNil(t, dt.Board)
+		assert.Len(t, dt.Board.Crew, 2, "Bob sees his co-driver")
+	})
+
+	t.Run("on no truck", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(companyA)
+
+		dt, err := f.svc.DriverTruck(ctx, companyAUser, d.Driver.ID)
+
+		require.NoError(t, err)
+		assert.Nil(t, dt.Assignment)
+		assert.Nil(t, dt.Board)
+	})
+
+	t.Run("driver of another company does not exist", func(t *testing.T) {
+		f := newAssignmentSvcFixture()
+		d := f.driver(uuid.New())
+
+		_, err := f.svc.DriverTruck(ctx, companyAUser, d.Driver.ID)
+
+		assert.ErrorIs(t, err, model.ErrNotFound)
+	})
+}
+
+func TestAssignmentService_MyTruck(t *testing.T) {
+	ctx := context.Background()
+	f := newAssignmentSvcFixture()
+	d := f.driver(companyA)
+	tr := f.trucks.add(companyA)
+	me := auth.Principal{UserID: d.Driver.UserID, CompanyID: &companyA}
+	_, err := f.svc.AssignMe(ctx, me, AssignDriverInput{TruckID: tr.ID})
+	require.NoError(t, err)
+
+	dt, err := f.svc.MyTruck(ctx, me)
+
+	require.NoError(t, err)
+	require.NotNil(t, dt.Board)
+	assert.Equal(t, tr.ID, dt.Board.Truck.ID)
+
+	_, err = f.svc.MyTruck(ctx, companyAUser)
+	assert.ErrorIs(t, err, model.ErrNotFound, "not a driver")
 }

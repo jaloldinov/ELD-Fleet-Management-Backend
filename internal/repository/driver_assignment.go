@@ -64,18 +64,33 @@ func (r *DriverAssignmentRepository) GetOpenByDriver(ctx context.Context, driver
 	return a, nil
 }
 
-// ListOpenByTruck returns who is in the truck now: at most two stints,
+// ListCrew returns who is in the truck now, with their names: at most two,
 // primary first. An empty slice means nobody.
-func (r *DriverAssignmentRepository) ListOpenByTruck(ctx context.Context, truckID uuid.UUID) ([]model.DriverAssignment, error) {
+func (r *DriverAssignmentRepository) ListCrew(ctx context.Context, truckID uuid.UUID) ([]model.CrewMember, error) {
 	// 'primary' < 'co_driver' is false alphabetically, so sort explicitly.
 	rows, err := r.q(ctx).Query(ctx, `
-		SELECT `+driverAssignmentColumns+` FROM driver_truck_assignments
-		WHERE truck_id = $1 AND ended_at IS NULL
-		ORDER BY role = 'primary' DESC`, truckID)
+		SELECT a.id, a.company_id, a.driver_id, a.truck_id, a.role,
+		       a.started_at, a.ended_at, a.started_by, a.ended_by,
+		       u.first_name, u.last_name
+		FROM driver_truck_assignments a
+		JOIN drivers d ON d.id = a.driver_id
+		JOIN users u ON u.id = d.user_id
+		WHERE a.truck_id = $1 AND a.ended_at IS NULL
+		ORDER BY a.role = 'primary' DESC`, truckID)
 	if err != nil {
-		return nil, fmt.Errorf("list open truck assignments: %w", err)
+		return nil, fmt.Errorf("list truck crew: %w", err)
 	}
-	return collectDriverAssignments(rows)
+	crew, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.CrewMember, error) {
+		var m model.CrewMember
+		a := &m.Assignment
+		err := row.Scan(&a.ID, &a.CompanyID, &a.DriverID, &a.TruckID, &a.Role,
+			&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy, &m.FirstName, &m.LastName)
+		return m, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan truck crew: %w", err)
+	}
+	return crew, nil
 }
 
 // EndOpenByDriver ends the driver's current stint and returns it, or

@@ -138,9 +138,15 @@ func run() error {
 	driverRepo := repository.NewDriverRepository(pool)
 	truckRepo := repository.NewTruckRepository(pool)
 	eldRepo := repository.NewELDDeviceRepository(pool)
-	assignmentSvc := service.NewAssignmentService(
-		repository.NewDriverAssignmentRepository(pool), repository.NewELDAssignmentRepository(pool),
-		driverRepo, eldRepo, truckRepo, auditor)
+	assignmentSvc := service.NewAssignmentService(service.AssignmentDeps{
+		Tx:           txManager,
+		DriverStints: repository.NewDriverAssignmentRepository(pool),
+		ELDStints:    repository.NewELDAssignmentRepository(pool),
+		Drivers:      driverRepo,
+		Devices:      eldRepo,
+		Trucks:       truckRepo,
+		Audit:        auditor,
+	})
 
 	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)

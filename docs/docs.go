@@ -2355,6 +2355,53 @@ const docTemplate = `{
             }
         },
         "/api/v1/drivers/me/truck": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the driver app: the caller's truck, co-driver and the ELD device to connect to. Needs a login, no extra permission.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "My truck now",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DriverTruckResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -2674,6 +2721,75 @@ const docTemplate = `{
             }
         },
         "/api/v1/drivers/{id}/truck": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:read\nThe driver's role and the board of their truck (co-driver, ELD device). role, since and truck are null when the driver is on no truck.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Which truck a driver is on now",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Driver ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DriverTruckResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "driver not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -4979,6 +5095,77 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/trucks/{id}/current": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: assignment:read\nThe truck's drivers (primary first, at most two) and its ELD device, read as one consistent picture.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "assignments"
+                ],
+                "summary": "Who is in a truck now",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Truck ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.TruckBoardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission assignment:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "truck not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [
@@ -5736,6 +5923,23 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.BoardTruckResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "unit_number": {
+                    "type": "string",
+                    "example": "101"
+                }
+            }
+        },
         "handler.CancelSubscriptionRequest": {
             "type": "object",
             "properties": {
@@ -6125,6 +6329,39 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.CrewMemberResponse": {
+            "type": "object",
+            "properties": {
+                "assignment_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "first_name": {
+                    "type": "string",
+                    "example": "Ali"
+                },
+                "last_name": {
+                    "type": "string",
+                    "example": "Valiyev"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "primary",
+                        "co_driver"
+                    ],
+                    "example": "primary"
+                },
+                "since": {
+                    "type": "string",
+                    "example": "2026-11-07T08:00:00Z"
+                }
+            }
+        },
         "handler.DriverAssignmentResponse": {
             "type": "object",
             "properties": {
@@ -6226,6 +6463,30 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.DriverTruckResponse": {
+            "type": "object",
+            "properties": {
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "primary",
+                        "co_driver"
+                    ],
+                    "example": "primary"
+                },
+                "since": {
+                    "type": "string",
+                    "example": "2026-11-07T08:00:00Z"
+                },
+                "truck": {
+                    "$ref": "#/definitions/handler.TruckBoardResponse"
+                }
+            }
+        },
         "handler.ELDDeviceResponse": {
             "type": "object",
             "properties": {
@@ -6292,6 +6553,27 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "example": "ok"
+                }
+            }
+        },
+        "handler.InstalledDeviceResponse": {
+            "type": "object",
+            "properties": {
+                "assignment_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "serial_number": {
+                    "type": "string",
+                    "example": "PT30-0001"
+                },
+                "since": {
+                    "type": "string",
+                    "example": "2026-11-07T07:30:00Z"
                 }
             }
         },
@@ -7228,6 +7510,23 @@ const docTemplate = `{
                     "description": "Always \"Bearer\": send the token as \"Authorization: Bearer \u003caccess_token\u003e\".",
                     "type": "string",
                     "example": "Bearer"
+                }
+            }
+        },
+        "handler.TruckBoardResponse": {
+            "type": "object",
+            "properties": {
+                "drivers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.CrewMemberResponse"
+                    }
+                },
+                "eld_device": {
+                    "$ref": "#/definitions/handler.InstalledDeviceResponse"
+                },
+                "truck": {
+                    "$ref": "#/definitions/handler.BoardTruckResponse"
                 }
             }
         },

@@ -15,11 +15,11 @@ type eldFixture struct {
 	devices  *ELDDeviceRepository
 	installs *ELDAssignmentRepository
 	trucks   *TruckRepository
-	alpha   *model.Company
-	bravo   *model.Company
-	alphaT1 *model.Truck
-	alphaT2 *model.Truck
-	bravoT1 *model.Truck
+	alpha    *model.Company
+	bravo    *model.Company
+	alphaT1  *model.Truck
+	alphaT2  *model.Truck
+	bravoT1  *model.Truck
 }
 
 func newELDFixture(t *testing.T) *eldFixture {
@@ -30,8 +30,8 @@ func newELDFixture(t *testing.T) *eldFixture {
 		devices:  NewELDDeviceRepository(db),
 		installs: NewELDAssignmentRepository(db),
 		trucks:   NewTruckRepository(db),
-		alpha:   createCompany(t, companies, "Alpha", "1"),
-		bravo:   createCompany(t, companies, "Bravo", "2"),
+		alpha:    createCompany(t, companies, "Alpha", "1"),
+		bravo:    createCompany(t, companies, "Bravo", "2"),
 	}
 	ctx := context.Background()
 	var err error
@@ -102,6 +102,12 @@ func TestELDAssignmentRepository(t *testing.T) {
 		open, err := f.installs.GetOpenByTruck(ctx, f.alphaT1.ID)
 		require.NoError(t, err)
 		assert.Equal(t, d1.ID, open.ELDDeviceID)
+
+		installed, err := f.installs.GetInstalled(ctx, f.alphaT1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "PT30-0001", installed.SerialNumber)
+		_, err = f.installs.GetInstalled(ctx, f.alphaT2.ID)
+		assert.ErrorIs(t, err, model.ErrNotFound, "empty truck")
 	})
 
 	t.Run("one ELD per truck", func(t *testing.T) {

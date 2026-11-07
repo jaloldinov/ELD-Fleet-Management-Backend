@@ -22,6 +22,9 @@ type AssignmentService interface {
 	UnassignMe(ctx context.Context, p auth.Principal) error
 	InstallDevice(ctx context.Context, p auth.Principal, deviceID, truckID uuid.UUID, replace bool) (*model.ELDDevice, error)
 	RemoveDevice(ctx context.Context, p auth.Principal, deviceID uuid.UUID) (*model.ELDDevice, error)
+	TruckBoard(ctx context.Context, p auth.Principal, truckID uuid.UUID) (*model.TruckBoard, error)
+	DriverTruck(ctx context.Context, p auth.Principal, driverID uuid.UUID) (*model.DriverTruck, error)
+	MyTruck(ctx context.Context, p auth.Principal) (*model.DriverTruck, error)
 }
 
 // ---------- DTOs ----------
@@ -60,6 +63,78 @@ func newDriverAssignmentResponse(a *model.DriverAssignment) DriverAssignmentResp
 	if a.EndedAt != nil {
 		ended := a.EndedAt.UTC()
 		r.EndedAt = &ended
+	}
+	return r
+}
+
+// CrewMemberResponse is a driver on a truck now.
+type CrewMemberResponse struct {
+	DriverID     uuid.UUID `json:"driver_id" swaggertype:"string" format:"uuid"`
+	FirstName    string    `json:"first_name" example:"Ali"`
+	LastName     string    `json:"last_name" example:"Valiyev"`
+	Role         string    `json:"role" enums:"primary,co_driver" example:"primary"`
+	Since        time.Time `json:"since" example:"2026-11-07T08:00:00Z"`
+	AssignmentID uuid.UUID `json:"assignment_id" swaggertype:"string" format:"uuid"`
+}
+
+// InstalledDeviceResponse is the ELD device in a truck now.
+type InstalledDeviceResponse struct {
+	ID           uuid.UUID `json:"id" swaggertype:"string" format:"uuid"`
+	SerialNumber string    `json:"serial_number" example:"PT30-0001"`
+	Since        time.Time `json:"since" example:"2026-11-07T07:30:00Z"`
+	AssignmentID uuid.UUID `json:"assignment_id" swaggertype:"string" format:"uuid"`
+}
+
+type BoardTruckResponse struct {
+	ID         uuid.UUID `json:"id" swaggertype:"string" format:"uuid"`
+	UnitNumber string    `json:"unit_number" example:"101"`
+	IsActive   bool      `json:"is_active" example:"true"`
+}
+
+// TruckBoardResponse: who drives the truck now (primary first, at most two;
+// [] = nobody) and which device is installed (null = none).
+type TruckBoardResponse struct {
+	Truck     BoardTruckResponse       `json:"truck"`
+	Drivers   []CrewMemberResponse     `json:"drivers"`
+	ELDDevice *InstalledDeviceResponse `json:"eld_device"`
+}
+
+// DriverTruckResponse: where a driver is now. role, since and truck are
+// null when the driver is on no truck.
+type DriverTruckResponse struct {
+	DriverID uuid.UUID           `json:"driver_id" swaggertype:"string" format:"uuid"`
+	Role     *string             `json:"role" enums:"primary,co_driver" example:"primary"`
+	Since    *time.Time          `json:"since" example:"2026-11-07T08:00:00Z"`
+	Truck    *TruckBoardResponse `json:"truck"`
+}
+
+func newTruckBoardResponse(b *model.TruckBoard) TruckBoardResponse {
+	r := TruckBoardResponse{
+		Truck:   BoardTruckResponse{ID: b.Truck.ID, UnitNumber: b.Truck.UnitNumber, IsActive: b.Truck.IsActive},
+		Drivers: make([]CrewMemberResponse, 0, len(b.Crew)), // [] not null: "nobody" is a list
+	}
+	for _, m := range b.Crew {
+		r.Drivers = append(r.Drivers, CrewMemberResponse{
+			DriverID: m.Assignment.DriverID, FirstName: m.FirstName, LastName: m.LastName,
+			Role: string(m.Assignment.Role), Since: m.Assignment.StartedAt.UTC(), AssignmentID: m.Assignment.ID,
+		})
+	}
+	if d := b.Device; d != nil {
+		r.ELDDevice = &InstalledDeviceResponse{ID: d.Assignment.ELDDeviceID, SerialNumber: d.SerialNumber,
+			Since: d.Assignment.StartedAt.UTC(), AssignmentID: d.Assignment.ID}
+	}
+	return r
+}
+
+func newDriverTruckResponse(dt *model.DriverTruck) DriverTruckResponse {
+	r := DriverTruckResponse{DriverID: dt.DriverID}
+	if a := dt.Assignment; a != nil {
+		role, since := string(a.Role), a.StartedAt.UTC()
+		r.Role, r.Since = &role, &since
+	}
+	if dt.Board != nil {
+		b := newTruckBoardResponse(dt.Board)
+		r.Truck = &b
 	}
 	return r
 }
@@ -282,6 +357,100 @@ func (h *AssignmentHandler) RemoveDevice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, newELDDeviceResponse(d))
+}
+
+// TruckBoard handles GET /api/v1/trucks/:id/current.
+//
+//	@Summary		Who is in a truck now
+//	@Description	Requires permission: assignment:read
+//	@Description	The truck's drivers (primary first, at most two) and its ELD device, read as one consistent picture.
+//	@Tags			assignments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Truck ID"	format(uuid)
+//	@Success		200	{object}	TruckBoardResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402	{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403	{object}	apierror.Response	"missing permission assignment:read"
+//	@Failure		404	{object}	apierror.Response	"truck not found"
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/trucks/{id}/current [get]
+func (h *AssignmentHandler) TruckBoard(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	b, err := h.svc.TruckBoard(c.Request.Context(), p, id)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newTruckBoardResponse(b))
+}
+
+// DriverTruck handles GET /api/v1/drivers/:id/truck.
+//
+//	@Summary		Which truck a driver is on now
+//	@Description	Requires permission: assignment:read
+//	@Description	The driver's role and the board of their truck (co-driver, ELD device). role, since and truck are null when the driver is on no truck.
+//	@Tags			assignments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Driver ID"	format(uuid)
+//	@Success		200	{object}	DriverTruckResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402	{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403	{object}	apierror.Response	"missing permission assignment:read"
+//	@Failure		404	{object}	apierror.Response	"driver not found"
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/drivers/{id}/truck [get]
+func (h *AssignmentHandler) DriverTruck(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	dt, err := h.svc.DriverTruck(c.Request.Context(), p, id)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newDriverTruckResponse(dt))
+}
+
+// MyTruck handles GET /api/v1/drivers/me/truck.
+//
+//	@Summary		My truck now
+//	@Description	For the driver app: the caller's truck, co-driver and the ELD device to connect to. Needs a login, no extra permission.
+//	@Tags			assignments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	DriverTruckResponse
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402	{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		404	{object}	apierror.Response	"the caller is not a driver"
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/drivers/me/truck [get]
+func (h *AssignmentHandler) MyTruck(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	dt, err := h.svc.MyTruck(c.Request.Context(), p)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newDriverTruckResponse(dt))
 }
 
 // bindAssignDriver reads the body; truck_id is required. The role is checked
