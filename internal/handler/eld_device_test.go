@@ -217,6 +217,8 @@ func TestELDDeviceHandler_State(t *testing.T) {
 		d := sampleELD()
 		seen := time.Now().Add(-time.Minute)
 		d.LastSeenAt = &seen
+		offset := -2500 * time.Millisecond
+		d.ClockOffset, d.ClockCheckedAt = &offset, &seen
 		lat, lon := 32.7767, -96.797
 		st := &model.DeviceState{Moving: true, TelemetryPoint: model.TelemetryPoint{
 			Seq: 9, RecordedAt: time.Date(2026, 11, 8, 14, 30, 5, 0, time.UTC), Latitude: &lat, Longitude: &lon,
@@ -231,6 +233,7 @@ func TestELDDeviceHandler_State(t *testing.T) {
 		assert.Contains(t, body, `"latitude":32.7767`)
 		assert.Contains(t, body, `"moving":true`)
 		assert.Contains(t, body, `"recorded_at":"2026-11-08T14:30:05Z"`)
+		assert.Contains(t, body, `"clock_offset_seconds":-2.5`, "the device clock is 2.5 s slow")
 	})
 
 	t.Run("never heard from", func(t *testing.T) {
@@ -239,6 +242,7 @@ func TestELDDeviceHandler_State(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"connection":"never"`)
 		assert.Contains(t, rec.Body.String(), `"position":null`)
+		assert.Contains(t, rec.Body.String(), `"clock_offset_seconds":null`)
 	})
 
 	t.Run("silent for an hour", func(t *testing.T) {

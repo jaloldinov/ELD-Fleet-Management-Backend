@@ -56,6 +56,13 @@ func (m *memELDRepo) GetByKeyHash(ctx context.Context, hash []byte) (*model.ELDD
 	return m.GetByID(ctx, id)
 }
 
+func (m *memELDRepo) SetClockOffset(_ context.Context, id uuid.UUID, offset time.Duration) error {
+	if d, ok := m.devices[id]; ok {
+		d.ClockOffset = &offset
+	}
+	return nil
+}
+
 func (m *memELDRepo) MarkSeen(context.Context, uuid.UUID) error {
 	m.touched++
 	return nil

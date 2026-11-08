@@ -38,6 +38,19 @@ type ELDEvent struct {
 	Moving      bool
 }
 
+// Time rules for readings.
+const (
+	// MaxClockSkew: FMCSA's timing rule (49 CFR 395 App. A, 4.3.1.5): an
+	// ELD's clock must stay within 10 minutes of UTC, or the device is in a
+	// timing malfunction. A reading further in the future than that cannot
+	// be trusted.
+	MaxClockSkew = 10 * time.Minute
+	// MaxReadingAge: older readings are refused (a clock reset to 2000 after
+	// a power loss, or a device offline for over a month). Generous on
+	// purpose: refusing a real reading loses a legal record.
+	MaxReadingAge = 30 * 24 * time.Hour
+)
+
 // DeviceOfflineAfter: a device not heard from (data or heartbeat) for
 // longer than this is offline. Devices send at least every minute while
 // on, so five quiet minutes means something is wrong (or it is off).

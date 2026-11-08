@@ -29,14 +29,15 @@ func (c *fakeClock) Sleep(_ context.Context, d time.Duration) error {
 // fakeAPI accepts every batch like the real API (seq dedup) and records
 // what arrived, and when (by the fake clock).
 type fakeAPI struct {
-	mu         sync.Mutex
-	clock      *fakeClock
-	seen       map[int64]bool
-	batches    [][]Reading
-	sentAt     []time.Time
-	heartbeats int
-	failNext   int // answer 503 this many times
-	status     int // if set: always answer this
+	mu          sync.Mutex
+	clock       *fakeClock
+	seen        map[int64]bool
+	batches     [][]Reading
+	sentAtField []time.Time // what the device said its clock was
+	sentAt      []time.Time
+	heartbeats  int
+	failNext    int // answer 503 this many times
+	status      int // if set: always answer this
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -56,8 +57,12 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		var body struct{ Events []Reading }
+		var body struct {
+			SentAt time.Time `json:"sent_at"`
+			Events []Reading
+		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.sentAtField = append(f.sentAtField, body.SentAt)
 		res := SendResult{}
 		for _, e := range body.Events {
 			if f.seen[e.Seq] {
@@ -105,6 +110,7 @@ func TestRun_ATrip(t *testing.T) {
 	// The timing rule: readings are never stamped in the future, and the
 	// last one is (almost) now.
 	for i, b := range api.batches {
+		assert.Equal(t, api.sentAt[i], api.sentAtField[i], "sent_at is the device's (real) clock")
 		for _, r := range b {
 			assert.False(t, r.RecordedAt.After(api.sentAt[i]), "seq %d recorded after it was sent", r.Seq)
 		}

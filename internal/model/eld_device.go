@@ -35,9 +35,13 @@ type ELDDevice struct {
 	// The device's last authenticated request (to the minute): data or a
 	// heartbeat. Online = seen within DeviceOfflineAfter.
 	LastSeenAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	DeletedAt  *time.Time
+	// How far the device's clock is from ours (positive = fast), measured
+	// at ClockCheckedAt from a batch's sent_at. nil = never measured.
+	ClockOffset    *time.Duration
+	ClockCheckedAt *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	DeletedAt      *time.Time
 }
 
 // ELDDeviceFilter narrows a device list. The zero value means "no filter".

@@ -16,12 +16,15 @@ import (
 // DeviceService is what DeviceHandler needs: the device-facing side.
 type DeviceService interface {
 	Me(ctx context.Context, d auth.Device) (*service.DeviceSelf, error)
-	Ingest(ctx context.Context, d auth.Device, in []service.TelemetryInput) (*service.IngestResult, error)
+	Ingest(ctx context.Context, d auth.Device, batch service.TelemetryBatch) (*service.IngestResult, error)
 }
 
 // TelemetryRequest is a batch of points from one device, oldest first is
 // customary but not required (each point carries its own seq and time).
 type TelemetryRequest struct {
+	// The device's clock when it sends this batch (optional, recommended):
+	// lets the office see a drifting clock, and no reading may be newer.
+	SentAt *time.Time              `json:"sent_at,omitempty" example:"2026-11-08T14:31:00Z"`
 	Events []TelemetryEventRequest `json:"events"`
 }
 
@@ -112,6 +115,7 @@ func (h *DeviceHandler) Me(c *gin.Context) {
 //
 //	@Summary		Send readings (device)
 //	@Description	For ELD devices: a batch of up to 500 readings (also the way to sync after being offline). Every point gets a final answer: accepted, duplicate (its seq was stored before; resending is safe) or rejected with a reason. Each point is filed under the truck the device was installed in at its recorded_at. Authorization: Device <key>. Not behind the billing gate.
+//	@Description	Time rules: recorded_at at most 10 minutes in the future (FMCSA timing rule), at most 30 days old, not after sent_at; and seq order must match time order (a higher seq recorded earlier means the clock went backwards).
 //	@Tags			device
 //	@Accept			json
 //	@Produce		json
@@ -140,7 +144,7 @@ func (h *DeviceHandler) Telemetry(c *gin.Context) {
 			SpeedMPH: e.SpeedMPH, OdometerMi: e.OdometerMi, EngineHours: e.EngineHours, EngineOn: e.EngineOn}
 	}
 
-	res, err := h.svc.Ingest(c.Request.Context(), d, in)
+	res, err := h.svc.Ingest(c.Request.Context(), d, service.TelemetryBatch{SentAt: req.SentAt, Points: in})
 	if err != nil {
 		handleError(c, err)
 		return

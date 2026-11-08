@@ -560,6 +560,16 @@ definitions:
     type: object
   handler.DeviceStateResponse:
     properties:
+      clock_checked_at:
+        example: "2026-11-08T14:31:00Z"
+        type: string
+      clock_offset_seconds:
+        description: |-
+          How far the device's clock is from ours (positive = fast), from the
+          last batch that carried sent_at; null = never measured. FMCSA allows
+          10 minutes (600 s); readings beyond that are refused.
+        example: -2.5
+        type: number
       connection:
         enum:
         - online
@@ -1647,6 +1657,12 @@ definitions:
         items:
           $ref: '#/definitions/handler.TelemetryEventRequest'
         type: array
+      sent_at:
+        description: |-
+          The device's clock when it sends this batch (optional, recommended):
+          lets the office see a drifting clock, and no reading may be newer.
+        example: "2026-11-08T14:31:00Z"
+        type: string
     type: object
   handler.TelemetryResponse:
     properties:
@@ -3483,11 +3499,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'For ELD devices: a batch of up to 500 readings (also the way to
-        sync after being offline). Every point gets a final answer: accepted, duplicate
-        (its seq was stored before; resending is safe) or rejected with a reason.
-        Each point is filed under the truck the device was installed in at its recorded_at.
-        Authorization: Device <key>. Not behind the billing gate.'
+      description: |-
+        For ELD devices: a batch of up to 500 readings (also the way to sync after being offline). Every point gets a final answer: accepted, duplicate (its seq was stored before; resending is safe) or rejected with a reason. Each point is filed under the truck the device was installed in at its recorded_at. Authorization: Device <key>. Not behind the billing gate.
+        Time rules: recorded_at at most 10 minutes in the future (FMCSA timing rule), at most 30 days old, not after sent_at; and seq order must match time order (a higher seq recorded earlier means the clock went backwards).
       parameters:
       - description: Readings
         in: body

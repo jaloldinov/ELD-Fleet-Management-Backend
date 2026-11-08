@@ -142,7 +142,9 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	flush := func() error {
 		for len(buffer) > 0 {
 			n := min(len(buffer), MaxBatch)
-			res, err := cfg.Client.Send(ctx, buffer[:n])
+			// The device's clock is the real one (synced by GPS); only the
+			// readings' times are replayed.
+			res, err := cfg.Client.Send(ctx, cfg.Clock.Now(), buffer[:n])
 			if errors.Is(err, ErrFatal) {
 				return err
 			}

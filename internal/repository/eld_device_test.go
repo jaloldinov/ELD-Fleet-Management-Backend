@@ -315,3 +315,18 @@ func TestELDDeviceRepository_Keys(t *testing.T) {
 		assert.False(t, stillThere, "gone from the row, not just filtered out")
 	})
 }
+
+func TestELDDeviceRepository_ClockOffset(t *testing.T) {
+	f := newELDFixture(t)
+	ctx := context.Background()
+	d := f.device(t, f.alpha.ID, "PT30-0001")
+	assert.Nil(t, d.ClockOffset, "never measured")
+
+	require.NoError(t, f.devices.SetClockOffset(ctx, d.ID, -2500*time.Millisecond))
+
+	got, err := f.devices.GetByID(ctx, d.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.ClockOffset)
+	assert.Equal(t, -2500*time.Millisecond, *got.ClockOffset, "2.5 s slow, to the millisecond")
+	assert.NotNil(t, got.ClockCheckedAt)
+}

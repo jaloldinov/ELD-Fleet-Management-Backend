@@ -63,9 +63,12 @@ func (c *Client) Me(ctx context.Context) (*Me, error) {
 	return &me, c.call(ctx, http.MethodGet, "/api/v1/device/me", nil, &me)
 }
 
-func (c *Client) Send(ctx context.Context, batch []Reading) (*SendResult, error) {
+// Send posts a batch. sentAt is the device's clock now: the API measures
+// the clock's drift from it, and refuses readings recorded after it.
+func (c *Client) Send(ctx context.Context, sentAt time.Time, batch []Reading) (*SendResult, error) {
 	var res SendResult
-	return &res, c.call(ctx, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": batch}, &res)
+	body := map[string]any{"sent_at": sentAt.UTC(), "events": batch}
+	return &res, c.call(ctx, http.MethodPost, "/api/v1/device/telemetry", body, &res)
 }
 
 func (c *Client) Heartbeat(ctx context.Context) error {

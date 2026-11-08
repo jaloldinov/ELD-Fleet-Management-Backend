@@ -20,12 +20,13 @@ type fakeDeviceService struct {
 	got       auth.Device
 	self      *service.DeviceSelf
 	gotIngest []service.TelemetryInput
+	gotSentAt *time.Time
 	result    *service.IngestResult
 	err       error
 }
 
-func (f *fakeDeviceService) Ingest(_ context.Context, d auth.Device, in []service.TelemetryInput) (*service.IngestResult, error) {
-	f.got, f.gotIngest = d, in
+func (f *fakeDeviceService) Ingest(_ context.Context, d auth.Device, b service.TelemetryBatch) (*service.IngestResult, error) {
+	f.got, f.gotIngest, f.gotSentAt = d, b.Points, b.SentAt
 	return f.result, f.err
 }
 
@@ -90,7 +91,7 @@ func TestDeviceHandler_Telemetry(t *testing.T) {
 	svc := &fakeDeviceService{result: &service.IngestResult{Accepted: 1, Duplicates: 1,
 		Rejected: []service.RejectedPoint{{Index: 2, Seq: &seq, Reason: "latitude: must be between -90 and 90"}}}}
 
-	rec := do(deviceTestRouter(svc, true), http.MethodPost, "/api/v1/device/telemetry", `{"events":[
+	rec := do(deviceTestRouter(svc, true), http.MethodPost, "/api/v1/device/telemetry", `{"sent_at":"2026-11-08T14:31:00Z","events":[
 		{"seq":103,"recorded_at":"2026-11-08T14:30:05Z","latitude":32.7767,"longitude":-96.797,
 		 "speed_mph":61.5,"odometer_mi":120345.2,"engine_hours":8123.4,"engine_on":true},
 		{"seq":104,"recorded_at":"2026-11-08T14:30:10Z","speed_mph":0,"odometer_mi":120345.3,"engine_hours":8123.4,"engine_on":false},
@@ -99,6 +100,8 @@ func TestDeviceHandler_Telemetry(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, testDevice, svc.got)
+	require.NotNil(t, svc.gotSentAt)
+	assert.Equal(t, time.Date(2026, 11, 8, 14, 31, 0, 0, time.UTC), svc.gotSentAt.UTC())
 	require.Len(t, svc.gotIngest, 3)
 	assert.Equal(t, int64(103), *svc.gotIngest[0].Seq)
 	assert.Equal(t, 61.5, *svc.gotIngest[0].SpeedMPH)

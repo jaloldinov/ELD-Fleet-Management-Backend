@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -18,7 +19,8 @@ import (
 const eldDeviceColumns = `id, company_id, serial_number, model, firmware_version,
 	(SELECT a.truck_id FROM eld_truck_assignments a
 	 WHERE a.eld_device_id = eld_devices.id AND a.ended_at IS NULL) AS truck_id,
-	status, is_active, key_created_at, last_seen_at, created_at, updated_at, deleted_at`
+	status, is_active, key_created_at, last_seen_at, clock_offset_ms, clock_checked_at,
+	created_at, updated_at, deleted_at`
 
 type ELDDeviceRepository struct {
 	db DBTX
@@ -176,6 +178,17 @@ func (r *ELDDeviceRepository) MarkSeen(ctx context.Context, id uuid.UUID) error 
 	return nil
 }
 
+// SetClockOffset records the device's clock offset, measured now.
+func (r *ELDDeviceRepository) SetClockOffset(ctx context.Context, id uuid.UUID, offset time.Duration) error {
+	_, err := r.q(ctx).Exec(ctx, `
+		UPDATE eld_devices SET clock_offset_ms = $2, clock_checked_at = now()
+		WHERE id = $1`, id, offset.Milliseconds())
+	if err != nil {
+		return fmt.Errorf("set device clock offset: %w", err)
+	}
+	return nil
+}
+
 // SoftDelete marks the device deleted and removes its key (a deleted
 // device can never call the API). Take it out of its truck first
 // (AssignmentService.ReleaseDevice), in the same transaction.
@@ -195,10 +208,16 @@ func (r *ELDDeviceRepository) SoftDelete(ctx context.Context, id uuid.UUID) erro
 
 func scanELDDevice(row pgx.Row) (*model.ELDDevice, error) {
 	var d model.ELDDevice
+	var offsetMS *int64
 	err := row.Scan(&d.ID, &d.CompanyID, &d.SerialNumber, &d.Model, &d.FirmwareVersion,
-		&d.TruckID, &d.Status, &d.IsActive, &d.KeyCreatedAt, &d.LastSeenAt, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
+		&d.TruckID, &d.Status, &d.IsActive, &d.KeyCreatedAt, &d.LastSeenAt, &offsetMS, &d.ClockCheckedAt,
+		&d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
 	if err != nil {
 		return nil, err
+	}
+	if offsetMS != nil {
+		off := time.Duration(*offsetMS) * time.Millisecond
+		d.ClockOffset = &off
 	}
 	return &d, nil
 }

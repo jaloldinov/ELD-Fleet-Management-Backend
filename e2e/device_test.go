@@ -230,24 +230,50 @@ func TestDeviceState(t *testing.T) {
 
 	t.Run("the newest reading is the state", func(t *testing.T) {
 		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": []any{
-			reading(2, at(2*time.Second), 61.5), reading(1, at(time.Second), 0),
+			reading(6, at(2*time.Second), 61.5), reading(5, at(time.Second), 0),
 		}}, http.StatusOK, nil)
 
 		_, pos := state()
 		require.NotNil(t, pos)
-		assert.Equal(t, 61.5, pos.SpeedMPH, "seq 2 is newer, though it came first in the batch")
+		assert.Equal(t, 61.5, pos.SpeedMPH, "seq 6 is newer, though it came first in the batch")
 		assert.True(t, pos.Moving)
 	})
 
-	t.Run("readings from the tunnel go to history, not to the state", func(t *testing.T) {
+	t.Run("a late retry goes to history, not to the state", func(t *testing.T) {
 		var r ingestResp
 		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": []any{
-			reading(3, at(-time.Minute), 0), // recorded before the newest one, sent after
+			reading(3, at(-time.Minute), 0), // older seq, older time: recorded earlier, sent later
 		}}, http.StatusOK, &r)
 		assert.Equal(t, 1, r.Accepted)
 
 		_, pos := state()
 		assert.Equal(t, 61.5, pos.SpeedMPH, "the truck does not jump back")
+	})
+
+	t.Run("a clock that went backwards is refused", func(t *testing.T) {
+		var r ingestResp
+		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": []any{
+			reading(7, at(-time.Hour), 0), // after seq 6, but an hour earlier
+		}}, http.StatusOK, &r)
+		require.Len(t, r.Rejected, 1)
+		assert.Contains(t, r.Rejected[0].Reason, "clock went backwards")
+	})
+
+	t.Run("a reading from the future is refused; the drift is measured", func(t *testing.T) {
+		var r ingestResp
+		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{
+			"sent_at": time.Now().Add(15 * time.Minute).UTC().Format(time.RFC3339Nano), // a clock 15 minutes fast
+			"events":  []any{reading(8, time.Now().Add(15*time.Minute).UTC().Format(time.RFC3339Nano), 50)},
+		}, http.StatusOK, &r)
+		require.Len(t, r.Rejected, 1)
+		assert.Contains(t, r.Rejected[0].Reason, "future")
+
+		var s struct {
+			ClockOffsetSeconds *float64 `json:"clock_offset_seconds"`
+		}
+		tn.Admin.do(t, http.MethodGet, "/api/v1/eld-devices/"+eld.ID+"/state", nil, http.StatusOK, &s)
+		require.NotNil(t, s.ClockOffsetSeconds)
+		assert.InDelta(t, 900, *s.ClockOffsetSeconds, 5, "15 minutes fast: the office can see it")
 	})
 
 	t.Run("the truck board shows where the truck is", func(t *testing.T) {

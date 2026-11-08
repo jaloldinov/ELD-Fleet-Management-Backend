@@ -34,6 +34,11 @@ type DeviceStateResponse struct {
 	LastSeenAt *time.Time        `json:"last_seen_at" example:"2026-11-08T14:31:00Z"`
 	TruckID    *uuid.UUID        `json:"truck_id" swaggertype:"string" format:"uuid"` // installed in now
 	Position   *PositionResponse `json:"position"`                                    // null = no reading yet
+	// How far the device's clock is from ours (positive = fast), from the
+	// last batch that carried sent_at; null = never measured. FMCSA allows
+	// 10 minutes (600 s); readings beyond that are refused.
+	ClockOffsetSeconds *float64   `json:"clock_offset_seconds" example:"-2.5"`
+	ClockCheckedAt     *time.Time `json:"clock_checked_at" example:"2026-11-08T14:31:00Z"`
 }
 
 // ---------- DTOs ----------
@@ -402,9 +407,14 @@ func (h *ELDDeviceHandler) State(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, DeviceStateResponse{DeviceID: d.ID,
+	r := DeviceStateResponse{DeviceID: d.ID,
 		Connection: string(model.ConnectionOf(d.LastSeenAt, time.Now())), LastSeenAt: utcOrNil(d.LastSeenAt),
-		TruckID: d.TruckID, Position: newPositionResponse(st)})
+		TruckID: d.TruckID, Position: newPositionResponse(st), ClockCheckedAt: utcOrNil(d.ClockCheckedAt)}
+	if d.ClockOffset != nil {
+		sec := d.ClockOffset.Seconds()
+		r.ClockOffsetSeconds = &sec
+	}
+	c.JSON(http.StatusOK, r)
 }
 
 // Delete handles DELETE /api/v1/eld-devices/:id.
