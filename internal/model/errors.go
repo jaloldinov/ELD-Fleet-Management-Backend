@@ -25,6 +25,11 @@ var (
 	ErrSerialTaken     = errors.New("an ELD device with this serial number is already registered")
 	ErrTruckHasELD     = errors.New("this truck already has an ELD device installed")
 
+	// Device API. ErrDeviceKeyInvalid is deliberately the same for "no such
+	// key", "revoked" and "rotated away": the caller learns nothing.
+	ErrDeviceKeyInvalid = errors.New("invalid device key")
+	ErrDeviceRetired    = errors.New("this device is retired")
+
 	// Driver ↔ truck assignments. Both come from partial unique indexes, so
 	// they also hold when two requests arrive at the same moment.
 	ErrDriverOnTruck = errors.New("this driver is already assigned to a truck")

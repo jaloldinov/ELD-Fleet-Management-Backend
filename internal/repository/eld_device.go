@@ -18,7 +18,7 @@ import (
 const eldDeviceColumns = `id, company_id, serial_number, model, firmware_version,
 	(SELECT a.truck_id FROM eld_truck_assignments a
 	 WHERE a.eld_device_id = eld_devices.id AND a.ended_at IS NULL) AS truck_id,
-	status, is_active, created_at, updated_at, deleted_at`
+	status, is_active, key_created_at, key_last_used_at, created_at, updated_at, deleted_at`
 
 type ELDDeviceRepository struct {
 	db DBTX
@@ -133,11 +133,57 @@ func (r *ELDDeviceRepository) LockByID(ctx context.Context, id uuid.UUID) (*mode
 	return d, nil
 }
 
-// SoftDelete marks the device deleted. Take it out of its truck first
+// SetKey stores the hash of the device's new API key (replacing, and so
+// revoking, the old one), or with hash nil removes the key.
+func (r *ELDDeviceRepository) SetKey(ctx context.Context, id uuid.UUID, hash []byte) (*model.ELDDevice, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		UPDATE eld_devices
+		SET key_hash = $2,
+		    key_created_at = CASE WHEN $2::bytea IS NULL THEN NULL ELSE now() END,
+		    key_last_used_at = NULL
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING `+eldDeviceColumns, id, hash)
+	d, err := scanELDDevice(row)
+	if err != nil {
+		return nil, mapELDDeviceError("set device key", err)
+	}
+	return d, nil
+}
+
+// GetByKeyHash finds the alive device whose key hashes to hash, or
+// ErrNotFound. Runs on every device request: eld_devices_key_hash_uniq.
+func (r *ELDDeviceRepository) GetByKeyHash(ctx context.Context, hash []byte) (*model.ELDDevice, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		SELECT `+eldDeviceColumns+` FROM eld_devices
+		WHERE key_hash = $1 AND deleted_at IS NULL`, hash)
+	d, err := scanELDDevice(row)
+	if err != nil {
+		return nil, mapELDDeviceError("get device by key", err)
+	}
+	return d, nil
+}
+
+// TouchKey records that the device's key was just used, at most once a
+// minute: a device calls every few seconds, and one row write per call
+// would be wasted work (the minute is precise enough for "last seen").
+func (r *ELDDeviceRepository) TouchKey(ctx context.Context, id uuid.UUID) error {
+	_, err := r.q(ctx).Exec(ctx, `
+		UPDATE eld_devices SET key_last_used_at = now()
+		WHERE id = $1
+		  AND (key_last_used_at IS NULL OR key_last_used_at < now() - interval '1 minute')`, id)
+	if err != nil {
+		return fmt.Errorf("touch device key: %w", err)
+	}
+	return nil
+}
+
+// SoftDelete marks the device deleted and removes its key (a deleted
+// device can never call the API). Take it out of its truck first
 // (AssignmentService.ReleaseDevice), in the same transaction.
 func (r *ELDDeviceRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	tag, err := r.q(ctx).Exec(ctx, `
-		UPDATE eld_devices SET deleted_at = now()
+		UPDATE eld_devices
+		SET deleted_at = now(), key_hash = NULL, key_created_at = NULL
 		WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
 		return fmt.Errorf("delete eld device: %w", err)
@@ -151,7 +197,7 @@ func (r *ELDDeviceRepository) SoftDelete(ctx context.Context, id uuid.UUID) erro
 func scanELDDevice(row pgx.Row) (*model.ELDDevice, error) {
 	var d model.ELDDevice
 	err := row.Scan(&d.ID, &d.CompanyID, &d.SerialNumber, &d.Model, &d.FirmwareVersion,
-		&d.TruckID, &d.Status, &d.IsActive, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
+		&d.TruckID, &d.Status, &d.IsActive, &d.KeyCreatedAt, &d.KeyLastUsedAt, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt)
 	if err != nil {
 		return nil, err
 	}

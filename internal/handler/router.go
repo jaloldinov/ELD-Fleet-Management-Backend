@@ -45,9 +45,11 @@ type Handlers struct {
 	ELDDevice *ELDDeviceHandler
 	// Driver ↔ truck assignments (Phase 3).
 	Assignment *AssignmentHandler
-	RateLimit  *RateLimitHandler
-	Password   *PasswordResetHandler
-	AuditLog   *AuditLogHandler
+	// The ELD devices themselves (Phase 4).
+	Device    *DeviceHandler
+	RateLimit *RateLimitHandler
+	Password  *PasswordResetHandler
+	AuditLog  *AuditLogHandler
 
 	// Billing (nil when Stripe is not configured: the routes do not exist).
 	Product       *ProductHandler
@@ -68,6 +70,8 @@ type RouterSecurity struct {
 	// Billing gates the product (fleet routes) on the company's
 	// subscription. nil = billing disabled: everything is free.
 	Billing middleware.BillingStatusLoader
+	// Devices authenticates ELD devices by their key (/device routes).
+	Devices middleware.DeviceAuthenticator
 }
 
 // NewRouter builds the Gin engine and registers all routes.
@@ -139,6 +143,13 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	if h.Webhook != nil {
 		v1.POST("/webhooks/stripe", h.Webhook.Stripe)
 	}
+
+	// ---------- ELD devices: a device key, not a user token ----------
+	// Outside the user routes (a user token is refused here, a device key
+	// there) and NOT behind the billing gate: logging hours of service is
+	// required by law, also while a company's payment has failed.
+	device := v1.Group("/device", middleware.DeviceAuth(sec.Devices))
+	device.GET("/me", h.Device.Me)
 
 	// ---------- Protected: every route below requires a valid access token ----------
 	// Registering the middleware on the GROUP (not per route) means a new
@@ -220,6 +231,9 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	elds.DELETE("/:id", perm.Require(model.PermELDDelete), h.ELDDevice.Delete)
 	elds.PUT("/:id/truck", perm.Require(model.PermELDUpdate), h.Assignment.InstallDevice)
 	elds.DELETE("/:id/truck", perm.Require(model.PermELDUpdate), h.Assignment.RemoveDevice)
+	// The device's API key: issue (or rotate) and revoke.
+	elds.POST("/:id/credentials", perm.Require(model.PermELDUpdate), h.ELDDevice.IssueKey)
+	elds.DELETE("/:id/credentials", perm.Require(model.PermELDUpdate), h.ELDDevice.RevokeKey)
 
 	// History of changes; tenant scope applied by the service.
 	protected.GET("/audit-logs", perm.Require(model.PermAuditRead), h.AuditLog.List)

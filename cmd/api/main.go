@@ -46,6 +46,11 @@ import (
 //	@in							header
 //	@name						Authorization
 //	@description				Access token from /api/v1/auth/login. Enter: Bearer <access_token>
+//
+//	@securityDefinitions.apikey	DeviceKey
+//	@in							header
+//	@name						Authorization
+//	@description				ELD device key from POST /api/v1/eld-devices/{id}/credentials. Enter: Device <key>
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -138,16 +143,20 @@ func run() error {
 	driverRepo := repository.NewDriverRepository(pool)
 	truckRepo := repository.NewTruckRepository(pool)
 	eldRepo := repository.NewELDDeviceRepository(pool)
+	eldStintRepo := repository.NewELDAssignmentRepository(pool)
 	assignmentSvc := service.NewAssignmentService(service.AssignmentDeps{
 		Tx:           txManager,
 		DriverStints: repository.NewDriverAssignmentRepository(pool),
-		ELDStints:    repository.NewELDAssignmentRepository(pool),
+		ELDStints:    eldStintRepo,
 		Drivers:      driverRepo,
 		Devices:      eldRepo,
 		Trucks:       truckRepo,
 		Users:        userRepo,
 		Audit:        auditor,
 	})
+
+	// The devices themselves (Authorization: Device <key>).
+	deviceSvc := service.NewDeviceService(eldRepo, eldStintRepo, truckRepo)
 
 	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)
@@ -335,6 +344,7 @@ func run() error {
 		Permissions: userSvc,
 		AuthLimiter: authIPLimiter,
 		Billing:     billingGate,
+		Devices:     deviceSvc,
 	}, handler.Handlers{
 		Health:        handler.NewHealthHandler(pool, log),
 		Auth:          handler.NewAuthHandler(authSvc, loginLimiter),
@@ -343,6 +353,7 @@ func run() error {
 		Driver:        handler.NewDriverHandler(driverSvc),
 		Truck:         handler.NewTruckHandler(truckSvc),
 		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(eldRepo, assignmentSvc, companyRepo, auditor)),
+		Device:        handler.NewDeviceHandler(deviceSvc),
 		Assignment:    handler.NewAssignmentHandler(assignmentSvc),
 		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),
 		Password:      handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),

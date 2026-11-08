@@ -2,24 +2,64 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
 type memELDRepo struct {
 	devices map[uuid.UUID]*model.ELDDevice
+	keys    map[string]uuid.UUID // hex(hash) → device
+	touched int
 	created []model.ELDDevice
 	listF   model.ELDDeviceFilter
 	events  []string // "lock", and "release" from fakeReleaser: their order
 }
 
-func newMemELDRepo() *memELDRepo { return &memELDRepo{devices: map[uuid.UUID]*model.ELDDevice{}} }
+func newMemELDRepo() *memELDRepo {
+	return &memELDRepo{devices: map[uuid.UUID]*model.ELDDevice{}, keys: map[string]uuid.UUID{}}
+}
+
+func (m *memELDRepo) SetKey(_ context.Context, id uuid.UUID, hash []byte) (*model.ELDDevice, error) {
+	d, ok := m.devices[id]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	for k, owner := range m.keys {
+		if owner == id {
+			delete(m.keys, k) // the old key stops working
+		}
+	}
+	d.KeyCreatedAt, d.KeyLastUsedAt = nil, nil
+	if hash != nil {
+		m.keys[hex.EncodeToString(hash)] = id
+		now := time.Now()
+		d.KeyCreatedAt = &now
+	}
+	c := *d
+	return &c, nil
+}
+
+func (m *memELDRepo) GetByKeyHash(ctx context.Context, hash []byte) (*model.ELDDevice, error) {
+	id, ok := m.keys[hex.EncodeToString(hash)]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	return m.GetByID(ctx, id)
+}
+
+func (m *memELDRepo) TouchKey(context.Context, uuid.UUID) error {
+	m.touched++
+	return nil
+}
 
 func (m *memELDRepo) add(companyID uuid.UUID) *model.ELDDevice {
 	d := &model.ELDDevice{ID: uuid.New(), CompanyID: companyID, SerialNumber: "PT30-0001", Status: model.ELDActive, IsActive: true}
@@ -263,4 +303,74 @@ func TestELDDeviceService_Status(t *testing.T) {
 
 		requireValidationField(t, err, "status")
 	})
+}
+
+// ---------- device keys ----------
+
+func TestELDDeviceService_IssueKey(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("issue, then rotate", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(companyA)
+
+		first, got, err := f.svc.IssueKey(ctx, companyAUser, d.ID)
+		require.NoError(t, err)
+		assert.True(t, auth.LooksLikeDeviceKey(first))
+		assert.NotNil(t, got.KeyCreatedAt)
+		found, err := f.repo.GetByKeyHash(ctx, auth.HashDeviceKey(first))
+		require.NoError(t, err, "only the hash is stored, and it finds the device")
+		assert.Equal(t, d.ID, found.ID)
+
+		second, _, err := f.svc.IssueKey(ctx, companyAUser, d.ID)
+		require.NoError(t, err)
+		assert.NotEqual(t, first, second)
+		_, err = f.repo.GetByKeyHash(ctx, auth.HashDeviceKey(first))
+		assert.ErrorIs(t, err, model.ErrNotFound, "rotating stops the old key at once")
+
+		assert.Equal(t, []string{"eld_device.issue_key", "eld_device.rotate_key"}, f.audit.actions())
+		for _, e := range f.audit.entries {
+			assert.Empty(t, e.Changes, "never the key (or its hash) in the audit log")
+		}
+		f.audit.requireAllInTx(t)
+	})
+
+	t.Run("a retired device gets no key", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(companyA)
+		d.Status = model.ELDRetired
+
+		_, _, err := f.svc.IssueKey(ctx, companyAUser, d.ID)
+
+		requireValidationField(t, err, "status")
+	})
+
+	t.Run("another company's device does not exist", func(t *testing.T) {
+		f := newELDSvcFixture()
+		d := f.repo.add(uuid.New())
+
+		_, _, err := f.svc.IssueKey(ctx, companyAUser, d.ID)
+
+		assert.ErrorIs(t, err, model.ErrNotFound)
+	})
+}
+
+func TestELDDeviceService_RevokeKey(t *testing.T) {
+	ctx := context.Background()
+	f := newELDSvcFixture()
+	d := f.repo.add(companyA)
+	key, _, err := f.svc.IssueKey(ctx, companyAUser, d.ID)
+	require.NoError(t, err)
+
+	got, err := f.svc.RevokeKey(ctx, companyAUser, d.ID)
+
+	require.NoError(t, err)
+	assert.Nil(t, got.KeyCreatedAt)
+	_, err = f.repo.GetByKeyHash(ctx, auth.HashDeviceKey(key))
+	assert.ErrorIs(t, err, model.ErrNotFound)
+	assert.Equal(t, "eld_device.revoke_key", f.audit.last(t).Action)
+
+	_, err = f.svc.RevokeKey(ctx, companyAUser, d.ID)
+	require.NoError(t, err, "no key: nothing to revoke")
+	assert.Len(t, f.audit.entries, 2, "and nothing recorded")
 }

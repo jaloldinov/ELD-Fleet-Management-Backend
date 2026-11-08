@@ -2163,6 +2163,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/device/me": {
+            "get": {
+                "security": [
+                    {
+                        "DeviceKey": []
+                    }
+                ],
+                "description": "For ELD devices: the calling device and the truck it is installed in. Authorization: Device \u003ckey\u003e. Not behind the billing gate (logging hours of service is required by law).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "device"
+                ],
+                "summary": "Who am I (device)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DeviceSelfResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing, unknown or revoked device key",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "the device is retired",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/driver-assignments": {
             "get": {
                 "security": [
@@ -3677,6 +3720,134 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/eld-devices/{id}/credentials": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: eld:update\nReturns a new key for the device to send as \"Authorization: Device \u003ckey\u003e\". It is shown ONCE: only its hash is stored. Issuing again rotates: the old key stops working at once.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "eld-devices"
+                ],
+                "summary": "Issue a device API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Device ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.IssueKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "the device is retired",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission eld:update",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "device not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: eld:update\nThe device can no longer call the API until a new key is issued. Succeeds also when the device has no key.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "eld-devices"
+                ],
+                "summary": "Revoke a device API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Device ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ELDDeviceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission eld:update",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "device not found",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -6764,6 +6935,40 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.DeviceSelfResponse": {
+            "type": "object",
+            "properties": {
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "device_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "serial_number": {
+                    "type": "string",
+                    "example": "PT30-0001"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "faulty",
+                        "retired"
+                    ],
+                    "example": "active"
+                },
+                "truck": {
+                    "description": "null = not installed",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.BoardTruckResponse"
+                        }
+                    ]
+                }
+            }
+        },
         "handler.DriverAssignmentRecordResponse": {
             "type": "object",
             "properties": {
@@ -7014,6 +7219,11 @@ const docTemplate = `{
                     "type": "string",
                     "example": "1.2.3"
                 },
+                "has_key": {
+                    "description": "The device's API key (never the key itself): has_key = the device can\ncall the API; when it was issued and last used (to the minute).",
+                    "type": "boolean",
+                    "example": true
+                },
                 "id": {
                     "type": "string",
                     "format": "uuid"
@@ -7022,6 +7232,14 @@ const docTemplate = `{
                     "description": "status is active",
                     "type": "boolean",
                     "example": true
+                },
+                "key_created_at": {
+                    "type": "string",
+                    "example": "2026-11-08T09:00:00Z"
+                },
+                "key_last_used_at": {
+                    "type": "string",
+                    "example": "2026-11-08T09:42:00Z"
                 },
                 "model": {
                     "type": "string",
@@ -7214,6 +7432,19 @@ const docTemplate = `{
                     "description": "Cents. amount_due is what the card is asked for after credit.",
                     "type": "integer",
                     "example": 15000
+                }
+            }
+        },
+        "handler.IssueKeyResponse": {
+            "type": "object",
+            "properties": {
+                "device_key": {
+                    "description": "Put it into the device. Only its hash is stored: if it is lost, issue\na new one (which also stops this one).",
+                    "type": "string",
+                    "example": "eldk_q8Gm0yJ3v1Xp..."
+                },
+                "eld_device": {
+                    "$ref": "#/definitions/handler.ELDDeviceResponse"
                 }
             }
         },
@@ -8451,6 +8682,12 @@ const docTemplate = `{
     "securityDefinitions": {
         "BearerAuth": {
             "description": "Access token from /api/v1/auth/login. Enter: Bearer \u003caccess_token\u003e",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        },
+        "DeviceKey": {
+            "description": "ELD device key from POST /api/v1/eld-devices/{id}/credentials. Enter: Device \u003ckey\u003e",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

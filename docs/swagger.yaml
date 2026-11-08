@@ -529,6 +529,29 @@ definitions:
         example: "2026-11-07T08:00:00Z"
         type: string
     type: object
+  handler.DeviceSelfResponse:
+    properties:
+      company_id:
+        format: uuid
+        type: string
+      device_id:
+        format: uuid
+        type: string
+      serial_number:
+        example: PT30-0001
+        type: string
+      status:
+        enum:
+        - active
+        - faulty
+        - retired
+        example: active
+        type: string
+      truck:
+        allOf:
+        - $ref: '#/definitions/handler.BoardTruckResponse'
+        description: null = not installed
+    type: object
   handler.DriverAssignmentRecordResponse:
     properties:
       company_id:
@@ -715,6 +738,12 @@ definitions:
       firmware_version:
         example: 1.2.3
         type: string
+      has_key:
+        description: |-
+          The device's API key (never the key itself): has_key = the device can
+          call the API; when it was issued and last used (to the minute).
+        example: true
+        type: boolean
       id:
         format: uuid
         type: string
@@ -722,6 +751,12 @@ definitions:
         description: status is active
         example: true
         type: boolean
+      key_created_at:
+        example: "2026-11-08T09:00:00Z"
+        type: string
+      key_last_used_at:
+        example: "2026-11-08T09:42:00Z"
+        type: string
       model:
         example: PT30
         type: string
@@ -863,6 +898,17 @@ definitions:
         description: Cents. amount_due is what the card is asked for after credit.
         example: 15000
         type: integer
+    type: object
+  handler.IssueKeyResponse:
+    properties:
+      device_key:
+        description: |-
+          Put it into the device. Only its hash is stored: if it is lost, issue
+          a new one (which also stops this one).
+        example: eldk_q8Gm0yJ3v1Xp...
+        type: string
+      eld_device:
+        $ref: '#/definitions/handler.ELDDeviceResponse'
     type: object
   handler.ListAuditLogsResponse:
     properties:
@@ -3238,6 +3284,35 @@ paths:
       summary: What the company would be billed for
       tags:
       - billing
+  /api/v1/device/me:
+    get:
+      description: 'For ELD devices: the calling device and the truck it is installed
+        in. Authorization: Device <key>. Not behind the billing gate (logging hours
+        of service is required by law).'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DeviceSelfResponse'
+        "401":
+          description: missing, unknown or revoked device key
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: the device is retired
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - DeviceKey: []
+      summary: Who am I (device)
+      tags:
+      - device
   /api/v1/driver-assignments:
     get:
       description: |-
@@ -4269,6 +4344,93 @@ paths:
       security:
       - BearerAuth: []
       summary: Update an ELD device
+      tags:
+      - eld-devices
+  /api/v1/eld-devices/{id}/credentials:
+    delete:
+      description: |-
+        Requires permission: eld:update
+        The device can no longer call the API until a new key is issued. Succeeds also when the device has no key.
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.ELDDeviceResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission eld:update
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: device not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Revoke a device API key
+      tags:
+      - eld-devices
+    post:
+      description: |-
+        Requires permission: eld:update
+        Returns a new key for the device to send as "Authorization: Device <key>". It is shown ONCE: only its hash is stored. Issuing again rotates: the old key stops working at once.
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.IssueKeyResponse'
+        "400":
+          description: the device is retired
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission eld:update
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: device not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Issue a device API key
       tags:
       - eld-devices
   /api/v1/eld-devices/{id}/truck:
@@ -5883,6 +6045,12 @@ paths:
 securityDefinitions:
   BearerAuth:
     description: 'Access token from /api/v1/auth/login. Enter: Bearer <access_token>'
+    in: header
+    name: Authorization
+    type: apiKey
+  DeviceKey:
+    description: 'ELD device key from POST /api/v1/eld-devices/{id}/credentials. Enter:
+      Device <key>'
     in: header
     name: Authorization
     type: apiKey

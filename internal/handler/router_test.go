@@ -196,6 +196,12 @@ var authenticatedOnlyRoutes = map[string]bool{
 	"GET /api/v1/billing/config":      true,
 }
 
+// deviceRoutes take a device key, not a user token: a user's token is
+// refused there with 401 (see TestRouter_DeviceRoutesRefuseUserTokens).
+var deviceRoutes = map[string]bool{
+	"GET /api/v1/device/me": true,
+}
+
 // A logged-in user with NO permissions must be denied (403) everywhere except
 // public and login-only routes. A protected route that forgot its
 // perm.Require(...) fails here.
@@ -205,7 +211,7 @@ func TestRouter_EveryProtectedRouteRequiresAPermission(t *testing.T) {
 	checked := 0
 	for _, route := range r.Routes() {
 		key := route.Method + " " + route.Path
-		if publicRoutes[key] || authenticatedOnlyRoutes[key] {
+		if publicRoutes[key] || authenticatedOnlyRoutes[key] || deviceRoutes[key] {
 			continue
 		}
 		path := strings.ReplaceAll(route.Path, ":id", uuid.NewString())
@@ -216,6 +222,28 @@ func TestRouter_EveryProtectedRouteRequiresAPermission(t *testing.T) {
 		checked++
 	}
 	assert.Greater(t, checked, 4, "sanity check: protected routes were found")
+}
+
+// Every /device route must refuse a user's token: the two kinds of caller
+// never cross. A /device route registered outside DeviceAuth fails here.
+func TestRouter_DeviceRoutesRefuseUserTokens(t *testing.T) {
+	r := newTestRouterWith(&bytes.Buffer{}, handler.RouterOptions{}, model.AllPermissions())
+
+	checked := 0
+	for _, route := range r.Routes() {
+		if !strings.HasPrefix(route.Path, "/api/v1/device/") {
+			continue
+		}
+		key := route.Method + " " + route.Path
+		assert.True(t, deviceRoutes[key], "%s: add it to deviceRoutes", key)
+
+		rec := send(r, route.Method, route.Path, authHeader) // a valid USER token, all permissions
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, "%s must want a device key", key)
+		assert.Contains(t, rec.Header().Get("WWW-Authenticate"), "Device")
+		checked++
+	}
+	assert.Equal(t, len(deviceRoutes), checked)
 }
 
 func TestRouter_CompanyRoutesRegistered(t *testing.T) {

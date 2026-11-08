@@ -45,6 +45,20 @@ func (f *fakeELDService) Update(_ context.Context, p auth.Principal, _ uuid.UUID
 	f.gotPrincipal, f.gotUpdate = p, in
 	return f.device, f.err
 }
+func (f *fakeELDService) IssueKey(_ context.Context, p auth.Principal, _ uuid.UUID) (string, *model.ELDDevice, error) {
+	f.gotPrincipal = p
+	if f.err != nil {
+		return "", nil, f.err
+	}
+	d := *f.device
+	now := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC)
+	d.KeyCreatedAt = &now
+	return "eldk_secret", &d, nil
+}
+func (f *fakeELDService) RevokeKey(_ context.Context, p auth.Principal, _ uuid.UUID) (*model.ELDDevice, error) {
+	f.gotPrincipal = p
+	return f.device, f.err
+}
 func (f *fakeELDService) Delete(_ context.Context, p auth.Principal, _ uuid.UUID) error {
 	f.gotPrincipal = p
 	return f.err
@@ -69,6 +83,8 @@ func eldRouter(svc ELDDeviceService) *gin.Engine {
 	g.GET("/:id", h.Get)
 	g.PATCH("/:id", h.Update)
 	g.DELETE("/:id", h.Delete)
+	g.POST("/:id/credentials", h.IssueKey)
+	g.DELETE("/:id/credentials", h.RevokeKey)
 	return r
 }
 
@@ -164,4 +180,28 @@ func TestELDDeviceHandler_Status(t *testing.T) {
 
 	rec = do(eldRouter(svc), http.MethodGet, "/api/v1/eld-devices?status=lost", "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestELDDeviceHandler_IssueKey(t *testing.T) {
+	svc := &fakeELDService{device: sampleELD()}
+
+	rec := do(eldRouter(svc), http.MethodPost, eldPath+testUserID.String()+"/credentials", "")
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"), "a secret must not be cached")
+	body := rec.Body.String()
+	assert.Contains(t, body, `"device_key":"eldk_secret"`)
+	assert.Contains(t, body, `"has_key":true`)
+	assert.Contains(t, body, `"key_created_at":"2026-11-08T09:00:00Z"`)
+	assert.NotContains(t, body, "key_hash", "the hash never leaves the server either")
+}
+
+func TestELDDeviceHandler_RevokeKey(t *testing.T) {
+	svc := &fakeELDService{device: sampleELD()}
+
+	rec := do(eldRouter(svc), http.MethodDelete, eldPath+testUserID.String()+"/credentials", "")
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"has_key":false`)
+	assert.Contains(t, rec.Body.String(), `"key_created_at":null`)
 }

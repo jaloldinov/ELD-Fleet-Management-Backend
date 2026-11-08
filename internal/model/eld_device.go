@@ -29,9 +29,13 @@ type ELDDevice struct {
 	TruckID         *uuid.UUID // read from the open ELD stint; nil = not installed
 	Status          ELDStatus
 	IsActive        bool // read-only, computed by the database: Status == active
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	DeletedAt       *time.Time
+	// The device's API key: when it was issued (nil = the device has no key
+	// and cannot call the API) and last used. The key itself is never kept.
+	KeyCreatedAt  *time.Time
+	KeyLastUsedAt *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time
 }
 
 // ELDDeviceFilter narrows a device list. The zero value means "no filter".

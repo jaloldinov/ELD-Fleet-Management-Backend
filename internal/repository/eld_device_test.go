@@ -6,13 +6,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 )
 
 type eldFixture struct {
+	pool     *pgxpool.Pool
 	devices  *ELDDeviceRepository
 	installs *ELDAssignmentRepository
 	trucks   *TruckRepository
@@ -28,6 +31,7 @@ func newELDFixture(t *testing.T) *eldFixture {
 	db := newTestDB(t)
 	companies := NewCompanyRepository(db)
 	f := &eldFixture{
+		pool:     db,
 		devices:  NewELDDeviceRepository(db),
 		installs: NewELDAssignmentRepository(db),
 		trucks:   NewTruckRepository(db),
@@ -246,4 +250,68 @@ func TestELDAssignmentRepository_ListHistory(t *testing.T) {
 	_, total, err = f.installs.ListHistory(ctx, model.ELDAssignmentFilter{CompanyID: &f.bravo.ID}, 20, 0)
 	require.NoError(t, err)
 	assert.Zero(t, total, "other company")
+}
+
+func TestELDDeviceRepository_Keys(t *testing.T) {
+	f := newELDFixture(t)
+	ctx := context.Background()
+	d := f.device(t, f.alpha.ID, "PT30-0001")
+	hash := auth.HashDeviceKey("eldk_first")
+
+	t.Run("set and find by hash", func(t *testing.T) {
+		got, err := f.devices.SetKey(ctx, d.ID, hash)
+		require.NoError(t, err)
+		require.NotNil(t, got.KeyCreatedAt)
+		assert.Nil(t, got.KeyLastUsedAt)
+
+		found, err := f.devices.GetByKeyHash(ctx, hash)
+		require.NoError(t, err)
+		assert.Equal(t, d.ID, found.ID)
+
+		_, err = f.devices.GetByKeyHash(ctx, auth.HashDeviceKey("eldk_other"))
+		assert.ErrorIs(t, err, model.ErrNotFound)
+	})
+
+	t.Run("last used: written at most once a minute", func(t *testing.T) {
+		require.NoError(t, f.devices.TouchKey(ctx, d.ID))
+		first, err := f.devices.GetByID(ctx, d.ID)
+		require.NoError(t, err)
+		require.NotNil(t, first.KeyLastUsedAt)
+
+		require.NoError(t, f.devices.TouchKey(ctx, d.ID))
+		second, err := f.devices.GetByID(ctx, d.ID)
+		require.NoError(t, err)
+		assert.Equal(t, *first.KeyLastUsedAt, *second.KeyLastUsedAt, "the second touch, seconds later, wrote nothing")
+	})
+
+	t.Run("rotate: the old hash no longer finds the device", func(t *testing.T) {
+		_, err := f.devices.SetKey(ctx, d.ID, auth.HashDeviceKey("eldk_second"))
+		require.NoError(t, err)
+		_, err = f.devices.GetByKeyHash(ctx, hash)
+		assert.ErrorIs(t, err, model.ErrNotFound)
+	})
+
+	t.Run("revoke", func(t *testing.T) {
+		got, err := f.devices.SetKey(ctx, d.ID, nil)
+		require.NoError(t, err)
+		assert.Nil(t, got.KeyCreatedAt)
+		assert.Nil(t, got.KeyLastUsedAt)
+	})
+
+	t.Run("the database refuses a hash that is not 32 bytes", func(t *testing.T) {
+		_, err := f.devices.SetKey(ctx, d.ID, []byte("plain-key-by-mistake"))
+		assert.ErrorContains(t, err, "eld_devices_key_hash_length")
+	})
+
+	t.Run("deleting the device removes its key", func(t *testing.T) {
+		_, err := f.devices.SetKey(ctx, d.ID, hash)
+		require.NoError(t, err)
+		require.NoError(t, f.devices.SoftDelete(ctx, d.ID))
+
+		_, err = f.devices.GetByKeyHash(ctx, hash)
+		assert.ErrorIs(t, err, model.ErrNotFound)
+		var stillThere bool
+		require.NoError(t, f.pool.QueryRow(ctx, `SELECT key_hash IS NOT NULL FROM eld_devices WHERE id = $1`, d.ID).Scan(&stillThere))
+		assert.False(t, stillThere, "gone from the row, not just filtered out")
+	})
 }

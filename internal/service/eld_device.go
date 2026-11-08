@@ -20,6 +20,7 @@ type ELDDeviceRepository interface {
 	List(ctx context.Context, f model.ELDDeviceFilter, limit, offset int) ([]model.ELDDevice, int, error)
 	Update(ctx context.Context, d model.ELDDevice) (*model.ELDDevice, error)
 	LockByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error)
+	SetKey(ctx context.Context, id uuid.UUID, hash []byte) (*model.ELDDevice, error)
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 }
 
@@ -160,6 +161,68 @@ func (s *ELDDeviceService) Update(ctx context.Context, p auth.Principal, id uuid
 	}
 	return s.write(ctx, p, "eld_device.update", before, func(ctx context.Context) (*model.ELDDevice, error) {
 		return s.repo.Update(ctx, *d)
+	})
+}
+
+// IssueKey gives the device a new API key and returns it. This is the only
+// time the key is ever visible: only its hash is stored, so a lost key
+// cannot be shown again, only replaced. Issuing again rotates: the old key
+// stops working at once (e.g. the device was stolen, or the key leaked).
+func (s *ELDDeviceService) IssueKey(ctx context.Context, p auth.Principal, id uuid.UUID) (string, *model.ELDDevice, error) {
+	d, err := s.getInScope(ctx, p, id)
+	if err != nil {
+		return "", nil, err
+	}
+	if d.Status == model.ELDRetired {
+		return "", nil, &validation.ValidationError{Fields: map[string]string{"status": "a retired device gets no key"}}
+	}
+	plain, hash, err := auth.NewDeviceKey()
+	if err != nil {
+		return "", nil, err
+	}
+	action := "eld_device.issue_key"
+	if d.KeyCreatedAt != nil {
+		action = "eld_device.rotate_key"
+	}
+	var updated *model.ELDDevice
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if updated, err = s.repo.SetKey(ctx, id, hash); err != nil {
+			return err
+		}
+		// Never the key itself (nor its hash) in the audit log.
+		return s.recordKey(ctx, p, action, *updated)
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return plain, updated, nil
+}
+
+// RevokeKey removes the device's key: it can no longer call the API until
+// a new key is issued. A device without a key is not an error.
+func (s *ELDDeviceService) RevokeKey(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error) {
+	d, err := s.getInScope(ctx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	if d.KeyCreatedAt == nil {
+		return d, nil // nothing to revoke, nothing to record
+	}
+	var updated *model.ELDDevice
+	err = s.audit.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if updated, err = s.repo.SetKey(ctx, id, nil); err != nil {
+			return err
+		}
+		return s.recordKey(ctx, p, "eld_device.revoke_key", *updated)
+	})
+	return updated, err
+}
+
+func (s *ELDDeviceService) recordKey(ctx context.Context, p auth.Principal, action string, d model.ELDDevice) error {
+	return s.audit.Record(ctx, p, model.AuditEntry{
+		Action: action, Entity: model.AuditELDDevice, EntityID: d.ID.String(), CompanyID: &d.CompanyID,
 	})
 }
 

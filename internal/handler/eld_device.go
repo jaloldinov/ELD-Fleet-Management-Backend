@@ -22,6 +22,8 @@ type ELDDeviceService interface {
 	List(ctx context.Context, p auth.Principal, params service.ELDDeviceListParams) (*service.ELDDevicePage, error)
 	Update(ctx context.Context, p auth.Principal, id uuid.UUID, in service.UpdateELDDeviceInput) (*model.ELDDevice, error)
 	Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error
+	IssueKey(ctx context.Context, p auth.Principal, id uuid.UUID) (string, *model.ELDDevice, error)
+	RevokeKey(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error)
 }
 
 // ---------- DTOs ----------
@@ -57,8 +59,13 @@ type ELDDeviceResponse struct {
 	TruckID         *uuid.UUID `json:"truck_id" swaggertype:"string" format:"uuid"` // null = not installed
 	Status          string     `json:"status" enums:"active,faulty,retired" example:"active"`
 	IsActive        bool       `json:"is_active" example:"true"` // status is active
-	CreatedAt       time.Time  `json:"created_at" example:"2026-10-02T11:26:26Z"`
-	UpdatedAt       time.Time  `json:"updated_at" example:"2026-10-02T11:26:26Z"`
+	// The device's API key (never the key itself): has_key = the device can
+	// call the API; when it was issued and last used (to the minute).
+	HasKey        bool       `json:"has_key" example:"true"`
+	KeyCreatedAt  *time.Time `json:"key_created_at" example:"2026-11-08T09:00:00Z"`
+	KeyLastUsedAt *time.Time `json:"key_last_used_at" example:"2026-11-08T09:42:00Z"`
+	CreatedAt     time.Time  `json:"created_at" example:"2026-10-02T11:26:26Z"`
+	UpdatedAt     time.Time  `json:"updated_at" example:"2026-10-02T11:26:26Z"`
 }
 
 func newELDDeviceResponse(d *model.ELDDevice) ELDDeviceResponse {
@@ -66,8 +73,25 @@ func newELDDeviceResponse(d *model.ELDDevice) ELDDeviceResponse {
 		ID: d.ID, CompanyID: d.CompanyID, SerialNumber: d.SerialNumber,
 		Model: d.Model, FirmwareVersion: d.FirmwareVersion, TruckID: d.TruckID,
 		Status: string(d.Status), IsActive: d.IsActive,
+		HasKey: d.KeyCreatedAt != nil, KeyCreatedAt: utcOrNil(d.KeyCreatedAt), KeyLastUsedAt: utcOrNil(d.KeyLastUsedAt),
 		CreatedAt: d.CreatedAt.UTC(), UpdatedAt: d.UpdatedAt.UTC(),
 	}
+}
+
+// IssueKeyResponse carries the new key: shown this once, never again.
+type IssueKeyResponse struct {
+	// Put it into the device. Only its hash is stored: if it is lost, issue
+	// a new one (which also stops this one).
+	DeviceKey string            `json:"device_key" example:"eldk_q8Gm0yJ3v1Xp..."`
+	ELDDevice ELDDeviceResponse `json:"eld_device"`
+}
+
+func utcOrNil(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
 }
 
 type ListELDDevicesResponse struct {
@@ -261,6 +285,74 @@ func (h *ELDDeviceHandler) Update(c *gin.Context) {
 		Model: req.Model, FirmwareVersion: req.FirmwareVersion, IsActive: req.IsActive,
 		Status: (*model.ELDStatus)(req.Status),
 	})
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newELDDeviceResponse(d))
+}
+
+// IssueKey handles POST /api/v1/eld-devices/:id/credentials.
+//
+//	@Summary		Issue a device API key
+//	@Description	Requires permission: eld:update
+//	@Description	Returns a new key for the device to send as "Authorization: Device <key>". It is shown ONCE: only its hash is stored. Issuing again rotates: the old key stops working at once.
+//	@Tags			eld-devices
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Device ID"	format(uuid)
+//	@Success		201	{object}	IssueKeyResponse
+//	@Failure		400	{object}	apierror.Response	"the device is retired"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission eld:update"
+//	@Failure		404	{object}	apierror.Response	"device not found"
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/eld-devices/{id}/credentials [post]
+func (h *ELDDeviceHandler) IssueKey(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	key, d, err := h.svc.IssueKey(c.Request.Context(), p, id)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	// Secrets must not be cached by browsers or proxies.
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusCreated, IssueKeyResponse{DeviceKey: key, ELDDevice: newELDDeviceResponse(d)})
+}
+
+// RevokeKey handles DELETE /api/v1/eld-devices/:id/credentials.
+//
+//	@Summary		Revoke a device API key
+//	@Description	Requires permission: eld:update
+//	@Description	The device can no longer call the API until a new key is issued. Succeeds also when the device has no key.
+//	@Tags			eld-devices
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Device ID"	format(uuid)
+//	@Success		200	{object}	ELDDeviceResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		403	{object}	apierror.Response	"missing permission eld:update"
+//	@Failure		404	{object}	apierror.Response	"device not found"
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/eld-devices/{id}/credentials [delete]
+func (h *ELDDeviceHandler) RevokeKey(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	d, err := h.svc.RevokeKey(c.Request.Context(), p, id)
 	if err != nil {
 		handleError(c, err)
 		return
