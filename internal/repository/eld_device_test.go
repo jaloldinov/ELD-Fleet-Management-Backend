@@ -262,7 +262,7 @@ func TestELDDeviceRepository_Keys(t *testing.T) {
 		got, err := f.devices.SetKey(ctx, d.ID, hash)
 		require.NoError(t, err)
 		require.NotNil(t, got.KeyCreatedAt)
-		assert.Nil(t, got.KeyLastUsedAt)
+		assert.Nil(t, got.LastSeenAt, "never seen yet")
 
 		found, err := f.devices.GetByKeyHash(ctx, hash)
 		require.NoError(t, err)
@@ -272,16 +272,16 @@ func TestELDDeviceRepository_Keys(t *testing.T) {
 		assert.ErrorIs(t, err, model.ErrNotFound)
 	})
 
-	t.Run("last used: written at most once a minute", func(t *testing.T) {
-		require.NoError(t, f.devices.TouchKey(ctx, d.ID))
+	t.Run("last seen: written at most once a minute", func(t *testing.T) {
+		require.NoError(t, f.devices.MarkSeen(ctx, d.ID))
 		first, err := f.devices.GetByID(ctx, d.ID)
 		require.NoError(t, err)
-		require.NotNil(t, first.KeyLastUsedAt)
+		require.NotNil(t, first.LastSeenAt)
 
-		require.NoError(t, f.devices.TouchKey(ctx, d.ID))
+		require.NoError(t, f.devices.MarkSeen(ctx, d.ID))
 		second, err := f.devices.GetByID(ctx, d.ID)
 		require.NoError(t, err)
-		assert.Equal(t, *first.KeyLastUsedAt, *second.KeyLastUsedAt, "the second touch, seconds later, wrote nothing")
+		assert.Equal(t, *first.LastSeenAt, *second.LastSeenAt, "the second touch, seconds later, wrote nothing")
 	})
 
 	t.Run("rotate: the old hash no longer finds the device", func(t *testing.T) {
@@ -295,7 +295,7 @@ func TestELDDeviceRepository_Keys(t *testing.T) {
 		got, err := f.devices.SetKey(ctx, d.ID, nil)
 		require.NoError(t, err)
 		assert.Nil(t, got.KeyCreatedAt)
-		assert.Nil(t, got.KeyLastUsedAt)
+		assert.NotNil(t, got.LastSeenAt, "being seen is about the device, not its key")
 	})
 
 	t.Run("the database refuses a hash that is not 32 bytes", func(t *testing.T) {

@@ -148,3 +148,18 @@ func (h *DeviceHandler) Telemetry(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, out)
 }
+
+// Heartbeat handles POST /api/v1/device/heartbeat.
+//
+//	@Summary		I am alive (device)
+//	@Description	For ELD devices with nothing new to report (parked, engine off): keeps the device "online". Any authenticated device request counts as contact; this one does nothing else. Authorization: Device <key>.
+//	@Tags			device
+//	@Security		DeviceKey
+//	@Success		204	"no content"
+//	@Failure		401	{object}	apierror.Response	"missing, unknown or revoked device key"
+//	@Failure		403	{object}	apierror.Response	"the device is retired"
+//	@Router			/api/v1/device/heartbeat [post]
+func (h *DeviceHandler) Heartbeat(c *gin.Context) {
+	// DeviceAuth already recorded the contact (last_seen_at).
+	c.Status(http.StatusNoContent)
+}

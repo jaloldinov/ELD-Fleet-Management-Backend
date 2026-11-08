@@ -48,6 +48,7 @@ func deviceTestRouter(svc DeviceService, withDevice bool) *gin.Engine {
 	}
 	r.GET("/api/v1/device/me", h.Me)
 	r.POST("/api/v1/device/telemetry", h.Telemetry)
+	r.POST("/api/v1/device/heartbeat", h.Heartbeat)
 	return r
 }
 
@@ -120,4 +121,9 @@ func TestDeviceHandler_Telemetry_MalformedBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "broken JSON is a bug in the device, not a reading")
 	assert.Nil(t, svc.gotIngest)
+}
+
+func TestDeviceHandler_Heartbeat(t *testing.T) {
+	rec := do(deviceTestRouter(&fakeDeviceService{}, true), http.MethodPost, "/api/v1/device/heartbeat", "")
+	assert.Equal(t, http.StatusNoContent, rec.Code, "the contact itself is the point")
 }

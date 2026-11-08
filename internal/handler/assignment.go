@@ -85,12 +85,40 @@ type CrewMemberResponse struct {
 	AssignmentID uuid.UUID `json:"assignment_id" swaggertype:"string" format:"uuid"`
 }
 
-// InstalledDeviceResponse is the ELD device in a truck now.
+// InstalledDeviceResponse is the ELD device in a truck now, and what it
+// last said: where the truck is.
 type InstalledDeviceResponse struct {
 	ID           uuid.UUID `json:"id" swaggertype:"string" format:"uuid"`
 	SerialNumber string    `json:"serial_number" example:"PT30-0001"`
 	Since        time.Time `json:"since" example:"2026-11-07T07:30:00Z"`
 	AssignmentID uuid.UUID `json:"assignment_id" swaggertype:"string" format:"uuid"`
+	// online: heard from within 5 minutes; offline: longer ago; never: has
+	// never called the API.
+	Connection string            `json:"connection" enums:"online,offline,never" example:"online"`
+	LastSeenAt *time.Time        `json:"last_seen_at" example:"2026-11-08T14:31:00Z"`
+	Position   *PositionResponse `json:"position"` // null = no reading yet
+}
+
+// PositionResponse is a device's last known reading.
+type PositionResponse struct {
+	RecordedAt  time.Time `json:"recorded_at" example:"2026-11-08T14:30:05Z"` // the device's clock
+	ReceivedAt  time.Time `json:"received_at" example:"2026-11-08T14:30:06Z"` // ours
+	Latitude    *float64  `json:"latitude" example:"32.7767"`                 // null = no GPS fix
+	Longitude   *float64  `json:"longitude" example:"-96.797"`
+	SpeedMPH    float64   `json:"speed_mph" example:"61.5"`
+	Moving      bool      `json:"moving" example:"true"` // speed above 5 mph
+	EngineOn    bool      `json:"engine_on" example:"true"`
+	OdometerMi  float64   `json:"odometer_mi" example:"120345.2"`
+	EngineHours float64   `json:"engine_hours" example:"8123.4"`
+}
+
+func newPositionResponse(st *model.DeviceState) *PositionResponse {
+	if st == nil {
+		return nil
+	}
+	return &PositionResponse{RecordedAt: st.RecordedAt.UTC(), ReceivedAt: st.ReceivedAt.UTC(),
+		Latitude: st.Latitude, Longitude: st.Longitude, SpeedMPH: st.SpeedMPH, Moving: st.Moving,
+		EngineOn: st.EngineOn, OdometerMi: st.OdometerMi, EngineHours: st.EngineHours}
 }
 
 type BoardTruckResponse struct {
@@ -129,7 +157,9 @@ func newTruckBoardResponse(b *model.TruckBoard) TruckBoardResponse {
 	}
 	if d := b.Device; d != nil {
 		r.ELDDevice = &InstalledDeviceResponse{ID: d.Assignment.ELDDeviceID, SerialNumber: d.SerialNumber,
-			Since: d.Assignment.StartedAt.UTC(), AssignmentID: d.Assignment.ID}
+			Since: d.Assignment.StartedAt.UTC(), AssignmentID: d.Assignment.ID,
+			Connection: string(model.ConnectionOf(d.LastSeenAt, time.Now())), LastSeenAt: utcOrNil(d.LastSeenAt),
+			Position: newPositionResponse(d.State)}
 	}
 	return r
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -22,6 +23,11 @@ type ELDDeviceRepository interface {
 	LockByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error)
 	SetKey(ctx context.Context, id uuid.UUID, hash []byte) (*model.ELDDevice, error)
 	SoftDelete(ctx context.Context, id uuid.UUID) error
+}
+
+// DeviceStates reads a device's last known reading (repository.TelemetryRepository).
+type DeviceStates interface {
+	GetState(ctx context.Context, deviceID uuid.UUID) (*model.DeviceState, error)
 }
 
 // DeviceReleaser takes a device that is being deleted out of its truck
@@ -73,12 +79,29 @@ type ELDDevicePage struct {
 type ELDDeviceService struct {
 	repo      ELDDeviceRepository
 	installs  DeviceReleaser
+	states    DeviceStates
 	companies CompanyLookup
 	audit     *Auditor
 }
 
-func NewELDDeviceService(repo ELDDeviceRepository, installs DeviceReleaser, companies CompanyLookup, audit *Auditor) *ELDDeviceService {
-	return &ELDDeviceService{repo: repo, installs: installs, companies: companies, audit: audit}
+func NewELDDeviceService(repo ELDDeviceRepository, installs DeviceReleaser, states DeviceStates, companies CompanyLookup, audit *Auditor) *ELDDeviceService {
+	return &ELDDeviceService{repo: repo, installs: installs, states: states, companies: companies, audit: audit}
+}
+
+// State returns the device and its last known reading (nil if it has sent
+// none). Online/offline follows from the device's LastSeenAt.
+func (s *ELDDeviceService) State(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, *model.DeviceState, error) {
+	d, err := s.getInScope(ctx, p, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	st, err := s.states.GetState(ctx, id)
+	if errors.Is(err, model.ErrNotFound) {
+		return d, nil, nil
+	} else if err != nil {
+		return nil, nil, err
+	}
+	return d, st, nil
 }
 
 func (s *ELDDeviceService) Create(ctx context.Context, p auth.Principal, in CreateELDDeviceInput) (*model.ELDDevice, error) {

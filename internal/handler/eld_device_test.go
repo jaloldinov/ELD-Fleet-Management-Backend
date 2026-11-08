@@ -23,6 +23,7 @@ type fakeELDService struct {
 	gotUpdate    service.UpdateELDDeviceInput
 	gotList      service.ELDDeviceListParams
 	device       *model.ELDDevice
+	devState     *model.DeviceState
 	err          error
 }
 
@@ -59,6 +60,10 @@ func (f *fakeELDService) RevokeKey(_ context.Context, p auth.Principal, _ uuid.U
 	f.gotPrincipal = p
 	return f.device, f.err
 }
+func (f *fakeELDService) State(_ context.Context, p auth.Principal, _ uuid.UUID) (*model.ELDDevice, *model.DeviceState, error) {
+	f.gotPrincipal = p
+	return f.device, f.devState, f.err
+}
 func (f *fakeELDService) Delete(_ context.Context, p auth.Principal, _ uuid.UUID) error {
 	f.gotPrincipal = p
 	return f.err
@@ -84,6 +89,7 @@ func eldRouter(svc ELDDeviceService) *gin.Engine {
 	g.PATCH("/:id", h.Update)
 	g.DELETE("/:id", h.Delete)
 	g.POST("/:id/credentials", h.IssueKey)
+	g.GET("/:id/state", h.State)
 	g.DELETE("/:id/credentials", h.RevokeKey)
 	return r
 }
@@ -204,4 +210,44 @@ func TestELDDeviceHandler_RevokeKey(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"has_key":false`)
 	assert.Contains(t, rec.Body.String(), `"key_created_at":null`)
+}
+
+func TestELDDeviceHandler_State(t *testing.T) {
+	t.Run("online, with a position", func(t *testing.T) {
+		d := sampleELD()
+		seen := time.Now().Add(-time.Minute)
+		d.LastSeenAt = &seen
+		lat, lon := 32.7767, -96.797
+		st := &model.DeviceState{Moving: true, TelemetryPoint: model.TelemetryPoint{
+			Seq: 9, RecordedAt: time.Date(2026, 11, 8, 14, 30, 5, 0, time.UTC), Latitude: &lat, Longitude: &lon,
+			SpeedMPH: 61.5, OdometerMi: 120345.2, EngineHours: 8123.4, EngineOn: true}}
+		svc := &fakeELDService{device: d, devState: st}
+
+		rec := do(eldRouter(svc), http.MethodGet, eldPath+testUserID.String()+"/state", "")
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, `"connection":"online"`)
+		assert.Contains(t, body, `"latitude":32.7767`)
+		assert.Contains(t, body, `"moving":true`)
+		assert.Contains(t, body, `"recorded_at":"2026-11-08T14:30:05Z"`)
+	})
+
+	t.Run("never heard from", func(t *testing.T) {
+		rec := do(eldRouter(&fakeELDService{device: sampleELD()}), http.MethodGet, eldPath+testUserID.String()+"/state", "")
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"connection":"never"`)
+		assert.Contains(t, rec.Body.String(), `"position":null`)
+	})
+
+	t.Run("silent for an hour", func(t *testing.T) {
+		d := sampleELD()
+		seen := time.Now().Add(-time.Hour)
+		d.LastSeenAt = &seen
+
+		rec := do(eldRouter(&fakeELDService{device: d}), http.MethodGet, eldPath+testUserID.String()+"/state", "")
+
+		assert.Contains(t, rec.Body.String(), `"connection":"offline"`)
+	})
 }

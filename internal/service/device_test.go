@@ -19,6 +19,17 @@ import (
 type memTelemetry struct {
 	stored  map[int64]model.TelemetryPoint
 	batches int
+	state   *model.TelemetryPoint // newer recorded_at wins, like the SQL
+	inTx    bool
+}
+
+func (m *memTelemetry) UpsertState(ctx context.Context, _, _ uuid.UUID, p model.TelemetryPoint) (bool, error) {
+	m.inTx = inTx(ctx)
+	if m.state != nil && !m.state.RecordedAt.Before(p.RecordedAt) {
+		return false, nil
+	}
+	m.state = &p
+	return true, nil
 }
 
 func (m *memTelemetry) InsertBatch(_ context.Context, _, _ uuid.UUID, points []model.TelemetryPoint) ([]int64, error) {
@@ -44,7 +55,7 @@ type deviceSvcFixture struct {
 func newDeviceSvcFixture() *deviceSvcFixture {
 	f := &deviceSvcFixture{devices: newMemELDRepo(), stints: newMemELDAssignments(), trucks: newMemTruckRepo(),
 		telemetry: &memTelemetry{stored: map[int64]model.TelemetryPoint{}}}
-	f.svc = NewDeviceService(f.devices, f.stints, f.trucks, f.telemetry)
+	f.svc = NewDeviceService(&fakeTx{}, f.devices, f.stints, f.trucks, f.telemetry)
 	return f
 }
 
@@ -259,4 +270,64 @@ func TestDeviceService_Ingest(t *testing.T) {
 		_, err = f.svc.Ingest(ctx, dev, big)
 		requireValidationField(t, err, "events")
 	})
+}
+
+// ---------- last known state ----------
+
+func pointAt(seq int64, minute int) TelemetryInput {
+	p := goodPoint(seq)
+	at := time.Date(2026, 11, 8, 14, minute, 0, 0, time.UTC)
+	p.RecordedAt = &at
+	return p
+}
+
+func TestDeviceService_Ingest_State(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the newest accepted point becomes the state, in the batch's transaction", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+
+		_, err := f.svc.Ingest(ctx, dev, []TelemetryInput{pointAt(2, 31), pointAt(3, 32), pointAt(1, 30)})
+
+		require.NoError(t, err)
+		require.NotNil(t, f.telemetry.state)
+		assert.Equal(t, int64(3), f.telemetry.state.Seq, "newest by the device's clock, whatever the order in the batch")
+		assert.True(t, f.telemetry.inTx, "points and state: together or not at all")
+	})
+
+	t.Run("a late, older batch does not move the truck back", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		_, err := f.svc.Ingest(ctx, dev, []TelemetryInput{pointAt(10, 50)})
+		require.NoError(t, err)
+
+		res, err := f.svc.Ingest(ctx, dev, []TelemetryInput{pointAt(5, 20), pointAt(6, 21)}) // from the tunnel
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.Accepted, "the history gets them")
+		assert.Equal(t, int64(10), f.telemetry.state.Seq, "the state keeps the newer reading")
+	})
+
+	t.Run("only duplicates: the state is not touched", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		_, err := f.svc.Ingest(ctx, dev, []TelemetryInput{pointAt(1, 30)})
+		require.NoError(t, err)
+		f.telemetry.state = nil
+
+		_, err = f.svc.Ingest(ctx, dev, []TelemetryInput{pointAt(1, 30)})
+
+		require.NoError(t, err)
+		assert.Nil(t, f.telemetry.state)
+	})
+}
+
+func TestNewest(t *testing.T) {
+	at := func(m int) time.Time { return time.Date(2026, 11, 8, 14, m, 0, 0, time.UTC) }
+	points := []model.TelemetryPoint{{Seq: 1, RecordedAt: at(1)}, {Seq: 2, RecordedAt: at(5)}, {Seq: 3, RecordedAt: at(5)}, {Seq: 4, RecordedAt: at(9)}}
+
+	p, ok := newest(points, []int64{1, 2, 3})
+	require.True(t, ok)
+	assert.Equal(t, int64(3), p.Seq, "same time: the higher seq; seq 4 was not accepted")
+
+	_, ok = newest(points, nil)
+	assert.False(t, ok)
 }

@@ -288,6 +288,8 @@ func TestAssignmentHandler_InstallDevice_TruckHasELD(t *testing.T) {
 
 func sampleBoard() *model.TruckBoard {
 	since := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+	seen := time.Now()
+	lat, lon := 32.7767, -96.797
 	return &model.TruckBoard{
 		Truck: model.Truck{ID: uuid.New(), UnitNumber: "101", IsActive: true},
 		Crew: []model.CrewMember{{
@@ -297,6 +299,9 @@ func sampleBoard() *model.TruckBoard {
 		Device: &model.InstalledDevice{
 			Assignment:   model.ELDAssignment{ID: uuid.New(), ELDDeviceID: uuid.New(), StartedAt: since},
 			SerialNumber: "PT30-0001",
+			LastSeenAt:   &seen,
+			State: &model.DeviceState{Moving: true, TelemetryPoint: model.TelemetryPoint{
+				RecordedAt: since, Latitude: &lat, Longitude: &lon, SpeedMPH: 61.5, EngineOn: true}},
 		},
 	}
 }
@@ -315,6 +320,9 @@ func TestAssignmentHandler_TruckBoard(t *testing.T) {
 	assert.Contains(t, body, `"role":"primary"`)
 	assert.Contains(t, body, `"since":"2026-11-07T08:00:00Z"`)
 	assert.Contains(t, body, `"serial_number":"PT30-0001"`)
+	assert.Contains(t, body, `"connection":"online"`, "where the truck is, on the board")
+	assert.Contains(t, body, `"position":{"recorded_at":"2026-11-07T08:00:00Z"`)
+	assert.Contains(t, body, `"speed_mph":61.5`)
 }
 
 func TestAssignmentHandler_TruckBoard_EmptyTruck(t *testing.T) {

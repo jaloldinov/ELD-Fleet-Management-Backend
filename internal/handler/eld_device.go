@@ -24,6 +24,16 @@ type ELDDeviceService interface {
 	Delete(ctx context.Context, p auth.Principal, id uuid.UUID) error
 	IssueKey(ctx context.Context, p auth.Principal, id uuid.UUID) (string, *model.ELDDevice, error)
 	RevokeKey(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, error)
+	State(ctx context.Context, p auth.Principal, id uuid.UUID) (*model.ELDDevice, *model.DeviceState, error)
+}
+
+// DeviceStateResponse: is the device talking, and what did it last say.
+type DeviceStateResponse struct {
+	DeviceID   uuid.UUID         `json:"device_id" swaggertype:"string" format:"uuid"`
+	Connection string            `json:"connection" enums:"online,offline,never" example:"online"`
+	LastSeenAt *time.Time        `json:"last_seen_at" example:"2026-11-08T14:31:00Z"`
+	TruckID    *uuid.UUID        `json:"truck_id" swaggertype:"string" format:"uuid"` // installed in now
+	Position   *PositionResponse `json:"position"`                                    // null = no reading yet
 }
 
 // ---------- DTOs ----------
@@ -60,12 +70,13 @@ type ELDDeviceResponse struct {
 	Status          string     `json:"status" enums:"active,faulty,retired" example:"active"`
 	IsActive        bool       `json:"is_active" example:"true"` // status is active
 	// The device's API key (never the key itself): has_key = the device can
-	// call the API; when it was issued and last used (to the minute).
-	HasKey        bool       `json:"has_key" example:"true"`
-	KeyCreatedAt  *time.Time `json:"key_created_at" example:"2026-11-08T09:00:00Z"`
-	KeyLastUsedAt *time.Time `json:"key_last_used_at" example:"2026-11-08T09:42:00Z"`
-	CreatedAt     time.Time  `json:"created_at" example:"2026-10-02T11:26:26Z"`
-	UpdatedAt     time.Time  `json:"updated_at" example:"2026-10-02T11:26:26Z"`
+	// call the API; when the key was issued.
+	HasKey       bool       `json:"has_key" example:"true"`
+	KeyCreatedAt *time.Time `json:"key_created_at" example:"2026-11-08T09:00:00Z"`
+	// The device's last request (to the minute); null = never.
+	LastSeenAt *time.Time `json:"last_seen_at" example:"2026-11-08T09:42:00Z"`
+	CreatedAt  time.Time  `json:"created_at" example:"2026-10-02T11:26:26Z"`
+	UpdatedAt  time.Time  `json:"updated_at" example:"2026-10-02T11:26:26Z"`
 }
 
 func newELDDeviceResponse(d *model.ELDDevice) ELDDeviceResponse {
@@ -73,7 +84,7 @@ func newELDDeviceResponse(d *model.ELDDevice) ELDDeviceResponse {
 		ID: d.ID, CompanyID: d.CompanyID, SerialNumber: d.SerialNumber,
 		Model: d.Model, FirmwareVersion: d.FirmwareVersion, TruckID: d.TruckID,
 		Status: string(d.Status), IsActive: d.IsActive,
-		HasKey: d.KeyCreatedAt != nil, KeyCreatedAt: utcOrNil(d.KeyCreatedAt), KeyLastUsedAt: utcOrNil(d.KeyLastUsedAt),
+		HasKey: d.KeyCreatedAt != nil, KeyCreatedAt: utcOrNil(d.KeyCreatedAt), LastSeenAt: utcOrNil(d.LastSeenAt),
 		CreatedAt: d.CreatedAt.UTC(), UpdatedAt: d.UpdatedAt.UTC(),
 	}
 }
@@ -358,6 +369,42 @@ func (h *ELDDeviceHandler) RevokeKey(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, newELDDeviceResponse(d))
+}
+
+// State handles GET /api/v1/eld-devices/:id/state.
+//
+//	@Summary		A device's last known state
+//	@Description	Requires permission: eld:read
+//	@Description	Whether the device is online (heard from within 5 minutes) and its newest reading: position, speed, moving, engine, odometer. Newest by the device's clock: readings sent late after being offline never replace a newer one.
+//	@Tags			eld-devices
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Device ID"	format(uuid)
+//	@Success		200	{object}	DeviceStateResponse
+//	@Failure		400	{object}	apierror.Response	"invalid id"
+//	@Failure		401	{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402	{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403	{object}	apierror.Response	"missing permission eld:read"
+//	@Failure		404	{object}	apierror.Response	"device not found"
+//	@Failure		500	{object}	apierror.Response
+//	@Router			/api/v1/eld-devices/{id}/state [get]
+func (h *ELDDeviceHandler) State(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	d, st, err := h.svc.State(c.Request.Context(), p, id)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, DeviceStateResponse{DeviceID: d.ID,
+		Connection: string(model.ConnectionOf(d.LastSeenAt, time.Now())), LastSeenAt: utcOrNil(d.LastSeenAt),
+		TruckID: d.TruckID, Position: newPositionResponse(st)})
 }
 
 // Delete handles DELETE /api/v1/eld-devices/:id.

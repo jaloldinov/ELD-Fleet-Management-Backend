@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -59,21 +60,44 @@ func (r *ELDAssignmentRepository) GetOpenByTruck(ctx context.Context, truckID uu
 		WHERE truck_id = $1 AND ended_at IS NULL`, truckID)
 }
 
-// GetInstalled returns the device in the truck now, with its serial
-// number, or ErrNotFound if the truck has none.
+// GetInstalled returns the device in the truck now, with its serial number,
+// when it was last seen and its last reading (both may be missing), or
+// ErrNotFound if the truck has none. One query: the board asks this for
+// every truck.
 func (r *ELDAssignmentRepository) GetInstalled(ctx context.Context, truckID uuid.UUID) (*model.InstalledDevice, error) {
 	var d model.InstalledDevice
+	// The state's columns are NULL when the device has sent nothing yet
+	// (LEFT JOIN): read them into pointers, then build the state if there.
+	var (
+		seq                *int64
+		recorded, received *time.Time
+		stTruck            *uuid.UUID
+		lat, lon           *float64
+		speed, odo, hours  *float64
+		engineOn, moving   *bool
+	)
 	a := &d.Assignment
 	err := r.q(ctx).QueryRow(ctx, `
 		SELECT a.id, a.company_id, a.eld_device_id, a.truck_id,
-		       a.started_at, a.ended_at, a.started_by, a.ended_by, e.serial_number
+		       a.started_at, a.ended_at, a.started_by, a.ended_by, e.serial_number, e.last_seen_at,
+		       s.seq, s.recorded_at, s.received_at, s.truck_id, s.latitude, s.longitude,
+		       s.speed_mph, s.odometer_mi, s.engine_hours, s.engine_on, s.moving
 		FROM eld_truck_assignments a
 		JOIN eld_devices e ON e.id = a.eld_device_id
+		LEFT JOIN eld_device_states s ON s.eld_device_id = a.eld_device_id
 		WHERE a.truck_id = $1 AND a.ended_at IS NULL`, truckID,
 	).Scan(&a.ID, &a.CompanyID, &a.ELDDeviceID, &a.TruckID,
-		&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy, &d.SerialNumber)
+		&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy, &d.SerialNumber, &d.LastSeenAt,
+		&seq, &recorded, &received, &stTruck, &lat, &lon, &speed, &odo, &hours, &engineOn, &moving)
 	if err != nil {
 		return nil, mapELDAssignmentError("get installed device", err)
+	}
+	if seq != nil { // the row exists: every NOT NULL column is set
+		d.State = &model.DeviceState{
+			TelemetryPoint: model.TelemetryPoint{Seq: *seq, RecordedAt: *recorded, Latitude: lat, Longitude: lon,
+				SpeedMPH: *speed, OdometerMi: *odo, EngineHours: *hours, EngineOn: *engineOn},
+			ELDDeviceID: a.ELDDeviceID, CompanyID: a.CompanyID, TruckID: stTruck, ReceivedAt: *received, Moving: *moving,
+		}
 	}
 	return &d, nil
 }

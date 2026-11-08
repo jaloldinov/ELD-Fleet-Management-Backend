@@ -156,7 +156,8 @@ func run() error {
 	})
 
 	// The devices themselves (Authorization: Device <key>).
-	deviceSvc := service.NewDeviceService(eldRepo, eldStintRepo, truckRepo, repository.NewTelemetryRepository(pool))
+	telemetryRepo := repository.NewTelemetryRepository(pool)
+	deviceSvc := service.NewDeviceService(txManager, eldRepo, eldStintRepo, truckRepo, telemetryRepo)
 
 	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)
@@ -352,7 +353,7 @@ func run() error {
 		Company:       handler.NewCompanyHandler(companySvc),
 		Driver:        handler.NewDriverHandler(driverSvc),
 		Truck:         handler.NewTruckHandler(truckSvc),
-		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(eldRepo, assignmentSvc, companyRepo, auditor)),
+		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(eldRepo, assignmentSvc, telemetryRepo, companyRepo, auditor)),
 		Device:        handler.NewDeviceHandler(deviceSvc),
 		Assignment:    handler.NewAssignmentHandler(assignmentSvc),
 		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),

@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"math/rand/v2"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,4 +120,105 @@ func TestTelemetryRepository_DatabaseRules(t *testing.T) {
 
 	_, err = repo.InsertBatch(ctx, f.bravo.ID, d.ID, []model.TelemetryPoint{point(1, time.Now(), 10)})
 	assert.ErrorContains(t, err, "eld_events_device_company_fkey", "a device's events belong to its company")
+}
+
+func TestTelemetryRepository_State(t *testing.T) {
+	f := newELDFixture(t)
+	ctx := context.Background()
+	repo := NewTelemetryRepository(f.pool)
+	d := f.device(t, f.alpha.ID, "PT30-0001")
+	_, err := f.install(d, f.alphaT1)
+	require.NoError(t, err)
+	// After the install: Truncate alone would round "now" DOWN to before the
+	// stint began, and the reading would rightly belong to no truck.
+	noon := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+
+	_, err = repo.GetState(ctx, d.ID)
+	assert.ErrorIs(t, err, model.ErrNotFound, "no reading yet")
+
+	updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(5, noon, 61.5))
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	t.Run("an older reading (sent late) does not replace a newer one", func(t *testing.T) {
+		updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(3, noon.Add(-time.Hour), 0))
+		require.NoError(t, err)
+		assert.False(t, updated)
+
+		st, err := repo.GetState(ctx, d.ID)
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), st.Seq)
+		assert.True(t, st.Moving)
+		assert.Equal(t, f.alphaT1.ID, *st.TruckID, "the truck at recorded_at")
+	})
+
+	t.Run("a newer one does", func(t *testing.T) {
+		updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(6, noon.Add(time.Minute), 0))
+		require.NoError(t, err)
+		assert.True(t, updated)
+		st, err := repo.GetState(ctx, d.ID)
+		require.NoError(t, err)
+		assert.Equal(t, int64(6), st.Seq)
+		assert.False(t, st.Moving)
+	})
+
+	t.Run("the board's device carries the state", func(t *testing.T) {
+		installed, err := f.installs.GetInstalled(ctx, f.alphaT1.ID)
+		require.NoError(t, err)
+		require.NotNil(t, installed.State)
+		assert.Equal(t, int64(6), installed.State.Seq)
+		assert.NotNil(t, installed.State.Latitude)
+	})
+}
+
+func TestELDAssignmentRepository_GetInstalled_NoReadingYet(t *testing.T) {
+	f := newELDFixture(t)
+	d := f.device(t, f.alpha.ID, "PT30-0001")
+	_, err := f.install(d, f.alphaT1)
+	require.NoError(t, err)
+
+	installed, err := f.installs.GetInstalled(context.Background(), f.alphaT1.ID)
+
+	require.NoError(t, err)
+	assert.Nil(t, installed.State, "LEFT JOIN: installed, silent so far")
+	assert.Nil(t, installed.LastSeenAt)
+}
+
+// 20 batches of the same device, each with its own time, upsert at once.
+// Whatever order they land in, the state must end at the newest: the
+// "newer wins" check runs inside the statement, on the locked row.
+func TestTelemetryRepository_State_ConcurrentNewestWins(t *testing.T) {
+	f := newELDFixture(t)
+	ctx := context.Background()
+	repo := NewTelemetryRepository(f.pool)
+	d := f.device(t, f.alpha.ID, "PT30-0001")
+	base := time.Now().UTC().Truncate(time.Second)
+
+	const n = 20
+	// Shuffled: without the rule, the state would be whichever upsert ran
+	// LAST, almost never the newest. Started in order, the goroutines tend
+	// to run in order too, and a missing rule would pass by luck.
+	order := rand.Perm(n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, n)
+	for i := range n {
+		k := order[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			// seq k+1 recorded at base + k seconds: seq 20 is the newest.
+			_, errs[i] = repo.UpsertState(ctx, f.alpha.ID, d.ID, point(int64(k+1), base.Add(time.Duration(k)*time.Second), 10))
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	st, err := repo.GetState(ctx, d.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(n), st.Seq)
 }

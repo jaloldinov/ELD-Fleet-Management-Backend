@@ -2163,6 +2163,37 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/device/heartbeat": {
+            "post": {
+                "security": [
+                    {
+                        "DeviceKey": []
+                    }
+                ],
+                "description": "For ELD devices with nothing new to report (parked, engine off): keeps the device \"online\". Any authenticated device request counts as contact; this one does nothing else. Authorization: Device \u003ckey\u003e.",
+                "tags": [
+                    "device"
+                ],
+                "summary": "I am alive (device)",
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "401": {
+                        "description": "missing, unknown or revoked device key",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "the device is retired",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/device/me": {
             "get": {
                 "security": [
@@ -3911,6 +3942,77 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "missing permission eld:update",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "device not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/eld-devices/{id}/state": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: eld:read\nWhether the device is online (heard from within 5 minutes) and its newest reading: position, speed, moving, engine, odometer. Newest by the device's clock: readings sent late after being offline never replace a newer one.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "eld-devices"
+                ],
+                "summary": "A device's last known state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Device ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DeviceStateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission eld:read",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -7038,6 +7140,41 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.DeviceStateResponse": {
+            "type": "object",
+            "properties": {
+                "connection": {
+                    "type": "string",
+                    "enum": [
+                        "online",
+                        "offline",
+                        "never"
+                    ],
+                    "example": "online"
+                },
+                "device_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "last_seen_at": {
+                    "type": "string",
+                    "example": "2026-11-08T14:31:00Z"
+                },
+                "position": {
+                    "description": "null = no reading yet",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.PositionResponse"
+                        }
+                    ]
+                },
+                "truck_id": {
+                    "description": "installed in now",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "handler.DriverAssignmentRecordResponse": {
             "type": "object",
             "properties": {
@@ -7289,7 +7426,7 @@ const docTemplate = `{
                     "example": "1.2.3"
                 },
                 "has_key": {
-                    "description": "The device's API key (never the key itself): has_key = the device can\ncall the API; when it was issued and last used (to the minute).",
+                    "description": "The device's API key (never the key itself): has_key = the device can\ncall the API; when the key was issued.",
                     "type": "boolean",
                     "example": true
                 },
@@ -7306,7 +7443,8 @@ const docTemplate = `{
                     "type": "string",
                     "example": "2026-11-08T09:00:00Z"
                 },
-                "key_last_used_at": {
+                "last_seen_at": {
+                    "description": "The device's last request (to the minute); null = never.",
                     "type": "string",
                     "example": "2026-11-08T09:42:00Z"
                 },
@@ -7372,9 +7510,31 @@ const docTemplate = `{
                     "type": "string",
                     "format": "uuid"
                 },
+                "connection": {
+                    "description": "online: heard from within 5 minutes; offline: longer ago; never: has\nnever called the API.",
+                    "type": "string",
+                    "enum": [
+                        "online",
+                        "offline",
+                        "never"
+                    ],
+                    "example": "online"
+                },
                 "id": {
                     "type": "string",
                     "format": "uuid"
+                },
+                "last_seen_at": {
+                    "type": "string",
+                    "example": "2026-11-08T14:31:00Z"
+                },
+                "position": {
+                    "description": "null = no reading yet",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.PositionResponse"
+                        }
+                    ]
                 },
                 "serial_number": {
                     "type": "string",
@@ -7952,6 +8112,51 @@ const docTemplate = `{
                 "last4": {
                     "type": "string",
                     "example": "4242"
+                }
+            }
+        },
+        "handler.PositionResponse": {
+            "type": "object",
+            "properties": {
+                "engine_hours": {
+                    "type": "number",
+                    "example": 8123.4
+                },
+                "engine_on": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "latitude": {
+                    "description": "null = no GPS fix",
+                    "type": "number",
+                    "example": 32.7767
+                },
+                "longitude": {
+                    "type": "number",
+                    "example": -96.797
+                },
+                "moving": {
+                    "description": "speed above 5 mph",
+                    "type": "boolean",
+                    "example": true
+                },
+                "odometer_mi": {
+                    "type": "number",
+                    "example": 120345.2
+                },
+                "received_at": {
+                    "description": "ours",
+                    "type": "string",
+                    "example": "2026-11-08T14:30:06Z"
+                },
+                "recorded_at": {
+                    "description": "the device's clock",
+                    "type": "string",
+                    "example": "2026-11-08T14:30:05Z"
+                },
+                "speed_mph": {
+                    "type": "number",
+                    "example": 61.5
                 }
             }
         },

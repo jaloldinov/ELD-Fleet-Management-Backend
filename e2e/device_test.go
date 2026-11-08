@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,12 +61,12 @@ func TestDeviceKeys(t *testing.T) {
 		assert.Equal(t, truck.UnitNumber, me.Truck.UnitNumber)
 	})
 
-	t.Run("the office sees that the key is in use", func(t *testing.T) {
+	t.Run("the office sees that the device is talking", func(t *testing.T) {
 		var d struct {
-			KeyLastUsedAt *string `json:"key_last_used_at"`
+			LastSeenAt *string `json:"last_seen_at"`
 		}
 		tn.Admin.do(t, http.MethodGet, "/api/v1/eld-devices/"+eld.ID, nil, http.StatusOK, &d)
-		assert.NotNil(t, d.KeyLastUsedAt)
+		assert.NotNil(t, d.LastSeenAt)
 	})
 
 	t.Run("keys and user tokens never cross", func(t *testing.T) {
@@ -177,5 +178,93 @@ func TestDeviceTelemetry(t *testing.T) {
 
 	t.Run("only devices send readings", func(t *testing.T) {
 		tn.Admin.fail(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": batch}, http.StatusUnauthorized)
+	})
+}
+
+type positionResp struct {
+	RecordedAt string   `json:"recorded_at"`
+	Latitude   *float64 `json:"latitude"`
+	SpeedMPH   float64  `json:"speed_mph"`
+	Moving     bool     `json:"moving"`
+	EngineOn   bool     `json:"engine_on"`
+}
+
+// TestDeviceState: the office sees where a truck is and whether its device
+// is talking; readings sent late (after a tunnel) never move it back.
+func TestDeviceState(t *testing.T) {
+	tn := newTenant(t)
+	eld := tn.newELD(t)
+	truck := tn.newTruck(t)
+	tn.Admin.do(t, http.MethodPut, "/api/v1/eld-devices/"+eld.ID+"/truck", map[string]any{"truck_id": truck.ID}, http.StatusOK, nil)
+	state := func() (string, *positionResp) {
+		t.Helper()
+		var s struct {
+			Connection string        `json:"connection"`
+			Position   *positionResp `json:"position"`
+		}
+		tn.Admin.do(t, http.MethodGet, "/api/v1/eld-devices/"+eld.ID+"/state", nil, http.StatusOK, &s)
+		return s.Connection, s.Position
+	}
+
+	t.Run("a device that never called", func(t *testing.T) {
+		conn, pos := state()
+		assert.Equal(t, "never", conn)
+		assert.Nil(t, pos)
+	})
+
+	var issued struct {
+		DeviceKey string `json:"device_key"`
+	}
+	tn.Admin.do(t, http.MethodPost, "/api/v1/eld-devices/"+eld.ID+"/credentials", nil, http.StatusCreated, &issued)
+	dev := deviceClient(issued.DeviceKey)
+	// Readings are stamped "now", so they fall inside the install stint.
+	now := time.Now().UTC()
+	at := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339Nano) }
+
+	t.Run("a heartbeat makes it online", func(t *testing.T) {
+		dev.do(t, http.MethodPost, "/api/v1/device/heartbeat", nil, http.StatusNoContent, nil)
+		conn, pos := state()
+		assert.Equal(t, "online", conn)
+		assert.Nil(t, pos, "contact, but no reading yet")
+	})
+
+	t.Run("the newest reading is the state", func(t *testing.T) {
+		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": []any{
+			reading(2, at(2*time.Second), 61.5), reading(1, at(time.Second), 0),
+		}}, http.StatusOK, nil)
+
+		_, pos := state()
+		require.NotNil(t, pos)
+		assert.Equal(t, 61.5, pos.SpeedMPH, "seq 2 is newer, though it came first in the batch")
+		assert.True(t, pos.Moving)
+	})
+
+	t.Run("readings from the tunnel go to history, not to the state", func(t *testing.T) {
+		var r ingestResp
+		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": []any{
+			reading(3, at(-time.Minute), 0), // recorded before the newest one, sent after
+		}}, http.StatusOK, &r)
+		assert.Equal(t, 1, r.Accepted)
+
+		_, pos := state()
+		assert.Equal(t, 61.5, pos.SpeedMPH, "the truck does not jump back")
+	})
+
+	t.Run("the truck board shows where the truck is", func(t *testing.T) {
+		var b struct {
+			ELDDevice *struct {
+				Connection string        `json:"connection"`
+				Position   *positionResp `json:"position"`
+			} `json:"eld_device"`
+		}
+		tn.Admin.do(t, http.MethodGet, "/api/v1/trucks/"+truck.ID+"/current", nil, http.StatusOK, &b)
+		require.NotNil(t, b.ELDDevice)
+		assert.Equal(t, "online", b.ELDDevice.Connection)
+		require.NotNil(t, b.ELDDevice.Position)
+		assert.NotNil(t, b.ELDDevice.Position.Latitude)
+	})
+
+	t.Run("another company sees nothing", func(t *testing.T) {
+		newTenant(t).Admin.fail(t, http.MethodGet, "/api/v1/eld-devices/"+eld.ID+"/state", nil, http.StatusNotFound)
 	})
 }

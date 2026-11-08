@@ -20,7 +20,7 @@ import (
 type DeviceStore interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error)
 	GetByKeyHash(ctx context.Context, hash []byte) (*model.ELDDevice, error)
-	TouchKey(ctx context.Context, id uuid.UUID) error
+	MarkSeen(ctx context.Context, id uuid.UUID) error
 }
 
 // DeviceStints tells which truck a device is in (repository.ELDAssignmentRepository).
@@ -36,6 +36,7 @@ type TruckFinder interface {
 // TelemetryStore stores device points (repository.TelemetryRepository).
 type TelemetryStore interface {
 	InsertBatch(ctx context.Context, companyID, deviceID uuid.UUID, points []model.TelemetryPoint) ([]int64, error)
+	UpsertState(ctx context.Context, companyID, deviceID uuid.UUID, p model.TelemetryPoint) (bool, error)
 }
 
 // MaxTelemetryBatch is the most points one request may carry. A device
@@ -92,14 +93,15 @@ type DeviceSelf struct {
 // These endpoints are NOT behind the billing gate: recording hours of
 // service is required by law, also for a company whose payment failed.
 type DeviceService struct {
+	tx        Transactor
 	devices   DeviceStore
 	stints    DeviceStints
 	trucks    TruckFinder
 	telemetry TelemetryStore
 }
 
-func NewDeviceService(devices DeviceStore, stints DeviceStints, trucks TruckFinder, telemetry TelemetryStore) *DeviceService {
-	return &DeviceService{devices: devices, stints: stints, trucks: trucks, telemetry: telemetry}
+func NewDeviceService(tx Transactor, devices DeviceStore, stints DeviceStints, trucks TruckFinder, telemetry TelemetryStore) *DeviceService {
+	return &DeviceService{tx: tx, devices: devices, stints: stints, trucks: trucks, telemetry: telemetry}
 }
 
 // Authenticate turns a device key into the calling device. Every failure
@@ -119,7 +121,7 @@ func (s *DeviceService) Authenticate(ctx context.Context, key string) (*auth.Dev
 	if d.Status == model.ELDRetired {
 		return nil, model.ErrDeviceRetired
 	}
-	if err := s.devices.TouchKey(ctx, d.ID); err != nil {
+	if err := s.devices.MarkSeen(ctx, d.ID); err != nil {
 		return nil, err
 	}
 	return &auth.Device{DeviceID: d.ID, CompanyID: d.CompanyID}, nil
@@ -178,13 +180,46 @@ func (s *DeviceService) Ingest(ctx context.Context, dev auth.Device, in []Teleme
 		return res, nil
 	}
 
-	accepted, err := s.telemetry.InsertBatch(ctx, dev.CompanyID, dev.DeviceID, valid)
+	// The points and the state they lead to, together or not at all.
+	var accepted []int64
+	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		if accepted, err = s.telemetry.InsertBatch(ctx, dev.CompanyID, dev.DeviceID, valid); err != nil {
+			return err
+		}
+		latest, ok := newest(valid, accepted)
+		if !ok {
+			return nil // all duplicates: the state already saw them
+		}
+		_, err = s.telemetry.UpsertState(ctx, dev.CompanyID, dev.DeviceID, latest)
+		return err // an older point than the stored state changes nothing
+	})
 	if err != nil {
 		return nil, err
 	}
 	res.Accepted = len(accepted)
 	res.Duplicates += len(valid) - len(accepted) // stored by an earlier request
 	return res, nil
+}
+
+// newest returns the accepted point with the latest recorded_at (ties: the
+// higher seq). ok = false when nothing was accepted.
+func newest(points []model.TelemetryPoint, accepted []int64) (model.TelemetryPoint, bool) {
+	isNew := make(map[int64]bool, len(accepted))
+	for _, seq := range accepted {
+		isNew[seq] = true
+	}
+	var best model.TelemetryPoint
+	found := false
+	for _, p := range points {
+		if !isNew[p.Seq] {
+			continue
+		}
+		if !found || p.RecordedAt.After(best.RecordedAt) || (p.RecordedAt.Equal(best.RecordedAt) && p.Seq > best.Seq) {
+			best, found = p, true
+		}
+	}
+	return best, found
 }
 
 // checkPoint validates one point; reason "" means it is fine. Time-based

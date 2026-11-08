@@ -57,10 +57,12 @@ type CrewMember struct {
 	LastName   string
 }
 
-// InstalledDevice is the ELD device in a truck now.
+// InstalledDevice is the ELD device in a truck now, with what it last said.
 type InstalledDevice struct {
 	Assignment   ELDAssignment
 	SerialNumber string
+	LastSeenAt   *time.Time   // the device's last request; nil = never
+	State        *DeviceState // its last reading; nil = none yet
 }
 
 // TruckBoard is a truck's line on the dispatch board: who drives it now

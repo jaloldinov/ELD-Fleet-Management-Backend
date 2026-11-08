@@ -37,3 +37,41 @@ type ELDEvent struct {
 	ReceivedAt  time.Time
 	Moving      bool
 }
+
+// DeviceOfflineAfter: a device not heard from (data or heartbeat) for
+// longer than this is offline. Devices send at least every minute while
+// on, so five quiet minutes means something is wrong (or it is off).
+const DeviceOfflineAfter = 5 * time.Minute
+
+// Connection says whether a device is talking to us.
+type Connection string
+
+const (
+	ConnectionOnline  Connection = "online"
+	ConnectionOffline Connection = "offline"
+	ConnectionNever   Connection = "never" // has never called the API
+)
+
+// ConnectionOf is computed when read, from the last contact: no background
+// job has to flip devices to "offline", time does it.
+func ConnectionOf(lastSeen *time.Time, now time.Time) Connection {
+	switch {
+	case lastSeen == nil:
+		return ConnectionNever
+	case now.Sub(*lastSeen) <= DeviceOfflineAfter:
+		return ConnectionOnline
+	default:
+		return ConnectionOffline
+	}
+}
+
+// DeviceState is a device's last known reading: the newest by recorded_at,
+// not the last to arrive.
+type DeviceState struct {
+	TelemetryPoint
+	ELDDeviceID uuid.UUID
+	CompanyID   uuid.UUID
+	TruckID     *uuid.UUID // the truck it was in at RecordedAt
+	ReceivedAt  time.Time
+	Moving      bool
+}

@@ -38,7 +38,7 @@ func (m *memELDRepo) SetKey(_ context.Context, id uuid.UUID, hash []byte) (*mode
 			delete(m.keys, k) // the old key stops working
 		}
 	}
-	d.KeyCreatedAt, d.KeyLastUsedAt = nil, nil
+	d.KeyCreatedAt = nil
 	if hash != nil {
 		m.keys[hex.EncodeToString(hash)] = id
 		now := time.Now()
@@ -56,7 +56,7 @@ func (m *memELDRepo) GetByKeyHash(ctx context.Context, hash []byte) (*model.ELDD
 	return m.GetByID(ctx, id)
 }
 
-func (m *memELDRepo) TouchKey(context.Context, uuid.UUID) error {
+func (m *memELDRepo) MarkSeen(context.Context, uuid.UUID) error {
 	m.touched++
 	return nil
 }
@@ -107,8 +107,20 @@ func (m *memELDRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// memStates: last known states by device.
+type memStates map[uuid.UUID]*model.DeviceState
+
+func (m memStates) GetState(_ context.Context, id uuid.UUID) (*model.DeviceState, error) {
+	st, ok := m[id]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	return st, nil
+}
+
 type eldSvcFixture struct {
 	svc      *ELDDeviceService
+	states   memStates
 	repo     *memELDRepo
 	releaser *fakeReleaser
 	audit    *memAuditStore
@@ -119,7 +131,8 @@ func newELDSvcFixture() *eldSvcFixture {
 	f.releaser = &fakeReleaser{log: &f.repo.events}
 	var audit *Auditor
 	audit, f.audit = newTestAuditor()
-	f.svc = NewELDDeviceService(f.repo, f.releaser, fakeCompanies{}, audit)
+	f.states = memStates{}
+	f.svc = NewELDDeviceService(f.repo, f.releaser, f.states, fakeCompanies{}, audit)
 	return f
 }
 
@@ -373,4 +386,24 @@ func TestELDDeviceService_RevokeKey(t *testing.T) {
 	_, err = f.svc.RevokeKey(ctx, companyAUser, d.ID)
 	require.NoError(t, err, "no key: nothing to revoke")
 	assert.Len(t, f.audit.entries, 2, "and nothing recorded")
+}
+
+func TestELDDeviceService_State(t *testing.T) {
+	ctx := context.Background()
+	f := newELDSvcFixture()
+	d := f.repo.add(companyA)
+
+	got, st, err := f.svc.State(ctx, companyAUser, d.ID)
+	require.NoError(t, err)
+	assert.Equal(t, d.ID, got.ID)
+	assert.Nil(t, st, "never sent a reading: not an error")
+
+	f.states[d.ID] = &model.DeviceState{ELDDeviceID: d.ID, Moving: true}
+	_, st, err = f.svc.State(ctx, companyAUser, d.ID)
+	require.NoError(t, err)
+	assert.True(t, st.Moving)
+
+	other := f.repo.add(uuid.New())
+	_, _, err = f.svc.State(ctx, companyAUser, other.ID)
+	assert.ErrorIs(t, err, model.ErrNotFound, "another company's device")
 }

@@ -151,6 +151,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	device := v1.Group("/device", middleware.DeviceAuth(sec.Devices))
 	device.GET("/me", h.Device.Me)
 	device.POST("/telemetry", h.Device.Telemetry)
+	device.POST("/heartbeat", h.Device.Heartbeat)
 
 	// ---------- Protected: every route below requires a valid access token ----------
 	// Registering the middleware on the GROUP (not per route) means a new
@@ -228,6 +229,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	elds.POST("", perm.Require(model.PermELDCreate), h.ELDDevice.Create)
 	elds.GET("", perm.Require(model.PermELDRead), h.ELDDevice.List)
 	elds.GET("/:id", perm.Require(model.PermELDRead), h.ELDDevice.Get)
+	elds.GET("/:id/state", perm.Require(model.PermELDRead), h.ELDDevice.State)
 	elds.PATCH("/:id", perm.Require(model.PermELDUpdate), h.ELDDevice.Update)
 	elds.DELETE("/:id", perm.Require(model.PermELDDelete), h.ELDDevice.Delete)
 	elds.PUT("/:id/truck", perm.Require(model.PermELDUpdate), h.Assignment.InstallDevice)

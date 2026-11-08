@@ -201,6 +201,7 @@ var authenticatedOnlyRoutes = map[string]bool{
 var deviceRoutes = map[string]bool{
 	"GET /api/v1/device/me":         true,
 	"POST /api/v1/device/telemetry": true,
+	"POST /api/v1/device/heartbeat": true,
 }
 
 // A logged-in user with NO permissions must be denied (403) everywhere except

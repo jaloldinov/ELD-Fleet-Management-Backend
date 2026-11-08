@@ -552,6 +552,30 @@ definitions:
         - $ref: '#/definitions/handler.BoardTruckResponse'
         description: null = not installed
     type: object
+  handler.DeviceStateResponse:
+    properties:
+      connection:
+        enum:
+        - online
+        - offline
+        - never
+        example: online
+        type: string
+      device_id:
+        format: uuid
+        type: string
+      last_seen_at:
+        example: "2026-11-08T14:31:00Z"
+        type: string
+      position:
+        allOf:
+        - $ref: '#/definitions/handler.PositionResponse'
+        description: null = no reading yet
+      truck_id:
+        description: installed in now
+        format: uuid
+        type: string
+    type: object
   handler.DriverAssignmentRecordResponse:
     properties:
       company_id:
@@ -741,7 +765,7 @@ definitions:
       has_key:
         description: |-
           The device's API key (never the key itself): has_key = the device can
-          call the API; when it was issued and last used (to the minute).
+          call the API; when the key was issued.
         example: true
         type: boolean
       id:
@@ -754,7 +778,8 @@ definitions:
       key_created_at:
         example: "2026-11-08T09:00:00Z"
         type: string
-      key_last_used_at:
+      last_seen_at:
+        description: The device's last request (to the minute); null = never.
         example: "2026-11-08T09:42:00Z"
         type: string
       model:
@@ -801,9 +826,26 @@ definitions:
       assignment_id:
         format: uuid
         type: string
+      connection:
+        description: |-
+          online: heard from within 5 minutes; offline: longer ago; never: has
+          never called the API.
+        enum:
+        - online
+        - offline
+        - never
+        example: online
+        type: string
       id:
         format: uuid
         type: string
+      last_seen_at:
+        example: "2026-11-08T14:31:00Z"
+        type: string
+      position:
+        allOf:
+        - $ref: '#/definitions/handler.PositionResponse'
+        description: null = no reading yet
       serial_number:
         example: PT30-0001
         type: string
@@ -1218,6 +1260,40 @@ definitions:
       last4:
         example: "4242"
         type: string
+    type: object
+  handler.PositionResponse:
+    properties:
+      engine_hours:
+        example: 8123.4
+        type: number
+      engine_on:
+        example: true
+        type: boolean
+      latitude:
+        description: null = no GPS fix
+        example: 32.7767
+        type: number
+      longitude:
+        example: -96.797
+        type: number
+      moving:
+        description: speed above 5 mph
+        example: true
+        type: boolean
+      odometer_mi:
+        example: 120345.2
+        type: number
+      received_at:
+        description: ours
+        example: "2026-11-08T14:30:06Z"
+        type: string
+      recorded_at:
+        description: the device's clock
+        example: "2026-11-08T14:30:05Z"
+        type: string
+      speed_mph:
+        example: 61.5
+        type: number
     type: object
   handler.PreviewLineResponse:
     properties:
@@ -3347,6 +3423,27 @@ paths:
       summary: What the company would be billed for
       tags:
       - billing
+  /api/v1/device/heartbeat:
+    post:
+      description: 'For ELD devices with nothing new to report (parked, engine off):
+        keeps the device "online". Any authenticated device request counts as contact;
+        this one does nothing else. Authorization: Device <key>.'
+      responses:
+        "204":
+          description: no content
+        "401":
+          description: missing, unknown or revoked device key
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: the device is retired
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - DeviceKey: []
+      summary: I am alive (device)
+      tags:
+      - device
   /api/v1/device/me:
     get:
       description: 'For ELD devices: the calling device and the truck it is installed
@@ -4542,6 +4639,54 @@ paths:
       security:
       - BearerAuth: []
       summary: Issue a device API key
+      tags:
+      - eld-devices
+  /api/v1/eld-devices/{id}/state:
+    get:
+      description: |-
+        Requires permission: eld:read
+        Whether the device is online (heard from within 5 minutes) and its newest reading: position, speed, moving, engine, odometer. Newest by the device's clock: readings sent late after being offline never replace a newer one.
+      parameters:
+      - description: Device ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DeviceStateResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission eld:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: device not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: A device's last known state
       tags:
       - eld-devices
   /api/v1/eld-devices/{id}/truck:
