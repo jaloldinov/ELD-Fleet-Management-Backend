@@ -156,7 +156,7 @@ func run() error {
 	})
 
 	// The devices themselves (Authorization: Device <key>).
-	deviceSvc := service.NewDeviceService(eldRepo, eldStintRepo, truckRepo)
+	deviceSvc := service.NewDeviceService(eldRepo, eldStintRepo, truckRepo, repository.NewTelemetryRepository(pool))
 
 	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)

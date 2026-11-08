@@ -150,6 +150,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	// required by law, also while a company's payment has failed.
 	device := v1.Group("/device", middleware.DeviceAuth(sec.Devices))
 	device.GET("/me", h.Device.Me)
+	device.POST("/telemetry", h.Device.Telemetry)
 
 	// ---------- Protected: every route below requires a valid access token ----------
 	// Registering the middleware on the GROUP (not per route) means a new

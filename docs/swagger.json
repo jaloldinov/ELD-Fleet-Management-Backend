@@ -2199,6 +2199,75 @@
                 }
             }
         },
+        "/api/v1/device/telemetry": {
+            "post": {
+                "security": [
+                    {
+                        "DeviceKey": []
+                    }
+                ],
+                "description": "For ELD devices: a batch of up to 500 readings (also the way to sync after being offline). Every point gets a final answer: accepted, duplicate (its seq was stored before; resending is safe) or rejected with a reason. Each point is filed under the truck the device was installed in at its recorded_at. Authorization: Device \u003ckey\u003e. Not behind the billing gate.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "device"
+                ],
+                "summary": "Send readings (device)",
+                "parameters": [
+                    {
+                        "description": "Readings",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.TelemetryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.TelemetryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "no points, more than 500, or malformed JSON",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing, unknown or revoked device key",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "the device is retired",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "413": {
+                        "description": "body too large",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/driver-assignments": {
             "get": {
                 "security": [
@@ -8081,6 +8150,24 @@
                 }
             }
         },
+        "handler.RejectedPointResponse": {
+            "type": "object",
+            "properties": {
+                "index": {
+                    "description": "position in events",
+                    "type": "integer",
+                    "example": 4
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "latitude: must be between -90 and 90"
+                },
+                "seq": {
+                    "type": "integer",
+                    "example": 105
+                }
+            }
+        },
         "handler.ResetPasswordRequest": {
             "type": "object",
             "properties": {
@@ -8283,6 +8370,76 @@
                 },
                 "subscription": {
                     "$ref": "#/definitions/handler.SubscriptionResponse"
+                }
+            }
+        },
+        "handler.TelemetryEventRequest": {
+            "type": "object",
+            "properties": {
+                "engine_hours": {
+                    "type": "number",
+                    "example": 8123.4
+                },
+                "engine_on": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "latitude": {
+                    "type": "number",
+                    "example": 32.7767
+                },
+                "longitude": {
+                    "type": "number",
+                    "example": -96.797
+                },
+                "odometer_mi": {
+                    "type": "number",
+                    "example": 120345.2
+                },
+                "recorded_at": {
+                    "type": "string",
+                    "example": "2026-11-08T14:30:05Z"
+                },
+                "seq": {
+                    "type": "integer",
+                    "example": 101
+                },
+                "speed_mph": {
+                    "type": "number",
+                    "example": 61.5
+                }
+            }
+        },
+        "handler.TelemetryRequest": {
+            "type": "object",
+            "properties": {
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.TelemetryEventRequest"
+                    }
+                }
+            }
+        },
+        "handler.TelemetryResponse": {
+            "type": "object",
+            "properties": {
+                "accepted": {
+                    "description": "new, stored now",
+                    "type": "integer",
+                    "example": 12
+                },
+                "duplicates": {
+                    "description": "stored before (resent)",
+                    "type": "integer",
+                    "example": 3
+                },
+                "rejected": {
+                    "description": "never will be stored",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.RejectedPointResponse"
+                    }
                 }
             }
         },

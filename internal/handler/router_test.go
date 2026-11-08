@@ -199,7 +199,8 @@ var authenticatedOnlyRoutes = map[string]bool{
 // deviceRoutes take a device key, not a user token: a user's token is
 // refused there with 401 (see TestRouter_DeviceRoutesRefuseUserTokens).
 var deviceRoutes = map[string]bool{
-	"GET /api/v1/device/me": true,
+	"GET /api/v1/device/me":         true,
+	"POST /api/v1/device/telemetry": true,
 }
 
 // A logged-in user with NO permissions must be denied (403) everywhere except
@@ -481,12 +482,20 @@ func (blockedBilling) BillingStatus(context.Context, uuid.UUID) (string, error) 
 	return model.BillingNone, nil
 }
 
+// anyDevice accepts every device key as a device of the blocked company.
+type anyDevice struct{}
+
+func (anyDevice) Authenticate(context.Context, string) (*auth.Device, error) {
+	return &auth.Device{DeviceID: uuid.New(), CompanyID: uuid.New()}, nil
+}
+
 func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(&bytes.Buffer{}, true, "debug")
 	sec := handler.RouterSecurity{Tokens: companyTokens{}, Permissions: fakePermissions(model.AllPermissions()),
-		AuthLimiter: ratelimit.New(1000, time.Minute), Billing: blockedBilling{}}
+		AuthLimiter: ratelimit.New(1000, time.Minute), Billing: blockedBilling{}, Devices: anyDevice{}}
 	r := handler.NewRouter(log, handler.RouterOptions{}, sec, handler.Handlers{
+		Device: handler.NewDeviceHandler(nil),
 		Health: handler.NewHealthHandler(okPinger{}, log), Auth: handler.NewAuthHandler(nil, ratelimit.New(1000, time.Minute)),
 		User: handler.NewUserHandler(nil), Driver: handler.NewDriverHandler(nil), Truck: handler.NewTruckHandler(nil),
 		ELDDevice: handler.NewELDDeviceHandler(nil), Company: handler.NewCompanyHandler(nil),
@@ -509,6 +518,12 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		rec := send(r, http.MethodPut, path, h)
 		assert.Equal(t, http.StatusPaymentRequired, rec.Code, "PUT "+path)
 	}
+
+	// The devices of a blocked company keep logging: hours of service must
+	// be recorded by law, paid up or not. (400 = the handler ran: the gate
+	// let it through; the empty body is what it refused.)
+	rec := send(r, http.MethodPost, "/api/v1/device/telemetry", map[string]string{"Authorization": "Device eldk_x"})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "device telemetry is never behind the billing gate")
 
 	// Billing and the company itself stay reachable, or a blocked company
 	// could never pay. (400 = the handler ran: the gate let it through.)

@@ -1369,6 +1369,19 @@ definitions:
         example: q3Jx0yJ8Q0m1yG2ZzVb0bq3s9Xc4m5n6o7p8q9r0s1t
         type: string
     type: object
+  handler.RejectedPointResponse:
+    properties:
+      index:
+        description: position in events
+        example: 4
+        type: integer
+      reason:
+        example: 'latitude: must be between -90 and 90'
+        type: string
+      seq:
+        example: 105
+        type: integer
+    type: object
   handler.ResetPasswordRequest:
     properties:
       new_password:
@@ -1518,6 +1531,56 @@ definitions:
           then POST .../subscription/refresh. null = nothing to pay now.
       subscription:
         $ref: '#/definitions/handler.SubscriptionResponse'
+    type: object
+  handler.TelemetryEventRequest:
+    properties:
+      engine_hours:
+        example: 8123.4
+        type: number
+      engine_on:
+        example: true
+        type: boolean
+      latitude:
+        example: 32.7767
+        type: number
+      longitude:
+        example: -96.797
+        type: number
+      odometer_mi:
+        example: 120345.2
+        type: number
+      recorded_at:
+        example: "2026-11-08T14:30:05Z"
+        type: string
+      seq:
+        example: 101
+        type: integer
+      speed_mph:
+        example: 61.5
+        type: number
+    type: object
+  handler.TelemetryRequest:
+    properties:
+      events:
+        items:
+          $ref: '#/definitions/handler.TelemetryEventRequest'
+        type: array
+    type: object
+  handler.TelemetryResponse:
+    properties:
+      accepted:
+        description: new, stored now
+        example: 12
+        type: integer
+      duplicates:
+        description: stored before (resent)
+        example: 3
+        type: integer
+      rejected:
+        description: never will be stored
+        items:
+          $ref: '#/definitions/handler.RejectedPointResponse'
+        type: array
     type: object
   handler.TokenResponse:
     properties:
@@ -3311,6 +3374,54 @@ paths:
       security:
       - DeviceKey: []
       summary: Who am I (device)
+      tags:
+      - device
+  /api/v1/device/telemetry:
+    post:
+      consumes:
+      - application/json
+      description: 'For ELD devices: a batch of up to 500 readings (also the way to
+        sync after being offline). Every point gets a final answer: accepted, duplicate
+        (its seq was stored before; resending is safe) or rejected with a reason.
+        Each point is filed under the truck the device was installed in at its recorded_at.
+        Authorization: Device <key>. Not behind the billing gate.'
+      parameters:
+      - description: Readings
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.TelemetryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.TelemetryResponse'
+        "400":
+          description: no points, more than 500, or malformed JSON
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing, unknown or revoked device key
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: the device is retired
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "413":
+          description: body too large
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - DeviceKey: []
+      summary: Send readings (device)
       tags:
       - device
   /api/v1/driver-assignments:
