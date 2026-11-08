@@ -105,6 +105,7 @@ func TestRun_ATrip(t *testing.T) {
 	assert.Zero(t, stats.Duplicates)
 	assert.Positive(t, stats.Heartbeats, "parked at the fuel stop: heartbeats")
 	assert.Equal(t, int64(100+stats.Readings), cfg.Memory.LastSeq, "seq continues from the memory")
+	assert.Equal(t, stats.LastRecorded, cfg.Memory.LastRecordedAt, "the next trip must start after it")
 	assert.InDelta(t, 50000+cfg.Truck.Route.Length(), cfg.Memory.OdometerMi, 0.01, "the odometer is remembered")
 
 	// The timing rule: readings are never stamped in the future, and the
@@ -220,8 +221,9 @@ func TestFitSpeedup(t *testing.T) {
 // With NotBefore set, no reading is stamped before it, whatever the
 // requested speedup.
 func TestRun_NotBeforeInstallation(t *testing.T) {
-	cfg, _, clock := newSim(t, nil)
+	cfg, api, clock := newSim(t, nil)
 	cfg.NotBefore = clock.Now().Add(-10 * time.Minute) // installed 10 minutes ago
+	started := clock.Now()
 
 	stats, err := Run(context.Background(), cfg)
 
@@ -229,4 +231,14 @@ func TestRun_NotBeforeInstallation(t *testing.T) {
 	assert.False(t, stats.FirstRecorded.Before(cfg.NotBefore), "first reading %s, installed %s", stats.FirstRecorded, cfg.NotBefore)
 	assert.Less(t, stats.Speedup, cfg.Speedup, "slowed down to fit")
 	assert.Greater(t, stats.Speedup, 1.0)
+	// Slowed down for real: the pace must follow the fitted speed too, or
+	// readings run ahead of the clock (stamped in the future).
+	for i, b := range api.batches {
+		for _, r := range b {
+			assert.False(t, r.RecordedAt.After(api.sentAt[i]), "seq %d recorded %s after it was sent", r.Seq, r.RecordedAt.Sub(api.sentAt[i]))
+		}
+	}
+	trip := TripDuration(cfg.Truck.Route, cfg.Truck.Plan)
+	assert.InDelta(t, float64(trip)/stats.Speedup, float64(clock.Now().Sub(started)), float64(time.Minute),
+		"the trip took trip/speedup of real time")
 }

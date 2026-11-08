@@ -86,16 +86,19 @@ func run() error {
 	}
 	plan := eldsim.DefaultTrip(route)
 	trip := eldsim.TripDuration(route, plan)
+	// The trip may not reach back before the installation, nor into time
+	// the last trip already covered.
 	run := *speedup
-	var notBefore time.Time
-	if me.InstalledAt != nil {
-		notBefore = *me.InstalledAt
+	notBefore, why := mem.LastRecordedAt, "the last trip ended"
+	if me.InstalledAt != nil && me.InstalledAt.After(notBefore) {
+		notBefore, why = *me.InstalledAt, "the device was installed"
+	}
+	if !notBefore.IsZero() {
 		run = eldsim.FitSpeedup(trip, *speedup, time.Since(notBefore))
 		if run < *speedup {
-			fmt.Printf("note: installed only %s ago, so a %s trip cannot be replayed at %gx\n"+
-				"      (its first readings would predate the installation and belong to no truck);\n"+
-				"      running at %.2fx instead. For fast replays, install the device earlier.\n",
-				time.Since(notBefore).Round(time.Second), trip.Round(time.Minute), *speedup, run)
+			fmt.Printf("note: %s only %s ago, so a %s trip cannot be replayed at %gx\n"+
+				"      (its first readings would be from before that); running at %.2fx instead.\n",
+				why, time.Since(notBefore).Round(time.Second), trip.Round(time.Minute), *speedup, run)
 		}
 	}
 	fmt.Printf("route %s, %.1f miles, trip %s, at %.2fx: about %s; starting at seq %d, odometer %.1f\n",

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Memory is what a device keeps across restarts (its flash memory): the
@@ -15,6 +16,10 @@ type Memory struct {
 	LastSeq     int64   `json:"last_seq"`
 	OdometerMi  float64 `json:"odometer_mi"`
 	EngineHours float64 `json:"engine_hours"`
+	// When the last reading was recorded. A new trip must start after it:
+	// replaying into time already covered would give later seqs earlier
+	// times, which the API refuses (the clock "went backwards").
+	LastRecordedAt time.Time `json:"last_recorded_at,omitzero"`
 }
 
 // LoadMemory reads path; a missing file is a new device (with a used

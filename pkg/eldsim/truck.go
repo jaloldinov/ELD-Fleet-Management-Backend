@@ -153,8 +153,8 @@ func TripDuration(r *Route, plan []Phase) time.Duration {
 	t := NewTruck(r, plan, 0, 0)
 	var d time.Duration
 	for !t.Done() {
-		t.Step(time.Minute)
-		d += time.Minute
+		t.Step(time.Second) // by the second: a 5-second trip is 5 seconds, not "1 minute"
+		d += time.Second
 	}
 	return d
 }

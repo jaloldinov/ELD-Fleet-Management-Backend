@@ -62,3 +62,12 @@ func TestTripDuration(t *testing.T) {
 	assert.Greater(t, d, 4*time.Hour)
 	assert.Less(t, d, 5*time.Hour)
 }
+
+func TestTripDuration_ToTheSecond(t *testing.T) {
+	r, err := BuiltInRoute("dallas-loop")
+	require.NoError(t, err)
+
+	d := TripDuration(r, []Phase{{Kind: Idle, Duration: 5 * time.Second}, {Kind: Park}})
+
+	assert.Equal(t, 5*time.Second, d)
+}

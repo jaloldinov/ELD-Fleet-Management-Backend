@@ -84,8 +84,9 @@ type Config struct {
 	Heartbeat time.Duration // simulated time between heartbeats, engine off
 	Offline   []Window
 	// NotBefore: no reading may be stamped earlier (zero = no limit). Set
-	// it to when the device was installed in its truck: earlier readings
-	// would belong to no truck, since the device was not in it yet.
+	// it to the later of: when the device was installed in its truck
+	// (earlier readings would belong to no truck) and the memory's
+	// LastRecordedAt (a new trip cannot go back into time already covered).
 	NotBefore time.Time
 	Log       func(format string, args ...any) // nil = quiet
 }
@@ -193,6 +194,7 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 				stats.FirstRecorded = r.RecordedAt
 			}
 			stats.LastRecorded = r.RecordedAt
+			cfg.Memory.LastRecordedAt = r.RecordedAt
 			stats.MaxBuffered = max(stats.MaxBuffered, len(buffer))
 		}
 
@@ -225,7 +227,7 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 		// Let real time catch up with simulated time.
 		sim += cfg.Sample
 		tr.Step(cfg.Sample)
-		wait := realStart.Add(time.Duration(float64(sim) / cfg.Speedup)).Sub(cfg.Clock.Now())
+		wait := realStart.Add(time.Duration(float64(sim) / speedup)).Sub(cfg.Clock.Now()) // the FITTED speedup
 		if err := cfg.Clock.Sleep(ctx, wait); err != nil {
 			// Stopped (Ctrl-C): send what we have, keep the memory.
 			_ = flush()
