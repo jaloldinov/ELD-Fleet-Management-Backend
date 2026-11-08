@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -55,7 +56,8 @@ func deviceTestRouter(svc DeviceService, withDevice bool) *gin.Engine {
 func TestDeviceHandler_Me(t *testing.T) {
 	d := sampleELD()
 	tr := model.Truck{ID: uuid.New(), UnitNumber: "101", IsActive: true}
-	svc := &fakeDeviceService{self: &service.DeviceSelf{Device: *d, Truck: &tr}}
+	installed := time.Date(2026, 11, 8, 7, 30, 0, 0, time.UTC)
+	svc := &fakeDeviceService{self: &service.DeviceSelf{Device: *d, Truck: &tr, InstalledAt: &installed}}
 
 	rec := do(deviceTestRouter(svc, true), http.MethodGet, "/api/v1/device/me", "")
 
@@ -64,6 +66,7 @@ func TestDeviceHandler_Me(t *testing.T) {
 	body := rec.Body.String()
 	assert.Contains(t, body, `"serial_number":"PT30-0001"`)
 	assert.Contains(t, body, `"unit_number":"101"`)
+	assert.Contains(t, body, `"installed_at":"2026-11-08T07:30:00Z"`, "readings before it belong to no truck")
 }
 
 func TestDeviceHandler_Me_NotInstalled(t *testing.T) {
@@ -73,6 +76,7 @@ func TestDeviceHandler_Me_NotInstalled(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"truck":null`)
+	assert.Contains(t, rec.Body.String(), `"installed_at":null`)
 }
 
 func TestDeviceHandler_Me_NoDevice(t *testing.T) {

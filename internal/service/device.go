@@ -83,8 +83,9 @@ type IngestResult struct {
 // DeviceSelf is what a device learns about itself: its record and the truck
 // it is installed in (nil = none).
 type DeviceSelf struct {
-	Device model.ELDDevice
-	Truck  *model.Truck
+	Device      model.ELDDevice
+	Truck       *model.Truck
+	InstalledAt *time.Time // when it was installed in Truck (its stint began)
 }
 
 // DeviceService serves the ELD devices themselves (the /device endpoints),
@@ -143,6 +144,7 @@ func (s *DeviceService) Me(ctx context.Context, dev auth.Device) (*DeviceSelf, e
 	if self.Truck, err = s.trucks.GetByID(ctx, a.TruckID); err != nil {
 		return nil, err
 	}
+	self.InstalledAt = &a.StartedAt
 	return self, nil
 }
 

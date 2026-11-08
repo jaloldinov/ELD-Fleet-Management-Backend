@@ -13,3 +13,6 @@ coverage.html
 .idea/
 .vscode/
 .DS_Store
+
+# ELD simulator device memory (cmd/eldsim)
+/.eldsim/

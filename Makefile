@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run stripe-listen test test-integration test-e2e test-e2e-stripe test-db test-db-reset build create-admin swagger swagger-check \
+.PHONY: run sim stripe-listen test test-integration test-e2e test-e2e-stripe test-db test-db-reset build create-admin swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -18,6 +18,13 @@ run:
 # (internal/service/webhook.go); the CLI's signing secret goes in .env as
 # STRIPE_WEBHOOK_SECRET (`stripe listen --print-secret` shows it).
 STRIPE_EVENTS := customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,customer.subscription.paused,customer.subscription.resumed,invoice.created,invoice.finalized,invoice.updated,invoice.voided,invoice.paid,invoice.payment_failed,invoice.payment_action_required,invoice.marked_uncollectible
+
+# ELD simulator: drives a truck and reports to the API like a real device.
+# Key from POST /api/v1/eld-devices/{id}/credentials, via the environment
+# (never a flag). Example:
+#   ELD_DEVICE_KEY=eldk_... make sim args="-route dallas-loop -speedup 120 -offline 10m-15m"
+sim:
+	go run ./cmd/eldsim -api http://localhost:$(HTTP_PORT) $(args)
 
 stripe-listen:
 	stripe listen --forward-to localhost:$(HTTP_PORT)/api/v1/webhooks/stripe --events $(STRIPE_EVENTS)

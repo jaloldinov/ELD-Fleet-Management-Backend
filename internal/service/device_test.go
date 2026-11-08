@@ -143,6 +143,7 @@ func TestDeviceService_Me(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, self.Truck)
 	assert.Equal(t, tr.ID, self.Truck.ID)
+	require.NotNil(t, self.InstalledAt, "when the stint began")
 
 	_, err = f.svc.Me(ctx, auth.Device{DeviceID: uuid.New()})
 	assert.ErrorIs(t, err, model.ErrNotFound)

@@ -537,6 +537,12 @@ definitions:
       device_id:
         format: uuid
         type: string
+      installed_at:
+        description: |-
+          When it was installed in that truck: readings recorded earlier
+          belong to no truck (the device was not in it yet).
+        example: "2026-11-08T07:30:00Z"
+        type: string
       serial_number:
         example: PT30-0001
         type: string

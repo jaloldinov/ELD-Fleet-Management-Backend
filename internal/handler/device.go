@@ -60,6 +60,9 @@ type DeviceSelfResponse struct {
 	SerialNumber string              `json:"serial_number" example:"PT30-0001"`
 	Status       string              `json:"status" enums:"active,faulty,retired" example:"active"`
 	Truck        *BoardTruckResponse `json:"truck"` // null = not installed
+	// When it was installed in that truck: readings recorded earlier
+	// belong to no truck (the device was not in it yet).
+	InstalledAt *time.Time `json:"installed_at" example:"2026-11-08T07:30:00Z"`
 }
 
 // DeviceHandler serves the ELD devices themselves (/api/v1/device/...),
@@ -100,6 +103,7 @@ func (h *DeviceHandler) Me(c *gin.Context) {
 		SerialNumber: self.Device.SerialNumber, Status: string(self.Device.Status)}
 	if t := self.Truck; t != nil {
 		r.Truck = &BoardTruckResponse{ID: t.ID, UnitNumber: t.UnitNumber, IsActive: t.IsActive}
+		r.InstalledAt = utcOrNil(self.InstalledAt)
 	}
 	c.JSON(http.StatusOK, r)
 }
