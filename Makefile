@@ -4,7 +4,7 @@ export
 
 MIGRATIONS_DIR := migrations
 
-.PHONY: run sim stripe-listen test test-integration test-e2e test-e2e-stripe test-db test-db-reset build create-admin swagger swagger-check \
+.PHONY: run sim stripe-listen tunnel stripe-webhook-endpoint stripe-webhook-endpoints stripe-webhook-delete stripe-test-key test test-integration test-e2e test-e2e-stripe test-db test-db-reset build create-admin swagger swagger-check \
 	db-up db-down db-psql \
 	migrate-create migrate-up migrate-down migrate-version migrate-force
 
@@ -28,6 +28,55 @@ sim:
 
 stripe-listen:
 	stripe listen --forward-to localhost:$(HTTP_PORT)/api/v1/webhooks/stripe --events $(STRIPE_EVENTS)
+
+## ---------- Real Stripe webhooks through ngrok (docs/stripe-webhooks.md) ----------
+# stripe-listen above forwards events through the Stripe CLI. These targets
+# rehearse production instead: Stripe itself delivers to a public HTTPS
+# address, registered as a webhook endpoint with its own signing secret.
+
+comma := ,
+
+# A public HTTPS address for the local API. Needs ngrok (brew install ngrok)
+# and a free account (ngrok config add-authtoken <token>). Every request is
+# shown in the inspector at http://127.0.0.1:4040. With your account's static
+# domain the address never changes, so the Stripe endpoint is made once:
+#   make tunnel url=https://<name>.ngrok-free.dev   (or NGROK_URL in .env)
+NGROK_URL ?= $(url)
+tunnel:
+	@command -v ngrok >/dev/null || (echo "ngrok is not installed: brew install ngrok" && exit 1)
+	ngrok http $(HTTP_PORT) $(if $(NGROK_URL),--url $(NGROK_URL))
+
+# Refuses anything but a TEST key: these targets create and delete webhook
+# endpoints, which must never touch the live account. The key is read from
+# the environment by the shell ($$STRIPE_SECRET_KEY), never written into a
+# command line (visible to other users in `ps`) and never printed.
+stripe-test-key:
+	@command -v stripe >/dev/null || (echo "the Stripe CLI is not installed: brew install stripe/stripe-cli/stripe" && exit 1)
+	@case "$$STRIPE_SECRET_KEY" in sk_test_*|rk_test_*) ;; \
+	  *) echo "STRIPE_SECRET_KEY in .env must be a TEST key (sk_test_...)"; exit 1;; esac
+
+# Registers <url>/api/v1/webhooks/stripe in Stripe TEST mode with exactly
+# the events the API handles (STRIPE_EVENTS, nothing to tick by hand), and
+# prints the endpoint's signing secret: put it in .env as
+# STRIPE_WEBHOOK_SECRET, then restart the API.
+# Usage: make stripe-webhook-endpoint url=https://abc123.ngrok-free.app
+stripe-webhook-endpoint: stripe-test-key
+	@test -n "$(url)" || (echo "usage: make stripe-webhook-endpoint url=https://<your tunnel address>" && exit 1)
+	@STRIPE_API_KEY="$$STRIPE_SECRET_KEY" stripe webhook_endpoints create \
+		--url "$(url)/api/v1/webhooks/stripe" --description "local API via ngrok" \
+		$(foreach e,$(subst $(comma), ,$(STRIPE_EVENTS)),--enabled-events $(e)) \
+		| grep -E '"(id|url|secret)":'
+
+# The test-mode endpoints that exist (a free ngrok address changes on every
+# restart, so old endpoints pile up: delete them).
+stripe-webhook-endpoints: stripe-test-key
+	@STRIPE_API_KEY="$$STRIPE_SECRET_KEY" stripe webhook_endpoints list --limit 100 | grep -E '"id": "we_|"url": "https|"status":' \
+		|| echo "no webhook endpoints in test mode"
+
+# Usage: make stripe-webhook-delete id=we_...
+stripe-webhook-delete: stripe-test-key
+	@test -n "$(id)" || (echo "usage: make stripe-webhook-delete id=we_..." && exit 1)
+	@STRIPE_API_KEY="$$STRIPE_SECRET_KEY" stripe webhook_endpoints delete $(id) --confirm | grep -E '"(id|deleted)":'
 
 # Fast unit tests only. TEST_DATABASE_URL, TEST_REDIS_URL and STRIPE_MOCK_URL
 # are cleared (they are exported from .env), so tests that need Postgres,

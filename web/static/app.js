@@ -471,7 +471,10 @@ function renderPlans() {
   const list = $("plan-list");
   list.replaceChildren();
   for (const product of sub.products) {
-    const price = product.prices.find((p) => p.interval === interval);
+    // Platform users get the whole catalog, archived items too: only
+    // what can still be chosen belongs in the picker.
+    if (!product.is_active) continue;
+    const price = product.prices.find((p) => p.is_active && p.interval === interval);
     if (!price) continue; // no price for this interval
 
     const li = document.createElement("li");
