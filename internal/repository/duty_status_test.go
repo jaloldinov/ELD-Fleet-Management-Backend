@@ -141,3 +141,91 @@ func TestDutyStatusRepository(t *testing.T) {
 		}
 	})
 }
+
+func TestDutyStatusRepository_Edits(t *testing.T) {
+	f := newAssignmentFixture(t)
+	ctx := context.Background()
+	repo := NewDutyStatusRepository(f.db)
+	ali, err := f.drivers.GetByID(ctx, f.ali)
+	require.NoError(t, err)
+	user := ali.Driver.UserID
+	day := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	reason := "forgot to press OFF"
+
+	off, err := repo.Insert(ctx, model.DutyStatusEvent{CompanyID: f.alpha.ID, DriverID: f.ali,
+		Status: model.DutyOffDuty, StartedAt: day.Add(18 * time.Hour), Origin: model.DutyOriginDriver, CreatedBy: &user})
+	require.NoError(t, err)
+	assert.Equal(t, model.RecordActive, off.RecordStatus)
+
+	// The edit: the same instant, sleeper instead of off duty. Old out first,
+	// then the new version in: the unique index only counts active records.
+	require.NoError(t, repo.Inactivate(ctx, off.ID, user))
+	sb, err := repo.Insert(ctx, model.DutyStatusEvent{CompanyID: f.alpha.ID, DriverID: f.ali,
+		Status: model.DutySleeperBerth, StartedAt: off.StartedAt, Origin: model.DutyOriginDriver, CreatedBy: &user,
+		Replaces: &off.ID, EditReason: &reason})
+	require.NoError(t, err)
+
+	t.Run("the log reads only active records", func(t *testing.T) {
+		got, err := repo.At(ctx, f.ali, day.Add(20*time.Hour))
+		require.NoError(t, err)
+		assert.Equal(t, sb.ID, got.ID)
+
+		events, err := repo.ListPeriod(ctx, f.ali, day, day.Add(24*time.Hour))
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, off.ID, *events[0].Replaces)
+		assert.Equal(t, reason, *events[0].EditReason)
+	})
+
+	t.Run("the old version stays, as history", func(t *testing.T) {
+		old, err := repo.GetByID(ctx, off.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.RecordInactive, old.RecordStatus)
+		assert.NotNil(t, old.InactivatedAt)
+		assert.Equal(t, user, *old.InactivatedBy)
+		assert.Equal(t, model.DutyOffDuty, old.Status, "unchanged: it is what the log used to say")
+
+		history, err := repo.ListReplaced(ctx, f.ali, day, day.Add(24*time.Hour))
+		require.NoError(t, err)
+		require.Len(t, history, 1)
+		assert.Equal(t, off.ID, history[0].ID)
+	})
+
+	t.Run("a version is replaced once", func(t *testing.T) {
+		assert.ErrorIs(t, repo.Inactivate(ctx, off.ID, user), model.ErrRecordReplaced, "already inactive")
+
+		_, err := repo.Insert(ctx, model.DutyStatusEvent{CompanyID: f.alpha.ID, DriverID: f.ali,
+			Status: model.DutyOnDuty, StartedAt: day.Add(19 * time.Hour), Origin: model.DutyOriginDriver, CreatedBy: &user,
+			Replaces: &off.ID, EditReason: &reason})
+		assert.ErrorIs(t, err, model.ErrRecordReplaced, "a second edit of the same version would fork the history")
+	})
+
+	t.Run("an edit says why", func(t *testing.T) {
+		short := "oop"
+		_, err := repo.Insert(ctx, model.DutyStatusEvent{CompanyID: f.alpha.ID, DriverID: f.ali,
+			Status: model.DutyOnDuty, StartedAt: day.Add(21 * time.Hour), Origin: model.DutyOriginDriver, EditReason: &short})
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+		assert.Equal(t, "dse_edit_reason", pgErr.ConstraintName)
+	})
+
+	t.Run("certifications: the latest counts", func(t *testing.T) {
+		at, err := repo.LastCertification(ctx, f.ali, "2026-11-10")
+		require.NoError(t, err)
+		assert.Nil(t, at, "never signed")
+
+		first, err := repo.Certify(ctx, model.LogCertification{CompanyID: f.alpha.ID, DriverID: f.ali, Date: "2026-11-10", CertifiedBy: user})
+		require.NoError(t, err)
+		second, err := repo.Certify(ctx, model.LogCertification{CompanyID: f.alpha.ID, DriverID: f.ali, Date: "2026-11-10", CertifiedBy: user})
+		require.NoError(t, err)
+		assert.NotEqual(t, first.ID, second.ID, "append-only")
+
+		at, err = repo.LastCertification(ctx, f.ali, "2026-11-10")
+		require.NoError(t, err)
+		assert.Equal(t, second.CertifiedAt, *at)
+
+		other, err := repo.LastCertification(ctx, f.ali, "2026-11-09")
+		require.NoError(t, err)
+		assert.Nil(t, other, "per day")
+	})
+}

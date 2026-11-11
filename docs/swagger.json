@@ -2723,6 +2723,152 @@
                 }
             }
         },
+        "/api/v1/drivers/me/duty-status/records": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The driver enters a past status change they did not record (\"I went off duty at 16:00 but did not press the button\"). Within the last 8 days, with a reason. Refused if it would change when the driver was driving: driving belongs to the ELD. The day needs certifying again. Needs a login, no extra permission. Not behind the billing gate.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logbook"
+                ],
+                "summary": "Add a record I forgot",
+                "parameters": [
+                    {
+                        "description": "The record",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.DutyRecordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DutyStatusEventResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid status, time or reason",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "would change driving, or a record starts at that moment",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/drivers/me/duty-status/records/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the record with the version in the body (the whole record). The old version is kept as inactive history; the new one points to it. Not for driving records, and refused if it would change when the driver was driving. Within the last 8 days, with a reason. The day needs certifying again. Needs a login, no extra permission. Not behind the billing gate.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logbook"
+                ],
+                "summary": "Correct one of my records",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Record ID (the newest version)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The corrected record",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.DutyRecordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the new version",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DutyStatusEventResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id, status, time or reason, or nothing to change",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "no such record of the caller",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "a driving record, would change driving, already replaced, or a record starts at that moment",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers/me/logs/{date}": {
             "get": {
                 "security": [
@@ -2757,6 +2903,71 @@
                     },
                     "400": {
                         "description": "invalid or future date",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/drivers/me/logs/{date}/certification": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The driver signs the day: \"my record of duty status for this 24-hour period is true and correct\". 201 when signed now; 200 when it was signed and has not changed since. A day changed after its signature must be signed again. Needs a login, no extra permission. Not behind the billing gate.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logbook"
+                ],
+                "summary": "Certify my log of a day",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "2026-11-10",
+                        "description": "Day, YYYY-MM-DD",
+                        "name": "date",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "already signed, unchanged",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DailyLogResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "signed",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DailyLogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid or future date, or nothing recorded",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -6941,6 +7152,22 @@
                 }
             }
         },
+        "handler.CertificationResponse": {
+            "type": "object",
+            "properties": {
+                "certified": {
+                    "type": "boolean"
+                },
+                "certified_at": {
+                    "description": "the latest signature; null = never",
+                    "type": "string"
+                },
+                "last_change_at": {
+                    "description": "null = no records",
+                    "type": "string"
+                }
+            }
+        },
         "handler.ChangeDutyStatusRequest": {
             "type": "object",
             "properties": {
@@ -7384,6 +7611,9 @@
         "handler.DailyLogResponse": {
             "type": "object",
             "properties": {
+                "certification": {
+                    "$ref": "#/definitions/handler.CertificationResponse"
+                },
                 "date": {
                     "type": "string",
                     "example": "2026-11-10"
@@ -7395,6 +7625,13 @@
                 "ends_at": {
                     "type": "string",
                     "example": "2026-11-11T00:00:00-06:00"
+                },
+                "history": {
+                    "description": "Records of the day that edits replaced, oldest first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.DutyStatusEventResponse"
+                    }
                 },
                 "recorded_until": {
                     "description": "The log is known up to here: ends_at for a past day, now for today.",
@@ -7697,6 +7934,43 @@
                 }
             }
         },
+        "handler.DutyRecordRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "reason": {
+                    "description": "Why the log is being fixed: 4 to 60 characters, required.",
+                    "type": "string",
+                    "maxLength": 60,
+                    "minLength": 4,
+                    "example": "forgot to press off duty"
+                },
+                "special": {
+                    "type": "string",
+                    "enum": [
+                        "personal_conveyance",
+                        "yard_moves"
+                    ]
+                },
+                "started_at": {
+                    "type": "string",
+                    "example": "2026-11-10T16:00:00-06:00"
+                },
+                "status": {
+                    "description": "driving is not accepted: the ELD records it.",
+                    "type": "string",
+                    "enum": [
+                        "off_duty",
+                        "sleeper_berth",
+                        "on_duty"
+                    ],
+                    "example": "off_duty"
+                }
+            }
+        },
         "handler.DutySegmentResponse": {
             "type": "object",
             "properties": {
@@ -7727,6 +8001,10 @@
                     "type": "string",
                     "format": "uuid"
                 },
+                "edit_reason": {
+                    "type": "string",
+                    "example": "forgot to press off duty"
+                },
                 "engine_hours": {
                     "type": "number",
                     "example": 8012.3
@@ -7734,6 +8012,10 @@
                 "id": {
                     "type": "string",
                     "format": "uuid"
+                },
+                "inactivated_at": {
+                    "description": "On a replaced record: when the edit took it out.",
+                    "type": "string"
                 },
                 "latitude": {
                     "type": "number",
@@ -7757,6 +8039,20 @@
                         "driver"
                     ],
                     "example": "driver"
+                },
+                "record_status": {
+                    "description": "active = part of the log; inactive = replaced by an edit (history).",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "inactive"
+                    ],
+                    "example": "active"
+                },
+                "replaces": {
+                    "description": "On an edit: the record it replaced. On an edit or an added record: why.",
+                    "type": "string",
+                    "format": "uuid"
                 },
                 "special": {
                     "type": "string",

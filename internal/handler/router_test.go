@@ -195,10 +195,13 @@ var authenticatedOnlyRoutes = map[string]bool{
 	"PUT /api/v1/drivers/me/truck":    true,
 	"DELETE /api/v1/drivers/me/truck": true,
 	// A driver keeps their own logbook.
-	"GET /api/v1/drivers/me/duty-status":  true,
-	"POST /api/v1/drivers/me/duty-status": true,
-	"GET /api/v1/drivers/me/logs/:date":   true,
-	"GET /api/v1/billing/config":          true,
+	"GET /api/v1/drivers/me/duty-status":               true,
+	"POST /api/v1/drivers/me/duty-status":              true,
+	"GET /api/v1/drivers/me/logs/:date":                true,
+	"POST /api/v1/drivers/me/logs/:date/certification": true,
+	"POST /api/v1/drivers/me/duty-status/records":      true,
+	"PUT /api/v1/drivers/me/duty-status/records/:id":   true,
+	"GET /api/v1/billing/config":                       true,
 }
 
 // deviceRoutes take a device key, not a user token: a user's token is
@@ -546,6 +549,8 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "a driver's logbook is never behind the billing gate")
 	rec = send(r, http.MethodGet, "/api/v1/drivers/me/logs/2026-11-10", h)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "nor is reading it: the driver shows it at inspections")
+	rec = send(r, http.MethodPost, "/api/v1/drivers/me/duty-status/records", h)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "nor is fixing it")
 
 	// Billing and the company itself stay reachable, or a blocked company
 	// could never pay. (400 = the handler ran: the gate let it through.)

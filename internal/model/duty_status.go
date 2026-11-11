@@ -78,4 +78,12 @@ type DutyStatusEvent struct {
 	Note      *string
 	CreatedBy *uuid.UUID // the user who entered it; nil for auto events
 	CreatedAt time.Time
+
+	// Edits (9e). An edit makes a new active record and makes the old one
+	// inactive; nothing is deleted.
+	RecordStatus  RecordStatus // "" is read as active
+	Replaces      *uuid.UUID   // on an edit: the record it changed
+	EditReason    *string      // on an edit or an added record: why
+	InactivatedAt *time.Time   // on a replaced record: when
+	InactivatedBy *uuid.UUID
 }

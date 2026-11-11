@@ -17,24 +17,34 @@ import (
 	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
-// memDutyEvents is an in-memory logbook with the database's one rule:
-// one event per driver per instant.
+// memDutyEvents is an in-memory logbook with the database's rules: one
+// ACTIVE record per driver per instant, a version replaced once; reads see
+// active records only.
 type memDutyEvents struct {
-	rows     []model.DutyStatusEvent
-	lockedIn bool // the driver was locked before the first read
-	drivers  *memDutyDrivers
+	rows    []model.DutyStatusEvent
+	certs   []model.LogCertification
+	drivers *memDutyDrivers
+	now     func() time.Time // the database's now(): created_at, inactivated_at
 }
+
+func active(r model.DutyStatusEvent) bool { return r.RecordStatus != model.RecordInactive }
 
 func (m *memDutyEvents) Insert(ctx context.Context, e model.DutyStatusEvent) (*model.DutyStatusEvent, error) {
 	if !inTx(ctx) {
 		return nil, errors.New("insert outside a transaction")
 	}
 	for _, r := range m.rows {
-		if r.DriverID == e.DriverID && r.StartedAt.Equal(e.StartedAt) {
+		if active(r) && r.DriverID == e.DriverID && r.StartedAt.Equal(e.StartedAt) {
 			return nil, model.ErrDutyStatusTaken
 		}
+		if e.Replaces != nil && r.Replaces != nil && *r.Replaces == *e.Replaces {
+			return nil, model.ErrRecordReplaced
+		}
 	}
-	e.ID, e.CreatedAt = uuid.New(), e.StartedAt
+	e.ID, e.CreatedAt, e.RecordStatus = uuid.New(), e.StartedAt, model.RecordActive
+	if m.now != nil {
+		e.CreatedAt = m.now()
+	}
 	m.rows = append(m.rows, e)
 	sort.Slice(m.rows, func(i, j int) bool { return m.rows[i].StartedAt.Before(m.rows[j].StartedAt) })
 	return &e, nil
@@ -46,7 +56,7 @@ func (m *memDutyEvents) At(ctx context.Context, driverID uuid.UUID, at time.Time
 	}
 	var found *model.DutyStatusEvent
 	for i := range m.rows {
-		if r := m.rows[i]; r.DriverID == driverID && !r.StartedAt.After(at) {
+		if r := m.rows[i]; active(r) && r.DriverID == driverID && !r.StartedAt.After(at) {
 			found = &r
 		}
 	}
@@ -59,7 +69,7 @@ func (m *memDutyEvents) At(ctx context.Context, driverID uuid.UUID, at time.Time
 func (m *memDutyEvents) ListPeriod(_ context.Context, driverID uuid.UUID, from, to time.Time) ([]model.DutyStatusEvent, error) {
 	var out []model.DutyStatusEvent
 	for _, r := range m.rows { // sorted by StartedAt
-		if r.DriverID != driverID || !r.StartedAt.Before(to) {
+		if !active(r) || r.DriverID != driverID || !r.StartedAt.Before(to) {
 			continue
 		}
 		if !r.StartedAt.After(from) && len(out) > 0 {
@@ -68,6 +78,56 @@ func (m *memDutyEvents) ListPeriod(_ context.Context, driverID uuid.UUID, from, 
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+func (m *memDutyEvents) ListReplaced(_ context.Context, driverID uuid.UUID, from, to time.Time) ([]model.DutyStatusEvent, error) {
+	var out []model.DutyStatusEvent
+	for _, r := range m.rows {
+		if !active(r) && r.DriverID == driverID && !r.StartedAt.Before(from) && r.StartedAt.Before(to) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (m *memDutyEvents) GetByID(_ context.Context, id uuid.UUID) (*model.DutyStatusEvent, error) {
+	for _, r := range m.rows {
+		if r.ID == id {
+			return &r, nil
+		}
+	}
+	return nil, model.ErrNotFound
+}
+
+func (m *memDutyEvents) Inactivate(ctx context.Context, id uuid.UUID, by uuid.UUID) error {
+	if !inTx(ctx) {
+		return errors.New("inactivate outside a transaction")
+	}
+	for i, r := range m.rows {
+		if r.ID == id && active(r) {
+			at := m.now()
+			m.rows[i].RecordStatus, m.rows[i].InactivatedAt, m.rows[i].InactivatedBy = model.RecordInactive, &at, &by
+			return nil
+		}
+	}
+	return model.ErrRecordReplaced
+}
+
+func (m *memDutyEvents) Certify(_ context.Context, c model.LogCertification) (*model.LogCertification, error) {
+	c.ID, c.CertifiedAt = uuid.New(), m.now()
+	m.certs = append(m.certs, c)
+	return &c, nil
+}
+
+func (m *memDutyEvents) LastCertification(_ context.Context, driverID uuid.UUID, date string) (*time.Time, error) {
+	var last *time.Time
+	for _, c := range m.certs {
+		if c.DriverID == driverID && c.Date == date && (last == nil || c.CertifiedAt.After(*last)) {
+			at := c.CertifiedAt
+			last = &at
+		}
+	}
+	return last, nil
 }
 
 type memDutyDrivers struct {
@@ -177,6 +237,7 @@ func newDutyFixture() *dutyFixture {
 	f.svc = NewDutyStatusService(&fakeTx{}, f.events, drivers, f.stints, f.devices,
 		memDutyCompanies{company: "America/Chicago"})
 	f.svc.now = func() time.Time { return f.clock }
+	f.events.now = f.svc.now
 	return f
 }
 
@@ -625,5 +686,248 @@ func TestDutyStatusService_DailyLog(t *testing.T) {
 			require.ErrorAs(t, err, &vErr, date)
 			assert.Equal(t, msg, vErr.Fields["date"], date)
 		}
+	})
+}
+
+// editFixture: yesterday (Nov 10, all UTC) as the ELD and the driver left
+// it, and the driver forgot to go off duty after unloading.
+//
+//	10:00 on_duty (driver)   pre-trip
+//	11:00 driving (auto)
+//	15:00 on_duty (auto)     stopped 5 minutes: unloading
+type editFixture struct {
+	*dutyFixture
+	preTrip, drive, unload model.DutyStatusEvent
+	inTx                   context.Context
+}
+
+func newEditFixture(t *testing.T) *editFixture {
+	t.Helper()
+	f := &editFixture{dutyFixture: newDutyFixture(), inTx: context.WithValue(context.Background(), inTxKey{}, true)}
+	f.board(model.AssignmentPrimary)
+	add := func(s model.DutyStatus, h int, origin model.DutyOrigin) model.DutyStatusEvent {
+		e, err := f.events.Insert(f.inTx, model.DutyStatusEvent{CompanyID: f.driver.CompanyID, DriverID: f.driver.ID,
+			Status: s, StartedAt: yesterday(h, 0), Origin: origin, TruckID: &f.truck})
+		require.NoError(t, err)
+		return *e
+	}
+	f.preTrip = add(model.DutyOnDuty, 10, model.DutyOriginDriver)
+	f.drive = add(model.DutyDriving, 11, model.DutyOriginAuto)
+	f.unload = add(model.DutyOnDuty, 15, model.DutyOriginAuto)
+	return f
+}
+
+func yesterday(h, m int) time.Time { return time.Date(2026, 11, 10, h, m, 0, 0, time.UTC) }
+
+func record(s model.DutyStatus, at time.Time) DutyRecordInput {
+	return DutyRecordInput{Status: s, StartedAt: at, Reason: "forgot to press the button"}
+}
+
+func (f *editFixture) statuses() (out []string) {
+	for _, r := range f.events.rows {
+		if active(r) {
+			out = append(out, string(r.Status)+"@"+r.StartedAt.Format("15:04"))
+		}
+	}
+	return out
+}
+
+func TestDutyStatusService_AddMyRecord(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the forgotten off duty", func(t *testing.T) {
+		f := newEditFixture(t)
+
+		e, err := f.svc.AddMyRecord(ctx, f.me, record(model.DutyOffDuty, yesterday(16, 0)))
+
+		require.NoError(t, err)
+		assert.Equal(t, model.DutyOriginDriver, e.Origin)
+		assert.Equal(t, "forgot to press the button", *e.EditReason)
+		assert.Nil(t, e.Replaces, "added, not a new version of anything")
+		assert.Equal(t, []string{"on_duty@10:00", "driving@11:00", "on_duty@15:00", "off_duty@16:00"}, f.statuses())
+	})
+
+	t.Run("never inside a drive", func(t *testing.T) {
+		f := newEditFixture(t)
+
+		_, err := f.svc.AddMyRecord(ctx, f.me, record(model.DutyOffDuty, yesterday(13, 0)))
+
+		assert.ErrorIs(t, err, model.ErrEditChangesDriving, "it would cut 11:00-15:00 driving in two")
+		assert.Len(t, f.statuses(), 3)
+	})
+
+	t.Run("not at an instant already taken", func(t *testing.T) {
+		f := newEditFixture(t)
+		_, err := f.svc.AddMyRecord(ctx, f.me, record(model.DutySleeperBerth, yesterday(10, 0)))
+		assert.ErrorIs(t, err, model.ErrDutyStatusTaken)
+	})
+
+	t.Run("not while driving now: that would end the drive", func(t *testing.T) {
+		f := newEditFixture(t)
+		f.clock = yesterday(12, 0) // the drive is still going
+
+		_, err := f.svc.AddMyRecord(ctx, f.me, record(model.DutyOffDuty, yesterday(11, 30)))
+
+		assert.ErrorIs(t, err, model.ErrEditChangesDriving)
+	})
+}
+
+func TestDutyStatusService_ChangeMyRecord(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("relabel: the old version stays as history", func(t *testing.T) {
+		f := newEditFixture(t)
+
+		e, err := f.svc.ChangeMyRecord(ctx, f.me, f.unload.ID, record(model.DutyOffDuty, f.unload.StartedAt))
+
+		require.NoError(t, err)
+		assert.Equal(t, f.unload.ID, *e.Replaces)
+		assert.Equal(t, model.DutyOriginDriver, e.Origin, "the driver's version now")
+		assert.Equal(t, f.truck, *e.TruckID, "same moment, same place")
+		assert.Equal(t, []string{"on_duty@10:00", "driving@11:00", "off_duty@15:00"}, f.statuses())
+
+		old, err := f.events.GetByID(ctx, f.unload.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.RecordInactive, old.RecordStatus)
+		assert.Equal(t, model.DutyOnDuty, old.Status, "untouched")
+		assert.Equal(t, f.me.UserID, *old.InactivatedBy)
+	})
+
+	t.Run("moving a record that does not touch driving", func(t *testing.T) {
+		f := newEditFixture(t)
+
+		_, err := f.svc.ChangeMyRecord(ctx, f.me, f.preTrip.ID, record(model.DutyOnDuty, yesterday(9, 30)))
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"on_duty@09:30", "driving@11:00", "on_duty@15:00"}, f.statuses())
+	})
+
+	t.Run("every way of changing the drive is refused", func(t *testing.T) {
+		for name, in := range map[string]DutyRecordInput{
+			"the stop moved earlier: shorter drive":   record(model.DutyOnDuty, yesterday(14, 0)),
+			"the stop moved later: longer drive":      record(model.DutyOnDuty, yesterday(16, 0)),
+			"the pre-trip moved into the drive":       record(model.DutyOnDuty, yesterday(11, 30)),
+			"the pre-trip moved onto the drive start": record(model.DutyOnDuty, yesterday(11, 0)),
+		} {
+			t.Run(name, func(t *testing.T) {
+				f := newEditFixture(t)
+				target := f.unload
+				if strings.HasPrefix(name, "the pre-trip") {
+					target = f.preTrip
+				}
+
+				_, err := f.svc.ChangeMyRecord(ctx, f.me, target.ID, in)
+
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, model.ErrEditChangesDriving) || errors.Is(err, model.ErrDutyStatusTaken), err)
+				assert.Equal(t, []string{"on_duty@10:00", "driving@11:00", "on_duty@15:00"}, f.statuses(), "nothing changed")
+			})
+		}
+	})
+
+	t.Run("driving itself is not editable", func(t *testing.T) {
+		f := newEditFixture(t)
+		_, err := f.svc.ChangeMyRecord(ctx, f.me, f.drive.ID, record(model.DutyOnDuty, f.drive.StartedAt))
+		assert.ErrorIs(t, err, model.ErrDrivingNotEditable)
+	})
+
+	t.Run("only the newest version", func(t *testing.T) {
+		f := newEditFixture(t)
+		_, err := f.svc.ChangeMyRecord(ctx, f.me, f.unload.ID, record(model.DutyOffDuty, f.unload.StartedAt))
+		require.NoError(t, err)
+
+		_, err = f.svc.ChangeMyRecord(ctx, f.me, f.unload.ID, record(model.DutySleeperBerth, f.unload.StartedAt))
+
+		assert.ErrorIs(t, err, model.ErrRecordReplaced)
+	})
+
+	t.Run("only your own records", func(t *testing.T) {
+		f := newEditFixture(t)
+		// Bob drives for the same company; his record is in the same store.
+		bob := model.Driver{ID: uuid.New(), UserID: uuid.New(), CompanyID: f.driver.CompanyID}
+		f.events.drivers.byUser[bob.UserID] = bob
+		bobs, err := f.events.Insert(f.inTx, model.DutyStatusEvent{CompanyID: bob.CompanyID, DriverID: bob.ID,
+			Status: model.DutyOffDuty, StartedAt: yesterday(12, 0), Origin: model.DutyOriginDriver})
+		require.NoError(t, err)
+
+		_, err = f.svc.ChangeMyRecord(ctx, f.me, bobs.ID, record(model.DutySleeperBerth, bobs.StartedAt))
+		assert.ErrorIs(t, err, model.ErrNotFound, "Bob's record does not exist for Ali")
+
+		stranger := auth.Principal{UserID: uuid.New(), CompanyID: f.me.CompanyID}
+		_, err = f.svc.ChangeMyRecord(ctx, stranger, f.preTrip.ID, record(model.DutyOffDuty, f.preTrip.StartedAt))
+		assert.ErrorIs(t, err, model.ErrNotFound, "not a driver")
+	})
+
+	t.Run("refused input", func(t *testing.T) {
+		f := newEditFixture(t)
+		noReason := record(model.DutyOffDuty, f.unload.StartedAt)
+		noReason.Reason = " ok "
+		cases := map[string]struct {
+			in    DutyRecordInput
+			field string
+		}{
+			"nothing changes":   {record(model.DutyOnDuty, f.unload.StartedAt), "status"},
+			"no real reason":    {noReason, "reason"},
+			"in the future":     {record(model.DutyOffDuty, f.clock.Add(time.Minute)), "started_at"},
+			"older than 8 days": {record(model.DutyOffDuty, f.clock.Add(-9*24*time.Hour)), "started_at"},
+			"driving":           {record(model.DutyDriving, f.unload.StartedAt), "status"},
+			"no time":           {record(model.DutyOffDuty, time.Time{}), "started_at"},
+		}
+		for name, c := range cases {
+			t.Run(name, func(t *testing.T) {
+				_, err := f.svc.ChangeMyRecord(ctx, f.me, f.unload.ID, c.in)
+				var vErr *validation.ValidationError
+				require.ErrorAs(t, err, &vErr)
+				assert.Contains(t, vErr.Fields, c.field)
+			})
+		}
+	})
+}
+
+func TestDutyStatusService_CertifyMyLog(t *testing.T) {
+	ctx := context.Background()
+	f := newEditFixture(t)
+	f.clock = f.clock.Add(time.Hour) // after the records were written
+
+	log, certified, err := f.svc.CertifyMyLog(ctx, f.me, "2026-11-10")
+	require.NoError(t, err)
+	assert.True(t, certified)
+	assert.True(t, log.Certified())
+
+	t.Run("signing an unchanged day again changes nothing", func(t *testing.T) {
+		_, certified, err := f.svc.CertifyMyLog(ctx, f.me, "2026-11-10")
+		require.NoError(t, err)
+		assert.False(t, certified)
+		assert.Len(t, f.events.certs, 1)
+	})
+
+	t.Run("an edit undoes the signature; the day is signed again", func(t *testing.T) {
+		f.clock = f.clock.Add(time.Hour)
+		_, err := f.svc.ChangeMyRecord(ctx, f.me, f.unload.ID, record(model.DutyOffDuty, f.unload.StartedAt))
+		require.NoError(t, err)
+
+		log, err := f.svc.MyDailyLog(ctx, f.me, "2026-11-10")
+		require.NoError(t, err)
+		assert.False(t, log.Certified(), "changed after the signature")
+		require.Len(t, log.History, 1, "the replaced version is shown")
+		assert.Equal(t, f.unload.ID, log.History[0].ID)
+
+		f.clock = f.clock.Add(time.Minute)
+		log, certified, err := f.svc.CertifyMyLog(ctx, f.me, "2026-11-10")
+		require.NoError(t, err)
+		assert.True(t, certified)
+		assert.True(t, log.Certified())
+		assert.Len(t, f.events.certs, 2, "append-only: both signatures are kept")
+	})
+
+	t.Run("refused days", func(t *testing.T) {
+		var vErr *validation.ValidationError
+		_, _, err := f.svc.CertifyMyLog(ctx, f.me, "2026-11-01")
+		require.ErrorAs(t, err, &vErr)
+		assert.Equal(t, "has no records to certify", vErr.Fields["date"])
+
+		_, _, err = f.svc.CertifyMyLog(ctx, f.me, "2026-12-01")
+		require.ErrorAs(t, err, &vErr)
+		assert.Equal(t, "is in the future", vErr.Fields["date"])
 	})
 }

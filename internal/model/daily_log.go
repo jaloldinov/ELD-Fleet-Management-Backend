@@ -37,6 +37,34 @@ type DailyLog struct {
 	// Unrecorded: the part of the day before the driver's first record ever
 	// (a new driver). Totals + Unrecorded always equal Until - Start.
 	Unrecorded time.Duration
+
+	// History: the day's records that edits replaced (inactive), oldest first.
+	History []DutyStatusEvent
+	// LastChangeAt: when the day's log last changed (a record written or
+	// replaced). Zero for a day with no records.
+	LastChangeAt time.Time
+	// CertifiedAt: the driver's latest signature of the day; nil = never.
+	CertifiedAt *time.Time
+}
+
+// Certified: signed, and not changed since. A day edited (or recorded on)
+// after its signature needs signing again.
+func (l DailyLog) Certified() bool {
+	return l.CertifiedAt != nil && !l.CertifiedAt.Before(l.LastChangeAt)
+}
+
+// SetHistory adds the replaced records and works out LastChangeAt from
+// them and the records in the day's segments.
+func (l *DailyLog) SetHistory(inactive []DutyStatusEvent) {
+	l.History = inactive
+	for _, sg := range l.Segments {
+		l.LastChangeAt = maxTime(l.LastChangeAt, sg.Event.CreatedAt)
+	}
+	for _, e := range inactive {
+		if e.InactivatedAt != nil {
+			l.LastChangeAt = maxTime(l.LastChangeAt, *e.InactivatedAt)
+		}
+	}
 }
 
 // DayBounds returns the local midnight that starts date (YYYY-MM-DD) in loc

@@ -23,6 +23,11 @@ type dutyEventResp struct {
 	OdometerMi  *float64 `json:"odometer_mi"`
 	EngineHours *float64 `json:"engine_hours"`
 	Note        *string  `json:"note"`
+
+	RecordStatus  string  `json:"record_status"`
+	Replaces      *string `json:"replaces"`
+	EditReason    *string `json:"edit_reason"`
+	InactivatedAt *string `json:"inactivated_at"`
 }
 
 type myDutyResp struct {
@@ -228,7 +233,13 @@ type dailyLogResp struct {
 		Driving      int64 `json:"driving"`
 		OnDuty       int64 `json:"on_duty"`
 	} `json:"totals"`
-	UnrecordedSeconds int64 `json:"unrecorded_seconds"`
+	UnrecordedSeconds int64           `json:"unrecorded_seconds"`
+	History           []dutyEventResp `json:"history"`
+	Certification     struct {
+		Certified    bool    `json:"certified"`
+		CertifiedAt  *string `json:"certified_at"`
+		LastChangeAt *string `json:"last_change_at"`
+	} `json:"certification"`
 }
 
 // TestDailyLog: yesterday as the driver and the office see it, midnight
@@ -317,5 +328,128 @@ func TestDailyLog(t *testing.T) {
 		e := aliC.fail(t, http.MethodGet, "/api/v1/drivers/me/logs/"+today.AddDate(0, 0, 2).Format(time.DateOnly), nil, http.StatusBadRequest)
 		assert.Equal(t, "is in the future", e.Details["date"])
 		aliC.fail(t, http.MethodGet, "/api/v1/drivers/me/logs/yesterday", nil, http.StatusBadRequest)
+	})
+}
+
+// TestLogEdits: the driver fixes yesterday (a forgotten record, a wrong
+// one) and signs it. Every version stays; driving never changes.
+func TestLogEdits(t *testing.T) {
+	tn := newTenant(t)
+	ali, aliC := tn.newDriver(t)
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+	y, m, d := time.Now().In(chicago).AddDate(0, 0, -1).Date()
+	yesterday := time.Date(y, m, d, 0, 0, 0, 0, chicago)
+	date := yesterday.Format(time.DateOnly)
+	at := func(h int) string { return yesterday.Add(time.Duration(h) * time.Hour).Format(time.RFC3339) }
+
+	// Fixture, not API: yesterday as the ELD and the driver left it.
+	ids := map[string]string{}
+	for _, e := range []struct {
+		name, status, origin string
+		h                    int
+	}{
+		{"pre-trip", "on_duty", "driver", 6},
+		{"drive", "driving", "auto", 7},
+		{"unload", "on_duty", "auto", 11},
+	} {
+		var id string
+		require.NoError(t, testDB.QueryRow(t.Context(), `
+			INSERT INTO duty_status_events (company_id, driver_id, status, started_at, origin)
+			VALUES ($1, $2, $3, $4, $5) RETURNING id`, tn.ID, ali.ID, e.status, yesterday.Add(time.Duration(e.h)*time.Hour), e.origin,
+		).Scan(&id))
+		ids[e.name] = id
+	}
+	logOf := func(t *testing.T) dailyLogResp {
+		t.Helper()
+		var l dailyLogResp
+		aliC.do(t, http.MethodGet, "/api/v1/drivers/me/logs/"+date, nil, http.StatusOK, &l)
+		return l
+	}
+	certify := func(t *testing.T, want int) dailyLogResp {
+		t.Helper()
+		var l dailyLogResp
+		aliC.do(t, http.MethodPost, "/api/v1/drivers/me/logs/"+date+"/certification", nil, want, &l)
+		return l
+	}
+	const records = "/api/v1/drivers/me/duty-status/records"
+
+	t.Run("sign the day; signing again changes nothing", func(t *testing.T) {
+		assert.False(t, logOf(t).Certification.Certified)
+		l := certify(t, http.StatusCreated)
+		assert.True(t, l.Certification.Certified)
+		certify(t, http.StatusOK)
+	})
+
+	t.Run("add the forgotten off duty: the signature no longer holds", func(t *testing.T) {
+		var e dutyEventResp
+		aliC.do(t, http.MethodPost, records, map[string]any{
+			"status": "off_duty", "started_at": at(12), "reason": "forgot to press off duty",
+		}, http.StatusCreated, &e)
+		assert.Equal(t, "forgot to press off duty", *e.EditReason)
+		assert.Nil(t, e.Replaces)
+
+		l := logOf(t)
+		assert.False(t, l.Certification.Certified, "changed after the signature")
+		assert.Len(t, l.Segments, 4)
+	})
+
+	t.Run("correct a wrong record: the old version stays as history", func(t *testing.T) {
+		var e dutyEventResp
+		aliC.do(t, http.MethodPut, records+"/"+ids["unload"], map[string]any{
+			"status": "on_duty", "special": "yard_moves", "started_at": at(11), "reason": "was moving in the yard",
+		}, http.StatusOK, &e)
+		require.NotNil(t, e.Replaces)
+		assert.Equal(t, ids["unload"], *e.Replaces)
+
+		l := logOf(t)
+		require.Len(t, l.History, 1)
+		assert.Equal(t, ids["unload"], l.History[0].ID)
+		assert.Equal(t, "inactive", l.History[0].RecordStatus)
+		assert.Nil(t, l.History[0].Special, "the old version is unchanged")
+		assert.Equal(t, int64(4*3600), l.Totals.Driving, "driving untouched")
+	})
+
+	t.Run("driving cannot be edited, or edited around", func(t *testing.T) {
+		e := aliC.fail(t, http.MethodPut, records+"/"+ids["drive"], map[string]any{
+			"status": "on_duty", "started_at": at(7), "reason": "was not driving",
+		}, http.StatusConflict)
+		assert.Contains(t, e.Message, "driving")
+
+		aliC.fail(t, http.MethodPost, records, map[string]any{
+			"status": "off_duty", "started_at": at(9), "reason": "lunch in the cab",
+		}, http.StatusConflict) // would cut the drive in two
+
+		aliC.fail(t, http.MethodPut, records+"/"+ids["pre-trip"], map[string]any{
+			"status": "on_duty", "started_at": at(8), "reason": "pre-trip ran late",
+		}, http.StatusConflict) // would move into the drive
+
+		aliC.fail(t, http.MethodPut, records+"/"+ids["unload"], map[string]any{
+			"status": "off_duty", "started_at": at(11), "reason": "edit the old one again",
+		}, http.StatusConflict) // already replaced: edit the newest version
+
+		assert.Equal(t, int64(4*3600), logOf(t).Totals.Driving)
+	})
+
+	t.Run("sign again; the office sees the same", func(t *testing.T) {
+		assert.True(t, certify(t, http.StatusCreated).Certification.Certified)
+
+		var l dailyLogResp
+		tn.Admin.do(t, http.MethodGet, "/api/v1/drivers/"+ali.ID+"/logs/"+date, nil, http.StatusOK, &l)
+		assert.True(t, l.Certification.Certified)
+		assert.Len(t, l.History, 1)
+	})
+
+	t.Run("refused input", func(t *testing.T) {
+		e := aliC.fail(t, http.MethodPost, records, map[string]any{"status": "off_duty", "started_at": at(13)}, http.StatusBadRequest)
+		assert.Contains(t, e.Details, "reason")
+		e = aliC.fail(t, http.MethodPost, records, map[string]any{
+			"status": "off_duty", "started_at": time.Now().Add(time.Hour).Format(time.RFC3339), "reason": "from the future",
+		}, http.StatusBadRequest)
+		assert.Contains(t, e.Details, "started_at")
+		_, bobC := tn.newDriver(t)
+		bobC.fail(t, http.MethodPut, records+"/"+ids["pre-trip"], map[string]any{
+			"status": "off_duty", "started_at": at(6), "reason": "not my record",
+		}, http.StatusNotFound)
 	})
 }

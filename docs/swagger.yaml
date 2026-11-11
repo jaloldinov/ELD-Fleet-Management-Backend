@@ -208,6 +208,17 @@ definitions:
         example: true
         type: boolean
     type: object
+  handler.CertificationResponse:
+    properties:
+      certified:
+        type: boolean
+      certified_at:
+        description: the latest signature; null = never
+        type: string
+      last_change_at:
+        description: null = no records
+        type: string
+    type: object
   handler.ChangeDutyStatusRequest:
     properties:
       note:
@@ -555,6 +566,8 @@ definitions:
     type: object
   handler.DailyLogResponse:
     properties:
+      certification:
+        $ref: '#/definitions/handler.CertificationResponse'
       date:
         example: "2026-11-10"
         type: string
@@ -564,6 +577,11 @@ definitions:
       ends_at:
         example: "2026-11-11T00:00:00-06:00"
         type: string
+      history:
+        description: Records of the day that edits replaced, oldest first.
+        items:
+          $ref: '#/definitions/handler.DutyStatusEventResponse'
+        type: array
       recorded_until:
         description: 'The log is known up to here: ends_at for a past day, now for
           today.'
@@ -790,6 +808,34 @@ definitions:
       truck:
         $ref: '#/definitions/handler.TruckBoardResponse'
     type: object
+  handler.DutyRecordRequest:
+    properties:
+      note:
+        maxLength: 500
+        type: string
+      reason:
+        description: 'Why the log is being fixed: 4 to 60 characters, required.'
+        example: forgot to press off duty
+        maxLength: 60
+        minLength: 4
+        type: string
+      special:
+        enum:
+        - personal_conveyance
+        - yard_moves
+        type: string
+      started_at:
+        example: "2026-11-10T16:00:00-06:00"
+        type: string
+      status:
+        description: 'driving is not accepted: the ELD records it.'
+        enum:
+        - off_duty
+        - sleeper_berth
+        - on_duty
+        example: off_duty
+        type: string
+    type: object
   handler.DutySegmentResponse:
     properties:
       duration_seconds:
@@ -811,11 +857,17 @@ definitions:
       driver_id:
         format: uuid
         type: string
+      edit_reason:
+        example: forgot to press off duty
+        type: string
       engine_hours:
         example: 8012.3
         type: number
       id:
         format: uuid
+        type: string
+      inactivated_at:
+        description: 'On a replaced record: when the edit took it out.'
         type: string
       latitude:
         example: 32.7767
@@ -833,6 +885,18 @@ definitions:
         - auto
         - driver
         example: driver
+        type: string
+      record_status:
+        description: active = part of the log; inactive = replaced by an edit (history).
+        enum:
+        - active
+        - inactive
+        example: active
+        type: string
+      replaces:
+        description: 'On an edit: the record it replaced. On an edit or an added record:
+          why.'
+        format: uuid
         type: string
       special:
         enum:
@@ -4416,6 +4480,109 @@ paths:
       summary: Change my duty status
       tags:
       - logbook
+  /api/v1/drivers/me/duty-status/records:
+    post:
+      consumes:
+      - application/json
+      description: 'The driver enters a past status change they did not record ("I
+        went off duty at 16:00 but did not press the button"). Within the last 8 days,
+        with a reason. Refused if it would change when the driver was driving: driving
+        belongs to the ELD. The day needs certifying again. Needs a login, no extra
+        permission. Not behind the billing gate.'
+      parameters:
+      - description: The record
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.DutyRecordRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.DutyStatusEventResponse'
+        "400":
+          description: invalid status, time or reason
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "409":
+          description: would change driving, or a record starts at that moment
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Add a record I forgot
+      tags:
+      - logbook
+  /api/v1/drivers/me/duty-status/records/{id}:
+    put:
+      consumes:
+      - application/json
+      description: Replaces the record with the version in the body (the whole record).
+        The old version is kept as inactive history; the new one points to it. Not
+        for driving records, and refused if it would change when the driver was driving.
+        Within the last 8 days, with a reason. The day needs certifying again. Needs
+        a login, no extra permission. Not behind the billing gate.
+      parameters:
+      - description: Record ID (the newest version)
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The corrected record
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.DutyRecordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: the new version
+          schema:
+            $ref: '#/definitions/handler.DutyStatusEventResponse'
+        "400":
+          description: invalid id, status, time or reason, or nothing to change
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: no such record of the caller
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "409":
+          description: a driving record, would change driving, already replaced, or
+            a record starts at that moment
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Correct one of my records
+      tags:
+      - logbook
   /api/v1/drivers/me/logs/{date}:
     get:
       description: 'For the driver app (and the roadside inspector looking at it):
@@ -4455,6 +4622,51 @@ paths:
       security:
       - BearerAuth: []
       summary: My log of a day
+      tags:
+      - logbook
+  /api/v1/drivers/me/logs/{date}/certification:
+    post:
+      description: 'The driver signs the day: "my record of duty status for this 24-hour
+        period is true and correct". 201 when signed now; 200 when it was signed and
+        has not changed since. A day changed after its signature must be signed again.
+        Needs a login, no extra permission. Not behind the billing gate.'
+      parameters:
+      - description: Day, YYYY-MM-DD
+        example: "2026-11-10"
+        in: path
+        name: date
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: already signed, unchanged
+          schema:
+            $ref: '#/definitions/handler.DailyLogResponse'
+        "201":
+          description: signed
+          schema:
+            $ref: '#/definitions/handler.DailyLogResponse'
+        "400":
+          description: invalid or future date, or nothing recorded
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Certify my log of a day
       tags:
       - logbook
   /api/v1/drivers/me/truck:

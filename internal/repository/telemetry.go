@@ -157,7 +157,7 @@ func (r *TelemetryRepository) ListStopsToSettle(ctx context.Context, now time.Ti
 		 AND a.started_at <= `+due+` AND (a.ended_at IS NULL OR a.ended_at > `+due+`)
 		JOIN LATERAL (
 		    SELECT e.status FROM duty_status_events e
-		    WHERE e.driver_id = a.driver_id AND e.started_at <= `+due+`
+		    WHERE e.driver_id = a.driver_id AND e.started_at <= `+due+` AND e.record_status = 'active'
 		    ORDER BY e.started_at DESC
 		    LIMIT 1) cur ON cur.status = 'driving'
 		WHERE NOT s.moving AND s.truck_id IS NOT NULL

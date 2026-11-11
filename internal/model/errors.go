@@ -41,6 +41,10 @@ var (
 	// ErrTruckMoving: the driver is at the wheel of a moving truck; the ELD
 	// has them driving until it stops.
 	ErrTruckMoving = errors.New("the truck is moving: the duty status can be changed once it stops")
+	// Edits.
+	ErrRecordReplaced     = errors.New("this record was already changed: edit its newest version")
+	ErrDrivingNotEditable = errors.New("driving is recorded by the ELD and cannot be edited")
+	ErrEditChangesDriving = errors.New("this edit would change when the driver was driving, which only the ELD records")
 
 	// ErrInvalidCredentials is deliberately the same for "no such user" and
 	// "wrong password", so attackers cannot learn which accounts exist.

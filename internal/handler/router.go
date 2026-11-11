@@ -189,6 +189,10 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	protected.GET("/drivers/me/duty-status", h.DutyStatus.MyStatus)
 	protected.POST("/drivers/me/duty-status", h.DutyStatus.ChangeMyStatus)
 	protected.GET("/drivers/me/logs/:date", h.DutyStatus.MyDailyLog)
+	protected.POST("/drivers/me/logs/:date/certification", h.DutyStatus.CertifyMyLog)
+	// Fixing the past: a forgotten record, a wrong one (never driving).
+	protected.POST("/drivers/me/duty-status/records", h.DutyStatus.AddMyRecord)
+	protected.PUT("/drivers/me/duty-status/records/:id", h.DutyStatus.ChangeMyRecord)
 
 	// The product itself (the fleet) needs a paid-up subscription; users,
 	// companies and billing do not, so a blocked company can still pay.
