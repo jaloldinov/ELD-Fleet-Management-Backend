@@ -46,7 +46,10 @@ type Handlers struct {
 	// Driver ↔ truck assignments (Phase 3).
 	Assignment *AssignmentHandler
 	// The ELD devices themselves (Phase 4).
-	Device    *DeviceHandler
+	Device *DeviceHandler
+	// Drivers' logbooks (Phase 5).
+	DutyStatus *DutyStatusHandler
+
 	RateLimit *RateLimitHandler
 	Password  *PasswordResetHandler
 	AuditLog  *AuditLogHandler
@@ -179,6 +182,12 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	users.PATCH("/:id", perm.Require(model.PermUserUpdate), h.User.Update)
 	users.DELETE("/:id", perm.Require(model.PermUserDelete), h.User.Delete)
 	users.PUT("/:id/password", perm.Require(model.PermUserSetPassword), h.User.SetPassword)
+
+	// A driver's own logbook: login only (identity, not a permission), and
+	// NOT behind the billing gate, like the devices: hours of service must
+	// be logged by law, also while the company's payment has failed.
+	protected.GET("/drivers/me/duty-status", h.DutyStatus.MyStatus)
+	protected.POST("/drivers/me/duty-status", h.DutyStatus.ChangeMyStatus)
 
 	// The product itself (the fleet) needs a paid-up subscription; users,
 	// companies and billing do not, so a blocked company can still pay.

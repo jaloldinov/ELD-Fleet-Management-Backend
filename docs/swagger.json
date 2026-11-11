@@ -2607,6 +2607,122 @@
                 }
             }
         },
+        "/api/v1/drivers/me/duty-status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the driver app: the caller's status in force now (null if none recorded yet). Needs a login, no extra permission. Not behind the billing gate: hours of service must be logged by law.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logbook"
+                ],
+                "summary": "My duty status now",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.MyDutyStatusResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The driver presses a status button; the change starts NOW (server clock). Truck, position, odometer and engine hours are taken from the driver's truck and its ELD. Pressing the status already in force changes nothing (200 with that record); a real change is 201. Needs a login, no extra permission. Not behind the billing gate.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logbook"
+                ],
+                "summary": "Change my duty status",
+                "parameters": [
+                    {
+                        "description": "New status",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.ChangeDutyStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "already in that status",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DutyStatusEventResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "recorded",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DutyStatusEventResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid status, special or note",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "another change in the same second",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers/me/truck": {
             "get": {
                 "security": [
@@ -6687,6 +6803,34 @@
                 }
             }
         },
+        "handler.ChangeDutyStatusRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "example": "pre-trip inspection"
+                },
+                "special": {
+                    "description": "personal_conveyance only with off_duty, yard_moves only with on_duty;\nboth need a truck.",
+                    "type": "string",
+                    "enum": [
+                        "personal_conveyance",
+                        "yard_moves"
+                    ]
+                },
+                "status": {
+                    "description": "driving is not accepted: the ELD records it from the truck's movement.",
+                    "type": "string",
+                    "enum": [
+                        "off_duty",
+                        "sleeper_berth",
+                        "on_duty"
+                    ],
+                    "example": "on_duty"
+                }
+            }
+        },
         "handler.ChangeSubscriptionRequest": {
             "type": "object",
             "properties": {
@@ -7368,6 +7512,74 @@
                 },
                 "truck": {
                     "$ref": "#/definitions/handler.TruckBoardResponse"
+                }
+            }
+        },
+        "handler.DutyStatusEventResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "engine_hours": {
+                    "type": "number",
+                    "example": 8012.3
+                },
+                "id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "latitude": {
+                    "type": "number",
+                    "example": 32.7767
+                },
+                "longitude": {
+                    "type": "number",
+                    "example": -96.797
+                },
+                "note": {
+                    "type": "string"
+                },
+                "odometer_mi": {
+                    "type": "number",
+                    "example": 120500.5
+                },
+                "origin": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "driver"
+                    ],
+                    "example": "driver"
+                },
+                "special": {
+                    "type": "string",
+                    "enum": [
+                        "personal_conveyance",
+                        "yard_moves"
+                    ]
+                },
+                "started_at": {
+                    "type": "string",
+                    "example": "2026-11-11T06:00:00Z"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "off_duty",
+                        "sleeper_berth",
+                        "driving",
+                        "on_duty"
+                    ],
+                    "example": "on_duty"
+                },
+                "truck_id": {
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -8055,6 +8267,14 @@
                     "description": "Cents collected that month (paid invoices, by payment date; refunds not subtracted).",
                     "type": "integer",
                     "example": 240000
+                }
+            }
+        },
+        "handler.MyDutyStatusResponse": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "$ref": "#/definitions/handler.DutyStatusEventResponse"
                 }
             }
         },

@@ -84,6 +84,7 @@ func newTestRouterWith(buf *bytes.Buffer, opts handler.RouterOptions, perms []mo
 		Truck:      handler.NewTruckHandler(nil),
 		ELDDevice:  handler.NewELDDeviceHandler(nil),
 		Assignment: handler.NewAssignmentHandler(nil),
+		DutyStatus: handler.NewDutyStatusHandler(nil),
 		Company:    handler.NewCompanyHandler(failingCompanyService{}),
 		RateLimit:  handler.NewRateLimitHandler(nil),
 		Password:   handler.NewPasswordResetHandler(nil, nil),
@@ -193,7 +194,10 @@ var authenticatedOnlyRoutes = map[string]bool{
 	"GET /api/v1/drivers/me/truck":    true,
 	"PUT /api/v1/drivers/me/truck":    true,
 	"DELETE /api/v1/drivers/me/truck": true,
-	"GET /api/v1/billing/config":      true,
+	// A driver keeps their own logbook.
+	"GET /api/v1/drivers/me/duty-status":  true,
+	"POST /api/v1/drivers/me/duty-status": true,
+	"GET /api/v1/billing/config":          true,
 }
 
 // deviceRoutes take a device key, not a user token: a user's token is
@@ -503,6 +507,7 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		RateLimit: handler.NewRateLimitHandler(nil), Password: handler.NewPasswordResetHandler(nil, nil),
 		AuditLog: handler.NewAuditLogHandler(nil), PaymentMethod: handler.NewPaymentMethodHandler(nil),
 		Subscription: handler.NewSubscriptionHandler(nil), Assignment: handler.NewAssignmentHandler(nil),
+		DutyStatus: handler.NewDutyStatusHandler(nil),
 	})
 	h := map[string]string{"Authorization": "Bearer company-token"}
 
@@ -525,6 +530,9 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	// let it through; the empty body is what it refused.)
 	rec := send(r, http.MethodPost, "/api/v1/device/telemetry", map[string]string{"Authorization": "Device eldk_x"})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "device telemetry is never behind the billing gate")
+	// Nor are the drivers: their logbook is the other half of that law.
+	rec = send(r, http.MethodPost, "/api/v1/drivers/me/duty-status", h)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a driver's logbook is never behind the billing gate")
 
 	// Billing and the company itself stay reachable, or a blocked company
 	// could never pay. (400 = the handler ran: the gate let it through.)

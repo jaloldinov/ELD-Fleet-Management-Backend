@@ -144,9 +144,10 @@ func run() error {
 	truckRepo := repository.NewTruckRepository(pool)
 	eldRepo := repository.NewELDDeviceRepository(pool)
 	eldStintRepo := repository.NewELDAssignmentRepository(pool)
+	driverStintRepo := repository.NewDriverAssignmentRepository(pool)
 	assignmentSvc := service.NewAssignmentService(service.AssignmentDeps{
 		Tx:           txManager,
-		DriverStints: repository.NewDriverAssignmentRepository(pool),
+		DriverStints: driverStintRepo,
 		ELDStints:    eldStintRepo,
 		Drivers:      driverRepo,
 		Devices:      eldRepo,
@@ -158,6 +159,11 @@ func run() error {
 	// The devices themselves (Authorization: Device <key>).
 	telemetryRepo := repository.NewTelemetryRepository(pool)
 	deviceSvc := service.NewDeviceService(txManager, eldRepo, eldStintRepo, truckRepo, telemetryRepo)
+
+	// Drivers' logbooks: where a status change happened comes from the
+	// driver's truck and its ELD.
+	dutyStatusSvc := service.NewDutyStatusService(txManager, repository.NewDutyStatusRepository(pool),
+		driverRepo, driverStintRepo, eldStintRepo)
 
 	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)
@@ -356,6 +362,7 @@ func run() error {
 		ELDDevice:     handler.NewELDDeviceHandler(service.NewELDDeviceService(eldRepo, assignmentSvc, telemetryRepo, companyRepo, auditor)),
 		Device:        handler.NewDeviceHandler(deviceSvc),
 		Assignment:    handler.NewAssignmentHandler(assignmentSvc),
+		DutyStatus:    handler.NewDutyStatusHandler(dutyStatusSvc),
 		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),
 		Password:      handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
 		AuditLog:      handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),

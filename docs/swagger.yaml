@@ -208,6 +208,30 @@ definitions:
         example: true
         type: boolean
     type: object
+  handler.ChangeDutyStatusRequest:
+    properties:
+      note:
+        example: pre-trip inspection
+        maxLength: 500
+        type: string
+      special:
+        description: |-
+          personal_conveyance only with off_duty, yard_moves only with on_duty;
+          both need a truck.
+        enum:
+        - personal_conveyance
+        - yard_moves
+        type: string
+      status:
+        description: 'driving is not accepted: the ELD records it from the truck''s
+          movement.'
+        enum:
+        - off_duty
+        - sleeper_berth
+        - on_duty
+        example: on_duty
+        type: string
+    type: object
   handler.ChangeSubscriptionRequest:
     properties:
       price_ids:
@@ -733,6 +757,56 @@ definitions:
       truck:
         $ref: '#/definitions/handler.TruckBoardResponse'
     type: object
+  handler.DutyStatusEventResponse:
+    properties:
+      created_at:
+        type: string
+      driver_id:
+        format: uuid
+        type: string
+      engine_hours:
+        example: 8012.3
+        type: number
+      id:
+        format: uuid
+        type: string
+      latitude:
+        example: 32.7767
+        type: number
+      longitude:
+        example: -96.797
+        type: number
+      note:
+        type: string
+      odometer_mi:
+        example: 120500.5
+        type: number
+      origin:
+        enum:
+        - auto
+        - driver
+        example: driver
+        type: string
+      special:
+        enum:
+        - personal_conveyance
+        - yard_moves
+        type: string
+      started_at:
+        example: "2026-11-11T06:00:00Z"
+        type: string
+      status:
+        enum:
+        - off_duty
+        - sleeper_berth
+        - driving
+        - on_duty
+        example: on_duty
+        type: string
+      truck_id:
+        format: uuid
+        type: string
+    type: object
   handler.ELDAssignmentResponse:
     properties:
       company_id:
@@ -1230,6 +1304,11 @@ definitions:
           not subtracted).
         example: 240000
         type: integer
+    type: object
+  handler.MyDutyStatusResponse:
+    properties:
+      current:
+        $ref: '#/definitions/handler.DutyStatusEventResponse'
     type: object
   handler.OutstandingResponse:
     properties:
@@ -4140,6 +4219,86 @@ paths:
       summary: My driver profile
       tags:
       - drivers
+  /api/v1/drivers/me/duty-status:
+    get:
+      description: 'For the driver app: the caller''s status in force now (null if
+        none recorded yet). Needs a login, no extra permission. Not behind the billing
+        gate: hours of service must be logged by law.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.MyDutyStatusResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: My duty status now
+      tags:
+      - logbook
+    post:
+      consumes:
+      - application/json
+      description: The driver presses a status button; the change starts NOW (server
+        clock). Truck, position, odometer and engine hours are taken from the driver's
+        truck and its ELD. Pressing the status already in force changes nothing (200
+        with that record); a real change is 201. Needs a login, no extra permission.
+        Not behind the billing gate.
+      parameters:
+      - description: New status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.ChangeDutyStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: already in that status
+          schema:
+            $ref: '#/definitions/handler.DutyStatusEventResponse'
+        "201":
+          description: recorded
+          schema:
+            $ref: '#/definitions/handler.DutyStatusEventResponse'
+        "400":
+          description: invalid status, special or note
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "409":
+          description: another change in the same second
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: Change my duty status
+      tags:
+      - logbook
   /api/v1/drivers/me/truck:
     delete:
       description: 'For the driver app: ends the caller''s current stint. Needs a
