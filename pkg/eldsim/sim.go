@@ -138,6 +138,7 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 		lastSend      time.Duration
 		lastHeartbeat time.Duration = -cfg.Heartbeat
 		wasOffline    bool
+		engineWasOn   bool
 	)
 
 	flush := func() error {
@@ -182,12 +183,24 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 		}
 		wasOffline = off
 
-		if tr.EngineOn {
+		// Readings while the engine runs, plus ONE as it shuts down: a real
+		// ELD records the engine shut-down. Without it the last reading
+		// before a stop could still be moving (the truck stops between two
+		// samples), and the server could not tell when the truck stood
+		// still: a 20-minute fuel stop would look like driving.
+		if tr.EngineOn || engineWasOn {
+			// Simulated time moves in Sample steps and can overshoot the
+			// trip's end (the final shut-down) by up to one: that instant is
+			// still in the future of the real clock. The trip ends at total.
+			at := now
+			if sim > total {
+				at = simStart.Add(total)
+			}
 			cfg.Memory.LastSeq++
 			pos := tr.Position()
-			r := Reading{Seq: cfg.Memory.LastSeq, RecordedAt: now.UTC(), Latitude: &pos.Lat, Longitude: &pos.Lon,
+			r := Reading{Seq: cfg.Memory.LastSeq, RecordedAt: at.UTC(), Latitude: &pos.Lat, Longitude: &pos.Lon,
 				SpeedMPH: round1(tr.SpeedMPH), OdometerMi: round1(tr.OdometerMi), EngineHours: round1(tr.EngineHours),
-				EngineOn: true}
+				EngineOn: tr.EngineOn}
 			buffer = append(buffer, r)
 			stats.Readings++
 			if stats.FirstRecorded.IsZero() {
@@ -197,6 +210,7 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 			cfg.Memory.LastRecordedAt = r.RecordedAt
 			stats.MaxBuffered = max(stats.MaxBuffered, len(buffer))
 		}
+		engineWasOn = tr.EngineOn
 
 		if !off {
 			if sim-lastSend >= cfg.SendEvery || tr.Done() {

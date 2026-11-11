@@ -242,3 +242,28 @@ func TestRun_NotBeforeInstallation(t *testing.T) {
 	assert.InDelta(t, float64(trip)/stats.Speedup, float64(clock.Now().Sub(started)), float64(time.Minute),
 		"the trip took trip/speedup of real time")
 }
+
+// Every time the engine goes off (fuel stop, arrival) the device says so
+// with one standing reading: without it the server cannot tell when the
+// truck stopped, and a parked truck would look like it was still driving.
+func TestRun_EngineShutDownIsReported(t *testing.T) {
+	cfg, api, _ := newSim(t, nil)
+
+	_, err := Run(context.Background(), cfg)
+	require.NoError(t, err)
+
+	var all []Reading
+	for _, b := range api.batches {
+		all = append(all, b...)
+	}
+	var offs []Reading
+	for i, r := range all {
+		if !r.EngineOn {
+			offs = append(offs, r)
+			assert.Zero(t, r.SpeedMPH, "standing")
+			assert.True(t, all[i-1].EngineOn, "one reading per shut-down, not one per sample while parked")
+		}
+	}
+	assert.Len(t, offs, 2, "the fuel stop and the arrival (DefaultTrip)")
+	assert.False(t, all[len(all)-1].EngineOn, "the trip ends with the engine off")
+}
