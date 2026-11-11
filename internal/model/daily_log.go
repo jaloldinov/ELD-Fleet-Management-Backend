@@ -45,6 +45,20 @@ type DailyLog struct {
 	LastChangeAt time.Time
 	// CertifiedAt: the driver's latest signature of the day; nil = never.
 	CertifiedAt *time.Time
+
+	// Violations: hours-of-service limits broken by driving on this day,
+	// cut to the day.
+	Violations []HOSViolation
+}
+
+// SetViolations keeps the parts of vs that fall in the day.
+func (l *DailyLog) SetViolations(vs []HOSViolation) {
+	for _, v := range vs {
+		v.Start, v.End = maxTime(v.Start, l.Start), minTime(v.End, l.Until)
+		if v.End.After(v.Start) {
+			l.Violations = append(l.Violations, v)
+		}
+	}
 }
 
 // Certified: signed, and not changed since. A day edited (or recorded on)

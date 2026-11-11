@@ -32,11 +32,19 @@ type hosResp struct {
 		UsedSeconds int64  `json:"used_seconds"`
 		LeftSeconds int64  `json:"left_seconds"`
 	} `json:"cycle"`
-	Rest struct {
+	Violations []violationResp `json:"violations"`
+	Rest       struct {
 		StreakSeconds       int64 `json:"streak_seconds"`
 		NewShiftInSeconds   int64 `json:"new_shift_in_seconds"`
 		CycleRestartSeconds int64 `json:"cycle_restart_in_seconds"`
 	} `json:"rest"`
+}
+
+type violationResp struct {
+	Rule      string `json:"rule"`
+	StartedAt string `json:"started_at"`
+	EndedAt   string `json:"ended_at"`
+	Seconds   int64  `json:"seconds"`
 }
 
 const hour = int64(3600)
@@ -112,5 +120,56 @@ func TestHOSClocks(t *testing.T) {
 		bobC.fail(t, http.MethodGet, "/api/v1/drivers/"+ali.ID+"/hos", nil, http.StatusForbidden)
 		newTenant(t).Admin.fail(t, http.MethodGet, "/api/v1/drivers/"+ali.ID+"/hos", nil, http.StatusNotFound)
 		tn.Admin.fail(t, http.MethodGet, "/api/v1/drivers/me/hos", nil, http.StatusNotFound)
+	})
+}
+
+// TestHOSViolations: yesterday Dan came on duty at 05:00 and drove from
+// 06:00 to 19:00 without a break. The clocks and yesterday's log both say
+// which rules he broke, and when.
+func TestHOSViolations(t *testing.T) {
+	tn := newTenant(t)
+	dan, danC := tn.newDriver(t)
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+	y, m, d := time.Now().In(chicago).AddDate(0, 0, -1).Date()
+	at := func(h int) time.Time { return time.Date(y, m, d, h, 0, 0, 0, chicago) }
+	for _, e := range []struct {
+		status, origin string
+		at             time.Time
+	}{
+		{"on_duty", "driver", at(5)},
+		{"driving", "auto", at(6)},
+		{"off_duty", "driver", at(19)},
+	} {
+		_, err := testDB.Exec(t.Context(), `
+			INSERT INTO duty_status_events (company_id, driver_id, status, started_at, origin)
+			VALUES ($1, $2, $3, $4, $5)`, tn.ID, dan.ID, e.status, e.at, e.origin)
+		require.NoError(t, err)
+	}
+	// No window_14h: 05:00 + 14 h = 19:00, and he stopped exactly then.
+	want := []violationResp{
+		{Rule: "break_30m", StartedAt: at(14).Format(time.RFC3339), EndedAt: at(19).Format(time.RFC3339), Seconds: 5 * hour},
+		{Rule: "driving_11h", StartedAt: at(17).Format(time.RFC3339), EndedAt: at(19).Format(time.RFC3339), Seconds: 2 * hour},
+	}
+
+	t.Run("the clocks list them", func(t *testing.T) {
+		var c hosResp
+		danC.do(t, http.MethodGet, "/api/v1/drivers/me/hos", nil, http.StatusOK, &c)
+		assert.Equal(t, want, c.Violations)
+	})
+
+	t.Run("so does yesterday's log", func(t *testing.T) {
+		var l struct {
+			Violations []violationResp `json:"violations"`
+		}
+		tn.Admin.do(t, http.MethodGet, "/api/v1/drivers/"+dan.ID+"/logs/"+at(0).Format(time.DateOnly), nil, http.StatusOK, &l)
+		assert.Equal(t, want, l.Violations)
+	})
+
+	t.Run("a clean driver has an empty list, not null", func(t *testing.T) {
+		_, bobC := tn.newDriver(t)
+		r := bobC.send(t, http.MethodGet, "/api/v1/drivers/me/hos", nil)
+		r.require(t, http.StatusOK)
+		assert.Contains(t, string(r.Body), `"violations":[]`)
 	})
 }

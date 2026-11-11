@@ -7798,6 +7798,13 @@ const docTemplate = `{
                     "description": "Before the driver's first record ever (a new driver).",
                     "type": "integer",
                     "example": 0
+                },
+                "violations": {
+                    "description": "Hours-of-service limits broken by driving on this day.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.HOSViolationResponse"
+                    }
                 }
             }
         },
@@ -8419,6 +8426,13 @@ const docTemplate = `{
                 },
                 "shift": {
                     "$ref": "#/definitions/handler.HOSShiftResponse"
+                },
+                "violations": {
+                    "description": "Limits broken by driving in the last 8 days, oldest first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.HOSViolationResponse"
+                    }
                 }
             }
         },
@@ -8492,6 +8506,31 @@ const docTemplate = `{
                 "used_seconds": {
                     "type": "integer",
                     "example": 28800
+                }
+            }
+        },
+        "handler.HOSViolationResponse": {
+            "type": "object",
+            "properties": {
+                "ended_at": {
+                    "type": "string"
+                },
+                "rule": {
+                    "type": "string",
+                    "enum": [
+                        "driving_11h",
+                        "window_14h",
+                        "break_30m",
+                        "cycle"
+                    ],
+                    "example": "driving_11h"
+                },
+                "seconds": {
+                    "type": "integer",
+                    "example": 1800
+                },
+                "started_at": {
+                    "type": "string"
                 }
             }
         },

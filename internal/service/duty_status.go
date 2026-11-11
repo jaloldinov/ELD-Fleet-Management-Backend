@@ -245,6 +245,16 @@ func (s *DutyStatusService) dailyLog(ctx context.Context, d model.Driver, date s
 	if log.CertifiedAt, err = s.events.LastCertification(ctx, d.ID, date); err != nil {
 		return nil, err
 	}
+
+	// The day's violations: the hours-of-service engine run up to the end
+	// of the day (or now), over enough log before it to know the shift and
+	// the cycle the day began in.
+	hosFrom := log.Until.Add(-model.HOSLookback)
+	hosEvents, err := s.events.ListPeriod(ctx, d.ID, hosFrom, log.Until)
+	if err != nil {
+		return nil, err
+	}
+	log.SetViolations(model.EvaluateHOS(hosEvents, hosFrom, log.Until, loc, company.HOSCycle).Violations)
 	return &log, nil
 }
 

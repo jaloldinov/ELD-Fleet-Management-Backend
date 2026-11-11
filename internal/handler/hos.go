@@ -34,6 +34,25 @@ type HOSClocksResponse struct {
 	Break           HOSBreakResponse `json:"break"`
 	Cycle           HOSCycleResponse `json:"cycle"`
 	Rest            HOSRestResponse  `json:"rest"`
+	// Limits broken by driving in the last 8 days, oldest first.
+	Violations []HOSViolationResponse `json:"violations"`
+}
+
+// HOSViolationResponse: driving from started_at to ended_at broke rule.
+type HOSViolationResponse struct {
+	Rule      string    `json:"rule" enums:"driving_11h,window_14h,break_30m,cycle" example:"driving_11h"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
+	Seconds   int64     `json:"seconds" example:"1800"`
+}
+
+func newHOSViolations(vs []model.HOSViolation, loc *time.Location) []HOSViolationResponse {
+	out := make([]HOSViolationResponse, 0, len(vs)) // [] not null: "none" is a list
+	for _, v := range vs {
+		out = append(out, HOSViolationResponse{Rule: string(v.Rule), StartedAt: v.Start.In(loc),
+			EndedAt: v.End.In(loc), Seconds: seconds(v.Duration())})
+	}
+	return out
 }
 
 // HOSShiftResponse: a shift begins at the first on-duty moment after 10
@@ -94,6 +113,7 @@ func newHOSClocksResponse(dc *service.DriverClocks) HOSClocksResponse {
 		Rest: HOSRestResponse{StreakSeconds: seconds(c.RestStreak),
 			NewShiftInSeconds:   seconds(max(model.ShiftRest-c.RestStreak, 0)),
 			CycleRestartSeconds: seconds(max(model.CycleRestart-c.RestStreak, 0))},
+		Violations: newHOSViolations(c.Violations, dc.Location),
 	}
 }
 

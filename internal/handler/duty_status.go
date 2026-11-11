@@ -114,6 +114,8 @@ type DailyLogResponse struct {
 	// Records of the day that edits replaced, oldest first.
 	History       []DutyStatusEventResponse `json:"history"`
 	Certification CertificationResponse     `json:"certification"`
+	// Hours-of-service limits broken by driving on this day.
+	Violations []HOSViolationResponse `json:"violations"`
 }
 
 // CertificationResponse: certified = signed and not changed since.
@@ -143,6 +145,7 @@ func newDailyLogResponse(l *model.DailyLog) DailyLogResponse {
 		r.History = append(r.History, h)
 	}
 	r.Certification = CertificationResponse{Certified: l.Certified(), CertifiedAt: l.CertifiedAt}
+	r.Violations = newHOSViolations(l.Violations, l.Location)
 	if !l.LastChangeAt.IsZero() {
 		at := l.LastChangeAt
 		r.Certification.LastChangeAt = &at

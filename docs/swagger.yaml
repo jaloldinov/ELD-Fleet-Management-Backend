@@ -618,6 +618,11 @@ definitions:
         description: Before the driver's first record ever (a new driver).
         example: 0
         type: integer
+      violations:
+        description: Hours-of-service limits broken by driving on this day.
+        items:
+          $ref: '#/definitions/handler.HOSViolationResponse'
+        type: array
     type: object
   handler.DeviceSelfResponse:
     properties:
@@ -1080,6 +1085,11 @@ definitions:
         $ref: '#/definitions/handler.HOSRestResponse'
       shift:
         $ref: '#/definitions/handler.HOSShiftResponse'
+      violations:
+        description: Limits broken by driving in the last 8 days, oldest first.
+        items:
+          $ref: '#/definitions/handler.HOSViolationResponse'
+        type: array
     type: object
   handler.HOSCycleResponse:
     properties:
@@ -1131,6 +1141,24 @@ definitions:
       used_seconds:
         example: 28800
         type: integer
+    type: object
+  handler.HOSViolationResponse:
+    properties:
+      ended_at:
+        type: string
+      rule:
+        enum:
+        - driving_11h
+        - window_14h
+        - break_30m
+        - cycle
+        example: driving_11h
+        type: string
+      seconds:
+        example: 1800
+        type: integer
+      started_at:
+        type: string
     type: object
   handler.HealthResponse:
     properties:

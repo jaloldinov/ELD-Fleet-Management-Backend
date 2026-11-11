@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Hours of service: the FMCSA limits for property-carrying drivers
 // (49 CFR 395.3), the basic rules only. Not modelled: the split sleeper
@@ -47,6 +50,30 @@ func (c HOSCycle) Limit() (time.Duration, int) {
 // no 10-hour rest in that long is in violation many times over anyway.
 const HOSLookback = 10 * 24 * time.Hour
 
+// HOSRule names a limit a driver can break.
+type HOSRule string
+
+const (
+	RuleDriving11h HOSRule = "driving_11h" // drove past 11 hours in the shift
+	RuleWindow14h  HOSRule = "window_14h"  // drove after the 14th hour of the shift
+	RuleBreak30m   HOSRule = "break_30m"   // drove past 8 hours without a 30-minute break
+	RuleCycle      HOSRule = "cycle"       // drove past 60/70 hours on duty in the cycle
+)
+
+// HOSViolation: driving in [Start, End) broke Rule. Only driving breaks a
+// limit: a driver out of hours may still work on duty or rest.
+type HOSViolation struct {
+	Rule       HOSRule
+	Start, End time.Time
+}
+
+func (v HOSViolation) Duration() time.Duration { return v.End.Sub(v.Start) }
+
+// HOSViolationsShownFor: the clocks list the violations of the last 8
+// days (what an inspector looks at). Older ones may be wrong anyway: the
+// engine does not know what came before its lookback.
+const HOSViolationsShownFor = 8 * 24 * time.Hour
+
 // HOSClocks is where a driver stands at an instant: what is used, what is
 // left. "Left" is never negative.
 type HOSClocks struct {
@@ -78,6 +105,9 @@ type HOSClocks struct {
 	// CanDriveFor: how long the driver may drive from At, the tightest of
 	// the four limits.
 	CanDriveFor time.Duration
+
+	// Violations in [At - HOSViolationsShownFor, At), oldest first.
+	Violations []HOSViolation
 }
 
 // dutyKind is what a record means for the clocks.
@@ -109,6 +139,11 @@ type hosWalker struct {
 	restStreak       time.Duration // consecutive rest: 10 h and 34 h
 	cycleResetAt     time.Time     // the end of the latest 34-hour rest
 	onDuty           []Interval    // driving and on duty, for the cycle
+
+	loc        *time.Location
+	cycleLimit time.Duration
+	cycleDays  int
+	violations []HOSViolation
 }
 
 func (w *hosWalker) step(k dutyKind, a, b time.Time) {
@@ -133,6 +168,9 @@ func (w *hosWalker) step(k dutyKind, a, b time.Time) {
 		start := a
 		w.shiftStart = &start
 	}
+	if k == kindDriving {
+		w.checkDriving(a, b) // with the clocks as they stood at a
+	}
 	w.onDuty = append(w.onDuty, Interval{a, b})
 	if k == kindOnDuty {
 		w.notDrivingStreak += d
@@ -144,6 +182,40 @@ func (w *hosWalker) step(k dutyKind, a, b time.Time) {
 	w.notDrivingStreak = 0
 	w.shiftDriving += d
 	w.sinceBreak += d
+}
+
+// checkDriving records where driving in [a, b) breaks a limit. For each
+// limit: the instant it runs out, from the clocks at a; driving after it
+// is the violation. [a, b) never crosses local midnight (stepByDay), so
+// the cycle's first day stays the same throughout.
+func (w *hosWalker) checkDriving(a, b time.Time) {
+	cycleStart := maxTime(CycleWindowStart(a, w.loc, w.cycleDays), w.cycleResetAt)
+	runsOut := map[HOSRule]time.Time{
+		RuleDriving11h: a.Add(MaxDrivingPerShift - w.shiftDriving),
+		RuleWindow14h:  w.shiftStart.Add(DutyWindow),
+		RuleBreak30m:   a.Add(BreakAfterDriving - w.sinceBreak),
+		RuleCycle:      a.Add(w.cycleLimit - w.cycleUsed(cycleStart, a)),
+	}
+	for _, rule := range []HOSRule{RuleDriving11h, RuleWindow14h, RuleBreak30m, RuleCycle} {
+		if t := runsOut[rule]; t.Before(b) {
+			w.violate(rule, maxTime(t, a), b)
+		}
+	}
+}
+
+// violate adds a violation, joining it to the previous one of the same
+// rule when they touch (a drive cut at midnight is one violation).
+func (w *hosWalker) violate(rule HOSRule, a, b time.Time) {
+	for i := len(w.violations) - 1; i >= 0; i-- {
+		if v := &w.violations[i]; v.Rule == rule {
+			if v.End.Equal(a) {
+				v.End = b
+				return
+			}
+			break
+		}
+	}
+	w.violations = append(w.violations, HOSViolation{Rule: rule, Start: a, End: b})
 }
 
 // cycleUsed sums on-duty time in [from, to).
@@ -174,7 +246,8 @@ func EvaluateHOS(events []DutyStatusEvent, from, now time.Time, loc *time.Locati
 	if !cycle.Valid() {
 		cycle = HOSCycle70in8
 	}
-	var w hosWalker
+	limit, days := cycle.Limit()
+	w := hosWalker{loc: loc, cycleLimit: limit, cycleDays: days}
 	cursor := from
 	for i, e := range events {
 		a := maxTime(e.StartedAt, from)
@@ -186,7 +259,7 @@ func EvaluateHOS(events []DutyStatusEvent, from, now time.Time, loc *time.Locati
 			w.step(kindRest, cursor, minTime(a, now))
 		}
 		if b.After(a) {
-			w.step(kindOf(e.Status), a, b)
+			w.stepByDay(kindOf(e.Status), a, b)
 			cursor = b
 		}
 	}
@@ -194,8 +267,16 @@ func EvaluateHOS(events []DutyStatusEvent, from, now time.Time, loc *time.Locati
 		w.step(kindRest, cursor, now) // no records at all
 	}
 
-	limit, days := cycle.Limit()
 	c := HOSClocks{At: now, Cycle: cycle, RestStreak: w.restStreak}
+	shownFrom := now.Add(-HOSViolationsShownFor)
+	for _, v := range w.violations {
+		if v.End.After(shownFrom) {
+			v.Start = maxTime(v.Start, shownFrom)
+			c.Violations = append(c.Violations, v)
+		}
+	}
+	// One drive can break several rules: list them by when they began.
+	slices.SortStableFunc(c.Violations, func(x, y HOSViolation) int { return x.Start.Compare(y.Start) })
 
 	c.DrivingUsed, c.DrivingLeft = 0, MaxDrivingPerShift
 	c.WindowLeft = DutyWindow
@@ -217,6 +298,18 @@ func EvaluateHOS(events []DutyStatusEvent, from, now time.Time, loc *time.Locati
 
 	c.CanDriveFor = min(c.DrivingLeft, c.WindowLeft, c.BreakDueIn, c.CycleLeft)
 	return c
+}
+
+// stepByDay cuts a segment at local midnights: the cycle's window moves
+// at midnight, and each piece must see one window.
+func (w *hosWalker) stepByDay(k dutyKind, a, b time.Time) {
+	for a.Before(b) {
+		y, m, d := a.In(w.loc).Date()
+		midnight := time.Date(y, m, d+1, 0, 0, 0, 0, w.loc)
+		end := minTime(midnight, b)
+		w.step(k, a, end)
+		a = end
+	}
 }
 
 func positive(d time.Duration) time.Duration {

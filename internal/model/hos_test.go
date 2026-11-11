@@ -205,3 +205,84 @@ func TestEvaluateHOS_Cycle(t *testing.T) {
 		assert.Equal(t, 46*time.Hour, c.CycleUsed, "45 h + this hour")
 	})
 }
+
+func violations(c HOSClocks, h hosLog) (out []string) {
+	for _, v := range c.Violations {
+		out = append(out, string(v.Rule)+" "+v.Start.In(h.loc).Format("02 15:04")+"-"+v.End.In(h.loc).Format("02 15:04"))
+	}
+	return out
+}
+
+func TestEvaluateHOS_Violations(t *testing.T) {
+	h := hosLog{t, chicago(t)}
+
+	t.Run("a legal day has none", func(t *testing.T) {
+		c := h.eval(h.events(
+			DutyOnDuty, h.at(0, 6, 0), DutyDriving, h.at(0, 7, 0), DutyOffDuty, h.at(0, 11, 0),
+			DutyDriving, h.at(0, 11, 30), DutyOnDuty, h.at(0, 15, 30), DutyOffDuty, h.at(0, 16, 30),
+		), h.at(0, 23, 0))
+		assert.Empty(t, c.Violations)
+	})
+
+	t.Run("driving past 11 hours", func(t *testing.T) {
+		c := h.eval(h.events(
+			DutyDriving, h.at(0, 6, 0), DutyOffDuty, h.at(0, 10, 0), // 4 h, then the break
+			DutyDriving, h.at(0, 10, 30), DutyOffDuty, h.at(0, 18, 0), // 7.5 h: the 11 run out at 17:30
+		), h.at(0, 23, 0))
+		assert.Equal(t, []string{"driving_11h 10 17:30-10 18:00"}, violations(c, h))
+	})
+
+	t.Run("driving after the 14th hour, even with hours to drive", func(t *testing.T) {
+		c := h.eval(h.events(
+			DutyOnDuty, h.at(0, 6, 0), DutyOffDuty, h.at(0, 7, 0), // a long wait at the shipper
+			DutyDriving, h.at(0, 15, 0), DutyOffDuty, h.at(0, 21, 0), // 6 h driving, 20:00 is the end
+		), h.at(0, 23, 0))
+		assert.Equal(t, []string{"window_14h 10 20:00-10 21:00"}, violations(c, h))
+	})
+
+	t.Run("8 hours of driving without a break", func(t *testing.T) {
+		c := h.eval(h.events(
+			DutyDriving, h.at(0, 6, 0), DutyOnDuty, h.at(0, 10, 0), // 20 min fueling: no break
+			DutyDriving, h.at(0, 10, 20), DutyOffDuty, h.at(0, 15, 0),
+		), h.at(0, 23, 0))
+		assert.Equal(t, []string{"break_30m 10 14:20-10 15:00"}, violations(c, h))
+	})
+
+	t.Run("one drive can break several rules", func(t *testing.T) {
+		c := h.eval(h.events(DutyDriving, h.at(0, 6, 0), DutyOffDuty, h.at(0, 21, 0)), h.at(0, 23, 0))
+		assert.Equal(t, []string{
+			"break_30m 10 14:00-10 21:00",
+			"driving_11h 10 17:00-10 21:00",
+			"window_14h 10 20:00-10 21:00",
+		}, violations(c, h), "oldest first")
+	})
+
+	t.Run("the cycle: the 71st hour", func(t *testing.T) {
+		// 7 days of 9 h on duty (63 h), then a day of 9 h: 1 h on duty and
+		// 8 h driving (with a break). The 70 run out 7 hours in.
+		var pairs []any
+		for d := -7; d <= -1; d++ {
+			pairs = append(pairs, DutyOnDuty, h.at(d, 6, 0), DutyDriving, h.at(d, 7, 0), DutyOffDuty, h.at(d, 15, 0))
+		}
+		pairs = append(pairs,
+			DutyOnDuty, h.at(0, 6, 0), DutyDriving, h.at(0, 7, 0), DutyOffDuty, h.at(0, 11, 0),
+			DutyDriving, h.at(0, 11, 30), DutyOffDuty, h.at(0, 15, 30))
+		c := h.eval(h.events(pairs...), h.at(0, 23, 0))
+		assert.Equal(t, []string{"cycle 10 13:30-10 15:30"}, violations(c, h),
+			"63 h + 1 h on duty + 4 h + 2 h = 70 at 13:30")
+	})
+
+	t.Run("a drive across midnight is one violation", func(t *testing.T) {
+		c := h.eval(h.events(DutyDriving, h.at(0, 16, 0), DutyOffDuty, h.at(1, 2, 0)), h.at(1, 3, 0))
+		assert.Equal(t, []string{"break_30m 11 00:00-11 02:00"}, violations(c, h))
+	})
+
+	t.Run("an edit can make a violation go away", func(t *testing.T) {
+		// Same as the 11-hour case, but the wait was really 10 hours of rest.
+		c := h.eval(h.events(
+			DutyDriving, h.at(0, 6, 0), DutyOffDuty, h.at(0, 10, 0),
+			DutyDriving, h.at(0, 20, 0), DutyOffDuty, h.at(1, 3, 30),
+		), h.at(1, 4, 0))
+		assert.Empty(t, c.Violations, "the 10-hour rest started a new shift")
+	})
+}
