@@ -201,7 +201,9 @@ var authenticatedOnlyRoutes = map[string]bool{
 	"POST /api/v1/drivers/me/logs/:date/certification": true,
 	"POST /api/v1/drivers/me/duty-status/records":      true,
 	"PUT /api/v1/drivers/me/duty-status/records/:id":   true,
-	"GET /api/v1/billing/config":                       true,
+	// ...and sees their own hours of service.
+	"GET /api/v1/drivers/me/hos": true,
+	"GET /api/v1/billing/config": true,
 }
 
 // deviceRoutes take a device key, not a user token: a user's token is
@@ -506,6 +508,12 @@ func (notADriver) MyDailyLog(context.Context, auth.Principal, string) (*model.Da
 	return nil, model.ErrNotFound
 }
 
+type notADriverHOS struct{ handler.HOSService }
+
+func (notADriverHOS) MyClocks(context.Context, auth.Principal) (*service.DriverClocks, error) {
+	return nil, model.ErrNotFound
+}
+
 func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(&bytes.Buffer{}, true, "debug")
@@ -519,7 +527,7 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		RateLimit: handler.NewRateLimitHandler(nil), Password: handler.NewPasswordResetHandler(nil, nil),
 		AuditLog: handler.NewAuditLogHandler(nil), PaymentMethod: handler.NewPaymentMethodHandler(nil),
 		Subscription: handler.NewSubscriptionHandler(nil), Assignment: handler.NewAssignmentHandler(nil),
-		DutyStatus: handler.NewDutyStatusHandler(notADriver{}),
+		DutyStatus: handler.NewDutyStatusHandler(notADriver{}), HOS: handler.NewHOSHandler(notADriverHOS{}),
 	})
 	h := map[string]string{"Authorization": "Bearer company-token"}
 
@@ -530,7 +538,9 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		"/api/v1/trucks/" + id + "/current", "/api/v1/drivers/" + id + "/truck", "/api/v1/drivers/me/truck",
 		"/api/v1/driver-assignments", "/api/v1/eld-assignments",
 		// Phase 5: the office's view of the logbooks is a fleet route.
-		"/api/v1/drivers/" + id + "/logs/2026-11-10"} {
+		"/api/v1/drivers/" + id + "/logs/2026-11-10",
+		// Phase 6: so is the office's view of the clocks.
+		"/api/v1/drivers/" + id + "/hos"} {
 		rec := send(r, http.MethodGet, path, h)
 		assert.Equal(t, http.StatusPaymentRequired, rec.Code, path)
 	}
@@ -551,6 +561,8 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code, "nor is reading it: the driver shows it at inspections")
 	rec = send(r, http.MethodPost, "/api/v1/drivers/me/duty-status/records", h)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "nor is fixing it")
+	rec = send(r, http.MethodGet, "/api/v1/drivers/me/hos", h)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "nor are the driver's own clocks")
 
 	// Billing and the company itself stay reachable, or a blocked company
 	// could never pay. (400 = the handler ran: the gate let it through.)

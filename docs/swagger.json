@@ -2869,6 +2869,49 @@
                 }
             }
         },
+        "/api/v1/drivers/me/hos": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the driver app: how long the caller may still drive, and each clock behind it (11-hour driving, 14-hour window, 30-minute break, 60/70-hour cycle). Worked out from the logbook on every request. Needs a login, no extra permission. Not behind the billing gate.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hos"
+                ],
+                "summary": "My hours of service now",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.HOSClocksResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers/me/logs/{date}": {
             "get": {
                 "security": [
@@ -3492,6 +3535,77 @@
                     },
                     "403": {
                         "description": "missing permission assignment:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "driver not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/drivers/{id}/hos": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: logbook:read\nHow long the driver may still drive, and each clock behind it (11-hour driving, 14-hour window, 30-minute break, 60/70-hour cycle).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hos"
+                ],
+                "summary": "A driver's hours of service now",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Driver ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.HOSClocksResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission logbook:read",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -8247,6 +8361,130 @@
                 "message": {
                     "type": "string",
                     "example": "If an account with this email exists, a reset code has been sent."
+                }
+            }
+        },
+        "handler.HOSBreakResponse": {
+            "type": "object",
+            "properties": {
+                "driving_since_seconds": {
+                    "type": "integer",
+                    "example": 14400
+                },
+                "due_in_seconds": {
+                    "description": "driving left before the break",
+                    "type": "integer",
+                    "example": 14400
+                }
+            }
+        },
+        "handler.HOSClocksResponse": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "break": {
+                    "$ref": "#/definitions/handler.HOSBreakResponse"
+                },
+                "can_drive_seconds": {
+                    "description": "How long the driver may drive from now: the tightest of the limits.",
+                    "type": "integer",
+                    "example": 10800
+                },
+                "cycle": {
+                    "$ref": "#/definitions/handler.HOSCycleResponse"
+                },
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "driving": {
+                    "description": "of the 11 hours per shift",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handler.HOSUsageResponse"
+                        }
+                    ]
+                },
+                "rest": {
+                    "$ref": "#/definitions/handler.HOSRestResponse"
+                },
+                "shift": {
+                    "$ref": "#/definitions/handler.HOSShiftResponse"
+                }
+            }
+        },
+        "handler.HOSCycleResponse": {
+            "type": "object",
+            "properties": {
+                "left_seconds": {
+                    "type": "integer",
+                    "example": 216000
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "us_70_8",
+                        "us_60_7"
+                    ],
+                    "example": "us_70_8"
+                },
+                "used_seconds": {
+                    "type": "integer",
+                    "example": 36000
+                }
+            }
+        },
+        "handler.HOSRestResponse": {
+            "type": "object",
+            "properties": {
+                "cycle_restart_in_seconds": {
+                    "type": "integer",
+                    "example": 122400
+                },
+                "new_shift_in_seconds": {
+                    "type": "integer",
+                    "example": 36000
+                },
+                "streak_seconds": {
+                    "type": "integer",
+                    "example": 0
+                }
+            }
+        },
+        "handler.HOSShiftResponse": {
+            "type": "object",
+            "properties": {
+                "in_shift": {
+                    "type": "boolean"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "window_ends_at": {
+                    "description": "started_at + 14 h: no driving after it",
+                    "type": "string"
+                },
+                "window_left_seconds": {
+                    "type": "integer",
+                    "example": 12600
+                }
+            }
+        },
+        "handler.HOSUsageResponse": {
+            "type": "object",
+            "properties": {
+                "left_seconds": {
+                    "type": "integer",
+                    "example": 10800
+                },
+                "used_seconds": {
+                    "type": "integer",
+                    "example": 28800
                 }
             }
         },

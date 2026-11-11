@@ -1046,6 +1046,92 @@ definitions:
         example: If an account with this email exists, a reset code has been sent.
         type: string
     type: object
+  handler.HOSBreakResponse:
+    properties:
+      driving_since_seconds:
+        example: 14400
+        type: integer
+      due_in_seconds:
+        description: driving left before the break
+        example: 14400
+        type: integer
+    type: object
+  handler.HOSClocksResponse:
+    properties:
+      at:
+        type: string
+      break:
+        $ref: '#/definitions/handler.HOSBreakResponse'
+      can_drive_seconds:
+        description: 'How long the driver may drive from now: the tightest of the
+          limits.'
+        example: 10800
+        type: integer
+      cycle:
+        $ref: '#/definitions/handler.HOSCycleResponse'
+      driver_id:
+        format: uuid
+        type: string
+      driving:
+        allOf:
+        - $ref: '#/definitions/handler.HOSUsageResponse'
+        description: of the 11 hours per shift
+      rest:
+        $ref: '#/definitions/handler.HOSRestResponse'
+      shift:
+        $ref: '#/definitions/handler.HOSShiftResponse'
+    type: object
+  handler.HOSCycleResponse:
+    properties:
+      left_seconds:
+        example: 216000
+        type: integer
+      started_at:
+        type: string
+      type:
+        enum:
+        - us_70_8
+        - us_60_7
+        example: us_70_8
+        type: string
+      used_seconds:
+        example: 36000
+        type: integer
+    type: object
+  handler.HOSRestResponse:
+    properties:
+      cycle_restart_in_seconds:
+        example: 122400
+        type: integer
+      new_shift_in_seconds:
+        example: 36000
+        type: integer
+      streak_seconds:
+        example: 0
+        type: integer
+    type: object
+  handler.HOSShiftResponse:
+    properties:
+      in_shift:
+        type: boolean
+      started_at:
+        type: string
+      window_ends_at:
+        description: 'started_at + 14 h: no driving after it'
+        type: string
+      window_left_seconds:
+        example: 12600
+        type: integer
+    type: object
+  handler.HOSUsageResponse:
+    properties:
+      left_seconds:
+        example: 10800
+        type: integer
+      used_seconds:
+        example: 28800
+        type: integer
+    type: object
   handler.HealthResponse:
     properties:
       status:
@@ -4187,6 +4273,54 @@ paths:
       summary: Set a driver's dispatcher
       tags:
       - assignments
+  /api/v1/drivers/{id}/hos:
+    get:
+      description: |-
+        Requires permission: logbook:read
+        How long the driver may still drive, and each clock behind it (11-hour driving, 14-hour window, 30-minute break, 60/70-hour cycle).
+      parameters:
+      - description: Driver ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.HOSClocksResponse'
+        "400":
+          description: invalid id
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission logbook:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: driver not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: A driver's hours of service now
+      tags:
+      - hos
   /api/v1/drivers/{id}/logs/{date}:
     get:
       description: |-
@@ -4604,6 +4738,36 @@ paths:
       summary: Correct one of my records
       tags:
       - logbook
+  /api/v1/drivers/me/hos:
+    get:
+      description: 'For the driver app: how long the caller may still drive, and each
+        clock behind it (11-hour driving, 14-hour window, 30-minute break, 60/70-hour
+        cycle). Worked out from the logbook on every request. Needs a login, no extra
+        permission. Not behind the billing gate.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.HOSClocksResponse'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: My hours of service now
+      tags:
+      - hos
   /api/v1/drivers/me/logs/{date}:
     get:
       description: 'For the driver app (and the roadside inspector looking at it):

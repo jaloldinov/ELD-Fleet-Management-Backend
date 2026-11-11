@@ -49,6 +49,8 @@ type Handlers struct {
 	Device *DeviceHandler
 	// Drivers' logbooks (Phase 5).
 	DutyStatus *DutyStatusHandler
+	// Hours of service (Phase 6).
+	HOS *HOSHandler
 
 	RateLimit *RateLimitHandler
 	Password  *PasswordResetHandler
@@ -189,6 +191,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	protected.GET("/drivers/me/duty-status", h.DutyStatus.MyStatus)
 	protected.POST("/drivers/me/duty-status", h.DutyStatus.ChangeMyStatus)
 	protected.GET("/drivers/me/logs/:date", h.DutyStatus.MyDailyLog)
+	protected.GET("/drivers/me/hos", h.HOS.MyClocks)
 	protected.POST("/drivers/me/logs/:date/certification", h.DutyStatus.CertifyMyLog)
 	// Fixing the past: a forgotten record, a wrong one (never driving).
 	protected.POST("/drivers/me/duty-status/records", h.DutyStatus.AddMyRecord)
@@ -224,6 +227,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	drivers.DELETE("/:id/dispatcher", perm.Require(model.PermAssignmentManage), h.Assignment.RemoveDispatcher)
 	// Drivers' logbooks, as the office reads them.
 	drivers.GET("/:id/logs/:date", perm.Require(model.PermLogbookRead), h.DutyStatus.DriverDailyLog)
+	drivers.GET("/:id/hos", perm.Require(model.PermLogbookRead), h.HOS.DriverClocks)
 
 	trucks := product.Group("/trucks")
 	trucks.POST("", perm.Require(model.PermTruckCreate), h.Truck.Create)

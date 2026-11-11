@@ -158,7 +158,8 @@ func run() error {
 
 	// Drivers' logbooks: where a status change happened comes from the
 	// driver's truck and its ELD.
-	dutyStatusSvc := service.NewDutyStatusService(txManager, repository.NewDutyStatusRepository(pool),
+	dutyStatusRepo := repository.NewDutyStatusRepository(pool)
+	dutyStatusSvc := service.NewDutyStatusService(txManager, dutyStatusRepo,
 		driverRepo, driverStintRepo, eldStintRepo, companyRepo)
 
 	// The devices themselves (Authorization: Device <key>). Their readings
@@ -375,6 +376,7 @@ func run() error {
 		Device:        handler.NewDeviceHandler(deviceSvc),
 		Assignment:    handler.NewAssignmentHandler(assignmentSvc),
 		DutyStatus:    handler.NewDutyStatusHandler(dutyStatusSvc),
+		HOS:           handler.NewHOSHandler(service.NewHOSService(dutyStatusRepo, driverRepo, companyRepo)),
 		RateLimit:     handler.NewRateLimitHandler(rateLimitSvc),
 		Password:      handler.NewPasswordResetHandler(passwordResetSvc, resetLimiter),
 		AuditLog:      handler.NewAuditLogHandler(service.NewAuditLogService(auditRepo)),
