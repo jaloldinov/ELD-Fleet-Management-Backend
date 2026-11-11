@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,26 +19,56 @@ import (
 // memTelemetry stores seqs like the unique index: a seq stored once is
 // never accepted again.
 type memTelemetry struct {
-	stored  map[int64]model.TelemetryPoint
-	batches int
-	state   *model.TelemetryPoint // newer recorded_at wins, like the SQL
-	inTx    bool
+	stored      map[int64]model.TelemetryPoint
+	batches     int
+	state       *model.TelemetryPoint // newer recorded_at wins, like the SQL
+	motionSince time.Time
+	inTx        bool
+	toSettle    []uuid.UUID // what ListStopsToSettle answers
 }
 
 func (m *memTelemetry) GetState(context.Context, uuid.UUID) (*model.DeviceState, error) {
 	if m.state == nil {
 		return nil, model.ErrNotFound
 	}
-	return &model.DeviceState{TelemetryPoint: *m.state}, nil
+	return &model.DeviceState{TelemetryPoint: *m.state, Moving: m.state.Moving(), MotionSince: m.motionSince}, nil
 }
 
-func (m *memTelemetry) UpsertState(ctx context.Context, _, _ uuid.UUID, p model.TelemetryPoint) (bool, error) {
+func (m *memTelemetry) UpsertState(ctx context.Context, _, _ uuid.UUID, p model.TelemetryPoint, motionSince time.Time) (bool, error) {
 	m.inTx = inTx(ctx)
 	if m.state != nil && !m.state.RecordedAt.Before(p.RecordedAt) {
 		return false, nil
 	}
-	m.state = &p
+	m.state, m.motionSince = &p, motionSince
 	return true, nil
+}
+
+func (m *memTelemetry) ListStopsToSettle(context.Context, time.Time) ([]uuid.UUID, error) {
+	return m.toSettle, nil
+}
+
+// fakeDuty records what the logbook was told, and whether the device was
+// locked first.
+type fakeDuty struct {
+	changes   []model.MotionChange
+	devices   *memELDRepo
+	fail      error
+	failFirst error // only the first call fails
+}
+
+func (d *fakeDuty) RecordMotion(ctx context.Context, _ uuid.UUID, c model.MotionChange) error {
+	if !inTx(ctx) {
+		return errors.New("recorded outside the ingest transaction")
+	}
+	if !slices.Contains(d.devices.events, "lock") {
+		return errors.New("recorded without locking the device")
+	}
+	if err := d.failFirst; err != nil {
+		d.failFirst = nil
+		return err
+	}
+	d.changes = append(d.changes, c)
+	return d.fail
 }
 
 func (m *memTelemetry) InsertBatch(_ context.Context, _, _ uuid.UUID, points []model.TelemetryPoint) ([]int64, error) {
@@ -57,12 +89,16 @@ type deviceSvcFixture struct {
 	stints    *memELDAssignments
 	trucks    *memTruckRepo
 	telemetry *memTelemetry
+	duty      *fakeDuty
 }
 
 func newDeviceSvcFixture() *deviceSvcFixture {
 	f := &deviceSvcFixture{devices: newMemELDRepo(), stints: newMemELDAssignments(), trucks: newMemTruckRepo(),
 		telemetry: &memTelemetry{stored: map[int64]model.TelemetryPoint{}}}
-	f.svc = NewDeviceService(&fakeTx{}, f.devices, f.stints, f.trucks, f.telemetry)
+	f.duty = &fakeDuty{devices: f.devices}
+	// The device the ingest tests send as (dev).
+	f.devices.devices[dev.DeviceID] = &model.ELDDevice{ID: dev.DeviceID, CompanyID: dev.CompanyID, Status: model.ELDActive, IsActive: true}
+	f.svc = NewDeviceService(&fakeTx{}, f.devices, f.stints, f.trucks, f.telemetry, f.duty)
 	f.svc.now = func() time.Time { return testNow } // the readings below are from this afternoon
 	return f
 }
@@ -332,16 +368,22 @@ func TestDeviceService_Ingest_State(t *testing.T) {
 	})
 }
 
-func TestNewest(t *testing.T) {
+func TestNewerThanState(t *testing.T) {
 	at := func(m int) time.Time { return time.Date(2026, 11, 8, 14, m, 0, 0, time.UTC) }
-	points := []model.TelemetryPoint{{Seq: 1, RecordedAt: at(1)}, {Seq: 2, RecordedAt: at(5)}, {Seq: 3, RecordedAt: at(5)}, {Seq: 4, RecordedAt: at(9)}}
+	points := []model.TelemetryPoint{{Seq: 4, RecordedAt: at(9)}, {Seq: 3, RecordedAt: at(5)}, {Seq: 2, RecordedAt: at(5)}, {Seq: 1, RecordedAt: at(1)}}
+	seqs := func(ps []model.TelemetryPoint) (out []int64) {
+		for _, p := range ps {
+			out = append(out, p.Seq)
+		}
+		return out
+	}
 
-	p, ok := newest(points, []int64{1, 2, 3})
-	require.True(t, ok)
-	assert.Equal(t, int64(3), p.Seq, "same time: the higher seq; seq 4 was not accepted")
-
-	_, ok = newest(points, nil)
-	assert.False(t, ok)
+	assert.Equal(t, []int64{1, 2, 3}, seqs(newerThanState(points, []int64{1, 2, 3}, nil)),
+		"oldest first, same time by seq; seq 4 was not accepted")
+	state := &model.DeviceState{TelemetryPoint: model.TelemetryPoint{RecordedAt: at(5)}}
+	assert.Equal(t, []int64{4}, seqs(newerThanState(points, []int64{1, 2, 3, 4}, state)),
+		"not newer than the state: history only")
+	assert.Empty(t, newerThanState(points, nil, nil))
 }
 
 // ---------- time and order rules ----------
@@ -444,5 +486,125 @@ func TestDeviceService_Ingest_Order(t *testing.T) {
 		assert.Equal(t, 0, res.Rejected[0].Index, "sorted by position in the batch")
 		assert.Contains(t, res.Rejected[0].Reason, "earlier than the stored seq 10's")
 		assert.Contains(t, res.Rejected[1].Reason, "later than the stored seq 10's")
+	})
+}
+
+// ---------- movement → logbook ----------
+
+func speedAt(seq int64, minute int, mph float64) TelemetryInput {
+	p := pointAt(seq, minute)
+	p.SpeedMPH = &mph
+	return p
+}
+
+func motionKinds(changes []model.MotionChange) (out []string) {
+	for _, c := range changes {
+		out = append(out, string(c.Kind)+"@"+c.At.Format("15:04"))
+	}
+	return out
+}
+
+func TestDeviceService_Ingest_Motion(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the batch's movement reaches the logbook, oldest first", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+
+		_, err := f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{
+			speedAt(3, 12, 0), speedAt(1, 0, 0), speedAt(2, 1, 55), speedAt(4, 18, 0), // shuffled
+		}})
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"drive_started@14:01", "stop_confirmed@14:17"}, motionKinds(f.duty.changes))
+		assert.Equal(t, time.Date(2026, 11, 8, 14, 12, 0, 0, time.UTC), f.telemetry.motionSince,
+			"the state keeps when the stop began")
+	})
+
+	t.Run("the next batch continues the stored run", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		_, err := f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(1, 0, 55), speedAt(2, 10, 0)}})
+		require.NoError(t, err)
+		f.duty.changes = nil
+
+		_, err = f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(3, 14, 0), speedAt(4, 16, 0)}})
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"stop_confirmed@14:15"}, motionKinds(f.duty.changes),
+			"the stop began in the batch before")
+	})
+
+	t.Run("points sent late are history: they change nothing now", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		_, err := f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(10, 50, 0)}})
+		require.NoError(t, err)
+		f.duty.changes = nil
+
+		_, err = f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(5, 20, 60)}}) // from the tunnel
+
+		require.NoError(t, err)
+		assert.Empty(t, f.duty.changes)
+	})
+
+	t.Run("the logbook failing fails the batch: readings and statuses together", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		f.duty.fail = errors.New("database is down")
+
+		_, err := f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(1, 0, 55)}})
+
+		assert.ErrorIs(t, err, f.duty.fail, "the device gets an error and sends again")
+	})
+}
+
+func TestDeviceService_SettleStops(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a quiet, parked truck gets its stop confirmed at the mark", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		_, err := f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(1, 0, 55), speedAt(2, 10, 0), speedAt(3, 11, 0)}})
+		require.NoError(t, err)
+		f.duty.changes = nil
+		f.telemetry.toSettle = []uuid.UUID{dev.DeviceID}
+		f.svc.now = func() time.Time { return time.Date(2026, 11, 8, 14, 20, 0, 0, time.UTC) }
+
+		n, err := f.svc.SettleStops(ctx)
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		require.Len(t, f.duty.changes, 1)
+		assert.Equal(t, "stop_confirmed@14:15", motionKinds(f.duty.changes)[0])
+		assert.Equal(t, int64(3), f.duty.changes[0].Point.Seq, "where the truck stands: its last reading")
+	})
+
+	t.Run("re-checked under the lock: a reading that came meanwhile wins", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		_, err := f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(1, 0, 55), speedAt(2, 10, 0), speedAt(3, 12, 60)}})
+		require.NoError(t, err)
+		f.duty.changes = nil
+		f.telemetry.toSettle = []uuid.UUID{dev.DeviceID} // listed while still standing
+		f.svc.now = func() time.Time { return time.Date(2026, 11, 8, 14, 30, 0, 0, time.UTC) }
+
+		n, err := f.svc.SettleStops(ctx)
+
+		require.NoError(t, err)
+		assert.Zero(t, n)
+		assert.Empty(t, f.duty.changes, "it is moving again")
+	})
+
+	t.Run("one device failing does not stop the others", func(t *testing.T) {
+		f := newDeviceSvcFixture()
+		other := f.devices.add(companyA)
+		// The fake keeps one state for all devices: both stand since 14:00.
+		_, err := f.svc.Ingest(ctx, dev, TelemetryBatch{Points: []TelemetryInput{speedAt(1, 0, 0)}})
+		require.NoError(t, err)
+		f.duty.changes = nil
+		f.duty.failFirst = errors.New("deadlock detected")
+		f.telemetry.toSettle = []uuid.UUID{other.ID, dev.DeviceID}
+		f.svc.now = func() time.Time { return time.Date(2026, 11, 8, 14, 30, 0, 0, time.UTC) }
+
+		n, err := f.svc.SettleStops(ctx)
+
+		assert.ErrorContains(t, err, "deadlock detected")
+		assert.ErrorContains(t, err, other.ID.String(), "says which device")
+		assert.Equal(t, 1, n, "the second one was settled")
 	})
 }

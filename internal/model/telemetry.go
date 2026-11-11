@@ -87,4 +87,7 @@ type DeviceState struct {
 	TruckID     *uuid.UUID // the truck it was in at RecordedAt
 	ReceivedAt  time.Time
 	Moving      bool
+	// MotionSince: the first reading of the current run (moving or
+	// standing). See Motion.
+	MotionSince time.Time
 }

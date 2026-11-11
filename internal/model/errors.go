@@ -38,6 +38,9 @@ var (
 	// Driver logbook. ErrDutyStatusTaken comes from a unique index, so it
 	// also holds when two requests arrive at the same moment.
 	ErrDutyStatusTaken = errors.New("the driver already has a duty status starting at that moment")
+	// ErrTruckMoving: the driver is at the wheel of a moving truck; the ELD
+	// has them driving until it stops.
+	ErrTruckMoving = errors.New("the truck is moving: the duty status can be changed once it stops")
 
 	// ErrInvalidCredentials is deliberately the same for "no such user" and
 	// "wrong password", so attackers cannot learn which accounts exist.

@@ -136,12 +136,12 @@ func TestTelemetryRepository_State(t *testing.T) {
 	_, err = repo.GetState(ctx, d.ID)
 	assert.ErrorIs(t, err, model.ErrNotFound, "no reading yet")
 
-	updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(5, noon, 61.5))
+	updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(5, noon, 61.5), noon)
 	require.NoError(t, err)
 	assert.True(t, updated)
 
 	t.Run("an older reading (sent late) does not replace a newer one", func(t *testing.T) {
-		updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(3, noon.Add(-time.Hour), 0))
+		updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(3, noon.Add(-time.Hour), 0), noon.Add(-time.Hour))
 		require.NoError(t, err)
 		assert.False(t, updated)
 
@@ -153,13 +153,14 @@ func TestTelemetryRepository_State(t *testing.T) {
 	})
 
 	t.Run("a newer one does", func(t *testing.T) {
-		updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(6, noon.Add(time.Minute), 0))
+		updated, err := repo.UpsertState(ctx, f.alpha.ID, d.ID, point(6, noon.Add(time.Minute), 0), noon.Add(30*time.Second))
 		require.NoError(t, err)
 		assert.True(t, updated)
 		st, err := repo.GetState(ctx, d.ID)
 		require.NoError(t, err)
 		assert.Equal(t, int64(6), st.Seq)
 		assert.False(t, st.Moving)
+		assert.Equal(t, noon.Add(30*time.Second), st.MotionSince.UTC(), "kept as given")
 	})
 
 	t.Run("the board's device carries the state", func(t *testing.T) {
@@ -167,6 +168,7 @@ func TestTelemetryRepository_State(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, installed.State)
 		assert.Equal(t, int64(6), installed.State.Seq)
+		assert.Equal(t, noon.Add(30*time.Second), installed.State.MotionSince.UTC())
 		assert.NotNil(t, installed.State.Latitude)
 	})
 }
@@ -209,7 +211,7 @@ func TestTelemetryRepository_State_ConcurrentNewestWins(t *testing.T) {
 			defer wg.Done()
 			<-start
 			// seq k+1 recorded at base + k seconds: seq 20 is the newest.
-			_, errs[i] = repo.UpsertState(ctx, f.alpha.ID, d.ID, point(int64(k+1), base.Add(time.Duration(k)*time.Second), 10))
+			_, errs[i] = repo.UpsertState(ctx, f.alpha.ID, d.ID, point(int64(k+1), base.Add(time.Duration(k)*time.Second), 10), base)
 		}()
 	}
 	close(start)

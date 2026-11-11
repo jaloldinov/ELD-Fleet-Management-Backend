@@ -2716,7 +2716,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "another change in the same second",
+                        "description": "another change in the same second, or the truck is moving with the caller at the wheel",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }

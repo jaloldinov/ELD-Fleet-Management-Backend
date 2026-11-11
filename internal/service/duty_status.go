@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -29,11 +30,14 @@ type DutyDrivers interface {
 // DutyStints tells which truck a driver is on (repository.DriverAssignmentRepository).
 type DutyStints interface {
 	GetOpenByDriver(ctx context.Context, driverID uuid.UUID) (*model.DriverAssignment, error)
+	PrimaryAt(ctx context.Context, truckID uuid.UUID, at time.Time) (*model.DriverAssignment, error)
 }
 
-// DutyDevices gives a truck's ELD and its last reading (repository.ELDAssignmentRepository).
+// DutyDevices gives a truck's ELD and its last reading, and which truck a
+// device was in (repository.ELDAssignmentRepository).
 type DutyDevices interface {
 	GetInstalled(ctx context.Context, truckID uuid.UUID) (*model.InstalledDevice, error)
+	TruckAt(ctx context.Context, deviceID uuid.UUID, at time.Time) (uuid.UUID, error)
 }
 
 // MaxDutyNoteLength matches the database CHECK.
@@ -114,7 +118,7 @@ func (s *DutyStatusService) ChangeMyStatus(ctx context.Context, p auth.Principal
 			Status: in.Status, Special: in.Special, StartedAt: now,
 			Origin: model.DutyOriginDriver, Note: in.Note, CreatedBy: &p.UserID,
 		}
-		if err := s.fillWhere(ctx, &ev); err != nil {
+		if err := s.fillWhere(ctx, &ev, now); err != nil {
 			return err
 		}
 		if ev.Special != nil && ev.TruckID == nil {
@@ -135,7 +139,11 @@ func (s *DutyStatusService) ChangeMyStatus(ctx context.Context, p auth.Principal
 // reading (position, odometer, engine hours) into the event. Missing
 // pieces stay nil: a driver at home has no truck, a new device has no
 // reading yet.
-func (s *DutyStatusService) fillWhere(ctx context.Context, ev *model.DutyStatusEvent) error {
+//
+// It also refuses the change while the driver's truck is moving with them
+// at the wheel (ErrTruckMoving): the ELD has them driving, and FMCSA does
+// not let a driver work the ELD in motion. A co-driver may.
+func (s *DutyStatusService) fillWhere(ctx context.Context, ev *model.DutyStatusEvent, now time.Time) error {
 	stint, err := s.stints.GetOpenByDriver(ctx, ev.DriverID)
 	if errors.Is(err, model.ErrNotFound) {
 		return nil
@@ -156,10 +164,84 @@ func (s *DutyStatusService) fillWhere(ctx context.Context, ev *model.DutyStatusE
 	if st == nil || st.TruckID == nil || *st.TruckID != stint.TruckID {
 		return nil
 	}
+	// A reading older than DeviceOfflineAfter says nothing about now (the
+	// device lost power or signal while moving).
+	if stint.Role == model.AssignmentPrimary && st.Moving && now.Sub(st.RecordedAt) <= model.DeviceOfflineAfter {
+		return model.ErrTruckMoving
+	}
 	ev.Latitude, ev.Longitude = st.Latitude, st.Longitude
 	odo, hours := st.OdometerMi, st.EngineHours
 	ev.OdometerMi, ev.EngineHours = &odo, &hours
 	return nil
+}
+
+// RecordMotion writes what a truck's movement means for the driver at its
+// wheel (the primary driver then; a co-driver is never driving):
+//
+//   - DriveStarted: they are driving from c.At, unless already driving or
+//     in personal conveyance / yard moves (moving is what those are for).
+//   - StopConfirmed: a driver still in the ELD's driving becomes on duty
+//     at c.At. A driver who chose a status meanwhile (stopped, pressed
+//     off duty) is left alone.
+//
+// Nothing is written when the device was in no truck or nobody was at the
+// wheel. (FMCSA keeps that "unidentified driving" for a driver to claim
+// later; we do not record it yet.)
+//
+// Runs inside the caller's transaction (Ingest, SettleStops), and is safe
+// to repeat: the decision comes from the logbook itself.
+func (s *DutyStatusService) RecordMotion(ctx context.Context, deviceID uuid.UUID, c model.MotionChange) error {
+	truckID, err := s.devices.TruckAt(ctx, deviceID, c.At)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	stint, err := s.stints.PrimaryAt(ctx, truckID, c.At)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if _, err := s.drivers.LockByID(ctx, stint.DriverID); errors.Is(err, model.ErrNotFound) {
+		return nil // the driver was deleted
+	} else if err != nil {
+		return err
+	}
+
+	at := c.At.UTC().Truncate(time.Second)
+	current, err := s.events.At(ctx, stint.DriverID, at)
+	if err != nil && !errors.Is(err, model.ErrNotFound) {
+		return err
+	}
+	if current != nil && current.StartedAt.Equal(at) {
+		return nil // something already starts at that second
+	}
+
+	var status model.DutyStatus
+	switch c.Kind {
+	case model.DriveStarted:
+		if current != nil && (current.Status == model.DutyDriving || current.Special != nil) {
+			return nil
+		}
+		status = model.DutyDriving
+	case model.StopConfirmed:
+		if current == nil || current.Status != model.DutyDriving || current.Origin != model.DutyOriginAuto {
+			return nil
+		}
+		status = model.DutyOnDuty
+	default:
+		return fmt.Errorf("unknown motion change %q", c.Kind)
+	}
+
+	p := c.Point
+	odo, hours := p.OdometerMi, p.EngineHours
+	_, err = s.events.Insert(ctx, model.DutyStatusEvent{
+		CompanyID: stint.CompanyID, DriverID: stint.DriverID, Status: status, StartedAt: at,
+		Origin: model.DutyOriginAuto, TruckID: &truckID,
+		Latitude: p.Latitude, Longitude: p.Longitude, OdometerMi: &odo, EngineHours: &hours,
+	})
+	return err
 }
 
 func validateDutyChange(in *ChangeDutyStatusInput) error {

@@ -156,14 +156,15 @@ func run() error {
 		Audit:        auditor,
 	})
 
-	// The devices themselves (Authorization: Device <key>).
-	telemetryRepo := repository.NewTelemetryRepository(pool)
-	deviceSvc := service.NewDeviceService(txManager, eldRepo, eldStintRepo, truckRepo, telemetryRepo)
-
 	// Drivers' logbooks: where a status change happened comes from the
 	// driver's truck and its ELD.
 	dutyStatusSvc := service.NewDutyStatusService(txManager, repository.NewDutyStatusRepository(pool),
 		driverRepo, driverStintRepo, eldStintRepo)
+
+	// The devices themselves (Authorization: Device <key>). Their readings
+	// also drive the logbook: moving = driving.
+	telemetryRepo := repository.NewTelemetryRepository(pool)
+	deviceSvc := service.NewDeviceService(txManager, eldRepo, eldStintRepo, truckRepo, telemetryRepo, dutyStatusSvc)
 
 	userSvc := service.NewUserService(userRepo, assignmentSvc, companyRepo, sessionRepo, hasher, auditor)
 	driverSvc := service.NewDriverService(txManager, userSvc, driverRepo, auditor)
@@ -268,6 +269,17 @@ func run() error {
 	// 10 minutes; a day keeps recent ones for investigating abuse).
 	go jobs.Every(jobsCtx, log, "password-reset-cleanup", time.Hour, func(ctx context.Context) error {
 		_, err := resetRepo.DeleteCreatedBefore(ctx, time.Now().Add(-24*time.Hour))
+		return err
+	})
+
+	// Every minute: trucks parked with the engine off send nothing more, so
+	// no reading tells us they stood still for 5 minutes; this does, and
+	// their drivers stop "driving".
+	go jobs.Every(jobsCtx, log, "duty-stop-settler", time.Minute, func(ctx context.Context) error {
+		n, err := deviceSvc.SettleStops(ctx)
+		if n > 0 {
+			log.Info("confirmed stops of parked trucks", "count", n)
+		}
 		return err
 	})
 

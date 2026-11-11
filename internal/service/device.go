@@ -23,6 +23,7 @@ type DeviceStore interface {
 	GetByKeyHash(ctx context.Context, hash []byte) (*model.ELDDevice, error)
 	MarkSeen(ctx context.Context, id uuid.UUID) error
 	SetClockOffset(ctx context.Context, id uuid.UUID, offset time.Duration) error
+	LockByID(ctx context.Context, id uuid.UUID) (*model.ELDDevice, error)
 }
 
 // DeviceStints tells which truck a device is in (repository.ELDAssignmentRepository).
@@ -38,8 +39,15 @@ type TruckFinder interface {
 // TelemetryStore stores device points (repository.TelemetryRepository).
 type TelemetryStore interface {
 	InsertBatch(ctx context.Context, companyID, deviceID uuid.UUID, points []model.TelemetryPoint) ([]int64, error)
-	UpsertState(ctx context.Context, companyID, deviceID uuid.UUID, p model.TelemetryPoint) (bool, error)
+	UpsertState(ctx context.Context, companyID, deviceID uuid.UUID, p model.TelemetryPoint, motionSince time.Time) (bool, error)
 	GetState(ctx context.Context, deviceID uuid.UUID) (*model.DeviceState, error)
+	ListStopsToSettle(ctx context.Context, now time.Time) ([]uuid.UUID, error)
+}
+
+// DutyRecorder turns a truck's movement into its driver's duty status
+// (DutyStatusService.RecordMotion). Called inside the ingest transaction.
+type DutyRecorder interface {
+	RecordMotion(ctx context.Context, deviceID uuid.UUID, c model.MotionChange) error
 }
 
 // MaxTelemetryBatch is the most points one request may carry. A device
@@ -111,10 +119,11 @@ type DeviceService struct {
 	stints    DeviceStints
 	trucks    TruckFinder
 	telemetry TelemetryStore
+	duty      DutyRecorder
 }
 
-func NewDeviceService(tx Transactor, devices DeviceStore, stints DeviceStints, trucks TruckFinder, telemetry TelemetryStore) *DeviceService {
-	return &DeviceService{now: time.Now, tx: tx, devices: devices, stints: stints, trucks: trucks, telemetry: telemetry}
+func NewDeviceService(tx Transactor, devices DeviceStore, stints DeviceStints, trucks TruckFinder, telemetry TelemetryStore, duty DutyRecorder) *DeviceService {
+	return &DeviceService{now: time.Now, tx: tx, devices: devices, stints: stints, trucks: trucks, telemetry: telemetry, duty: duty}
 }
 
 // Authenticate turns a device key into the calling device. Every failure
@@ -212,6 +221,13 @@ func (s *DeviceService) Ingest(ctx context.Context, dev auth.Device, batch Telem
 			}
 		}
 
+		// One batch of a device at a time: the motion below continues
+		// from the stored state, and two batches computing it at once
+		// would both continue from the same one.
+		if _, err := s.devices.LockByID(ctx, dev.DeviceID); err != nil {
+			return err
+		}
+
 		// 2. Points against each other and against what is stored: seq
 		// and time must agree.
 		state, err := s.telemetry.GetState(ctx, dev.DeviceID)
@@ -233,12 +249,30 @@ func (s *DeviceService) Ingest(ctx context.Context, dev auth.Device, batch Telem
 		if accepted, err = s.telemetry.InsertBatch(ctx, dev.CompanyID, dev.DeviceID, valid); err != nil {
 			return err
 		}
-		latest, ok := newest(valid, accepted)
-		if !ok {
-			return nil // all duplicates: the state already saw them
+		fresh := newerThanState(valid, accepted, state)
+		if len(fresh) == 0 {
+			// All duplicates, or all older than the state (sent late): the
+			// history has them; the truck's present is not changed by them.
+			return nil
 		}
-		_, err = s.telemetry.UpsertState(ctx, dev.CompanyID, dev.DeviceID, latest)
-		return err // an older point than the stored state changes nothing
+
+		// 4. What the movement means for the driver: driving started,
+		// a stop lasted 5 minutes. Oldest first, continuing the stored run.
+		motion := model.MotionOf(state)
+		var changes []model.MotionChange
+		for _, p := range fresh {
+			next, ch := motion.Step(p)
+			motion, changes = &next, append(changes, ch...)
+		}
+		if _, err := s.telemetry.UpsertState(ctx, dev.CompanyID, dev.DeviceID, fresh[len(fresh)-1], motion.Since); err != nil {
+			return err
+		}
+		for _, c := range changes {
+			if err := s.duty.RecordMotion(ctx, dev.DeviceID, c); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -307,22 +341,71 @@ func checkOrder(points []indexedPoint, state *model.DeviceState) []orderVerdict 
 
 // newest returns the accepted point with the latest recorded_at (ties: the
 // higher seq). ok = false when nothing was accepted.
-func newest(points []model.TelemetryPoint, accepted []int64) (model.TelemetryPoint, bool) {
+// newerThanState returns the accepted points newer than the stored state,
+// oldest first (same time: lower seq first). Only they continue the
+// truck's present; older ones (buffered offline, sent late) are history.
+func newerThanState(points []model.TelemetryPoint, accepted []int64, state *model.DeviceState) []model.TelemetryPoint {
 	isNew := make(map[int64]bool, len(accepted))
 	for _, seq := range accepted {
 		isNew[seq] = true
 	}
-	var best model.TelemetryPoint
-	found := false
+	var fresh []model.TelemetryPoint
 	for _, p := range points {
-		if !isNew[p.Seq] {
-			continue
-		}
-		if !found || p.RecordedAt.After(best.RecordedAt) || (p.RecordedAt.Equal(best.RecordedAt) && p.Seq > best.Seq) {
-			best, found = p, true
+		if isNew[p.Seq] && (state == nil || p.RecordedAt.After(state.RecordedAt)) {
+			fresh = append(fresh, p)
 		}
 	}
-	return best, found
+	sort.Slice(fresh, func(a, b int) bool {
+		if !fresh[a].RecordedAt.Equal(fresh[b].RecordedAt) {
+			return fresh[a].RecordedAt.Before(fresh[b].RecordedAt)
+		}
+		return fresh[a].Seq < fresh[b].Seq
+	})
+	return fresh
+}
+
+// SettleStops confirms the stops nobody reported: a truck parked with the
+// engine off sends no more readings, so no reading crosses the 5-minute
+// mark (model.Motion.Step) and its driver would stay "driving" all night.
+// Run every minute (cmd/api). Returns how many stops it confirmed.
+//
+// Each device in its own transaction, under the same lock as Ingest: a
+// batch arriving meanwhile is either seen (then nothing is due) or waits.
+func (s *DeviceService) SettleStops(ctx context.Context) (int, error) {
+	now := s.now()
+	ids, err := s.telemetry.ListStopsToSettle(ctx, now)
+	if err != nil {
+		return 0, err
+	}
+	settled := 0
+	var errs []error
+	for _, id := range ids {
+		confirmed := false
+		err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
+			if _, err := s.devices.LockByID(ctx, id); errors.Is(err, model.ErrNotFound) {
+				return nil // deleted meanwhile
+			} else if err != nil {
+				return err
+			}
+			st, err := s.telemetry.GetState(ctx, id)
+			if err != nil {
+				return err
+			}
+			due, ok := model.MotionOf(st).Silence(now)
+			if !ok {
+				return nil // a reading came meanwhile
+			}
+			confirmed = true
+			return s.duty.RecordMotion(ctx, id, model.MotionChange{Kind: model.StopConfirmed, At: due, Point: st.TelemetryPoint})
+		})
+		if err == nil && confirmed {
+			settled++
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("device %s: %w", id, err)) // the others still get settled
+		}
+	}
+	return settled, errors.Join(errs...)
 }
 
 // checkPoint validates one point; reason "" means it is fine. Time-based

@@ -115,3 +115,96 @@ func TestDriverLogbook(t *testing.T) {
 		tn.Admin.fail(t, http.MethodPost, path, map[string]any{"status": "on_duty"}, http.StatusNotFound)
 	})
 }
+
+// TestAutomaticDriving: the truck's ELD, not the driver, writes "driving".
+// The truck moves → Ali is driving; it stands 5 minutes → Ali is on duty;
+// while it moves, Ali cannot change the status by hand.
+func TestAutomaticDriving(t *testing.T) {
+	tn := newTenant(t)
+	ali, aliC := tn.newDriver(t)
+	truck, eld := tn.newTruck(t), tn.newELD(t)
+	tn.Admin.do(t, http.MethodPut, "/api/v1/eld-devices/"+eld.ID+"/truck", map[string]any{"truck_id": truck.ID}, http.StatusOK, nil)
+	aliC.do(t, http.MethodPut, "/api/v1/drivers/me/truck", map[string]any{"truck_id": truck.ID}, http.StatusOK, nil)
+	var issued struct {
+		DeviceKey string `json:"device_key"`
+	}
+	tn.Admin.do(t, http.MethodPost, "/api/v1/eld-devices/"+eld.ID+"/credentials", nil, http.StatusCreated, &issued)
+	dev := deviceClient(issued.DeviceKey)
+
+	// Fixture, not API: "the ELD was installed and Ali took the truck an
+	// hour ago", so the trip below can be in the past (both are always
+	// "now" through the API).
+	_, err := testDB.Exec(t.Context(),
+		`UPDATE eld_truck_assignments SET started_at = now() - interval '1 hour' WHERE eld_device_id = $1`, eld.ID)
+	require.NoError(t, err)
+	_, err = testDB.Exec(t.Context(),
+		`UPDATE driver_truck_assignments SET started_at = now() - interval '1 hour' WHERE driver_id = $1`, ali.ID)
+	require.NoError(t, err)
+
+	send := func(t *testing.T, points ...map[string]any) {
+		t.Helper()
+		var r ingestResp
+		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": points}, http.StatusOK, &r)
+		require.Equal(t, len(points), r.Accepted, "rejected: %+v", r.Rejected)
+	}
+	logbook := func(t *testing.T) []string {
+		t.Helper()
+		rows, err := testDB.Query(t.Context(), `
+			SELECT status, origin, started_at FROM duty_status_events WHERE driver_id = $1 ORDER BY started_at`, ali.ID)
+		require.NoError(t, err)
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var status, origin string
+			var at time.Time
+			require.NoError(t, rows.Scan(&status, &origin, &at))
+			out = append(out, status+"/"+origin+"@"+at.UTC().Format(time.TimeOnly))
+		}
+		return out
+	}
+	base := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	ts := func(d time.Duration) string { return base.Add(d).Format(time.RFC3339Nano) }
+	clock := func(d time.Duration) string { return base.Add(d).Format(time.TimeOnly) }
+
+	t.Run("moving is driving; standing 5 minutes is on duty", func(t *testing.T) {
+		send(t,
+			reading(1, ts(0), 0),
+			reading(2, ts(time.Minute), 40), // leaves the yard
+			reading(3, ts(2*time.Minute), 62),
+			reading(4, ts(20*time.Minute), 0), // stops at the customer
+			reading(5, ts(26*time.Minute), 0),
+		)
+
+		assert.Equal(t, []string{
+			"driving/auto@" + clock(time.Minute),
+			"on_duty/auto@" + clock(25*time.Minute),
+		}, logbook(t))
+		var me myDutyResp
+		aliC.do(t, http.MethodGet, "/api/v1/drivers/me/duty-status", nil, http.StatusOK, &me)
+		require.NotNil(t, me.Current)
+		assert.Equal(t, "on_duty", me.Current.Status)
+		assert.Equal(t, "auto", me.Current.Origin)
+		require.NotNil(t, me.Current.TruckID)
+		assert.Equal(t, truck.ID, *me.Current.TruckID)
+	})
+
+	t.Run("while the truck moves, the driver cannot change it", func(t *testing.T) {
+		send(t, reading(6, time.Now().UTC().Format(time.RFC3339Nano), 55))
+
+		var me myDutyResp
+		aliC.do(t, http.MethodGet, "/api/v1/drivers/me/duty-status", nil, http.StatusOK, &me)
+		assert.Equal(t, "driving", me.Current.Status)
+		e := aliC.fail(t, http.MethodPost, "/api/v1/drivers/me/duty-status", map[string]any{"status": "off_duty"}, http.StatusConflict)
+		assert.Contains(t, e.Message, "moving")
+	})
+
+	t.Run("sending the same readings again writes nothing twice", func(t *testing.T) {
+		before := logbook(t)
+		var r ingestResp
+		dev.do(t, http.MethodPost, "/api/v1/device/telemetry", map[string]any{"events": []map[string]any{
+			reading(2, ts(time.Minute), 40), reading(5, ts(26*time.Minute), 0),
+		}}, http.StatusOK, &r)
+		assert.Equal(t, 2, r.Duplicates)
+		assert.Equal(t, before, logbook(t))
+	})
+}

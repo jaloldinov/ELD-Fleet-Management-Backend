@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -60,6 +61,23 @@ func (r *DriverAssignmentRepository) GetOpenByDriver(ctx context.Context, driver
 	a, err := scanDriverAssignment(row)
 	if err != nil {
 		return nil, mapDriverAssignmentError("get open driver assignment", err)
+	}
+	return a, nil
+}
+
+// PrimaryAt returns the stint of the truck's primary driver at an instant
+// ("who was at the wheel of 101 at 14:30?"), by the history's
+// [started_at, ended_at) rule, or ErrNotFound if the seat was empty.
+func (r *DriverAssignmentRepository) PrimaryAt(ctx context.Context, truckID uuid.UUID, at time.Time) (*model.DriverAssignment, error) {
+	row := r.q(ctx).QueryRow(ctx, `
+		SELECT `+driverAssignmentColumns+` FROM driver_truck_assignments
+		WHERE truck_id = $1 AND role = 'primary'
+		  AND started_at <= $2 AND (ended_at IS NULL OR ended_at > $2)
+		ORDER BY started_at DESC
+		LIMIT 1`, truckID, at)
+	a, err := scanDriverAssignment(row)
+	if err != nil {
+		return nil, mapDriverAssignmentError("get primary driver at", err)
 	}
 	return a, nil
 }

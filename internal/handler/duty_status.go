@@ -122,7 +122,7 @@ func (h *DutyStatusHandler) MyStatus(c *gin.Context) {
 //	@Failure		400		{object}	apierror.Response		"invalid status, special or note"
 //	@Failure		401		{object}	apierror.Response		"missing or invalid access token"
 //	@Failure		404		{object}	apierror.Response		"the caller is not a driver"
-//	@Failure		409		{object}	apierror.Response		"another change in the same second"
+//	@Failure		409		{object}	apierror.Response		"another change in the same second, or the truck is moving with the caller at the wheel"
 //	@Failure		500		{object}	apierror.Response
 //	@Router			/api/v1/drivers/me/duty-status [post]
 func (h *DutyStatusHandler) ChangeMyStatus(c *gin.Context) {

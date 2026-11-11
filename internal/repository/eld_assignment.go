@@ -75,20 +75,21 @@ func (r *ELDAssignmentRepository) GetInstalled(ctx context.Context, truckID uuid
 		lat, lon           *float64
 		speed, odo, hours  *float64
 		engineOn, moving   *bool
+		motionSince        *time.Time
 	)
 	a := &d.Assignment
 	err := r.q(ctx).QueryRow(ctx, `
 		SELECT a.id, a.company_id, a.eld_device_id, a.truck_id,
 		       a.started_at, a.ended_at, a.started_by, a.ended_by, e.serial_number, e.last_seen_at,
 		       s.seq, s.recorded_at, s.received_at, s.truck_id, s.latitude, s.longitude,
-		       s.speed_mph, s.odometer_mi, s.engine_hours, s.engine_on, s.moving
+		       s.speed_mph, s.odometer_mi, s.engine_hours, s.engine_on, s.moving, s.motion_since
 		FROM eld_truck_assignments a
 		JOIN eld_devices e ON e.id = a.eld_device_id
 		LEFT JOIN eld_device_states s ON s.eld_device_id = a.eld_device_id
 		WHERE a.truck_id = $1 AND a.ended_at IS NULL`, truckID,
 	).Scan(&a.ID, &a.CompanyID, &a.ELDDeviceID, &a.TruckID,
 		&a.StartedAt, &a.EndedAt, &a.StartedBy, &a.EndedBy, &d.SerialNumber, &d.LastSeenAt,
-		&seq, &recorded, &received, &stTruck, &lat, &lon, &speed, &odo, &hours, &engineOn, &moving)
+		&seq, &recorded, &received, &stTruck, &lat, &lon, &speed, &odo, &hours, &engineOn, &moving, &motionSince)
 	if err != nil {
 		return nil, mapELDAssignmentError("get installed device", err)
 	}
@@ -97,9 +98,25 @@ func (r *ELDAssignmentRepository) GetInstalled(ctx context.Context, truckID uuid
 			TelemetryPoint: model.TelemetryPoint{Seq: *seq, RecordedAt: *recorded, Latitude: lat, Longitude: lon,
 				SpeedMPH: *speed, OdometerMi: *odo, EngineHours: *hours, EngineOn: *engineOn},
 			ELDDeviceID: a.ELDDeviceID, CompanyID: a.CompanyID, TruckID: stTruck, ReceivedAt: *received, Moving: *moving,
+			MotionSince: *motionSince,
 		}
 	}
 	return &d, nil
+}
+
+// TruckAt returns the truck the device was installed in at an instant, by
+// the history's [started_at, ended_at) rule, or ErrNotFound if none.
+func (r *ELDAssignmentRepository) TruckAt(ctx context.Context, deviceID uuid.UUID, at time.Time) (uuid.UUID, error) {
+	var truckID uuid.UUID
+	err := r.q(ctx).QueryRow(ctx, `
+		SELECT truck_id FROM eld_truck_assignments
+		WHERE eld_device_id = $1 AND started_at <= $2 AND (ended_at IS NULL OR ended_at > $2)
+		ORDER BY started_at DESC
+		LIMIT 1`, deviceID, at).Scan(&truckID)
+	if err != nil {
+		return uuid.Nil, mapELDAssignmentError("get truck at", err)
+	}
+	return truckID, nil
 }
 
 // EndOpenByDevice takes the device out of its truck and returns that stint,

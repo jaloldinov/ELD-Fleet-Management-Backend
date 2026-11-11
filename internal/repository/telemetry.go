@@ -98,19 +98,23 @@ func truckAt(instant string) string {
 // when two batches of the same device arrive at once: the row is locked
 // while one upsert runs, and the other then compares with ITS result.
 // updated = false: the stored state was newer (nothing changed).
-func (r *TelemetryRepository) UpsertState(ctx context.Context, companyID, deviceID uuid.UUID, p model.TelemetryPoint) (bool, error) {
+//
+// motionSince is when the device's current run (moving or standing)
+// began; the caller works it out (model.Motion), the row only keeps it.
+func (r *TelemetryRepository) UpsertState(ctx context.Context, companyID, deviceID uuid.UUID, p model.TelemetryPoint, motionSince time.Time) (bool, error) {
 	tag, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO eld_device_states (eld_device_id, company_id, seq, recorded_at, truck_id,
-		                               latitude, longitude, speed_mph, odometer_mi, engine_hours, engine_on, moving)
-		VALUES ($2, $1, $3, $4, `+truckAt("$4::timestamptz")+`, $5, $6, $7, $8, $9, $10, $11)
+		                               latitude, longitude, speed_mph, odometer_mi, engine_hours, engine_on, moving, motion_since)
+		VALUES ($2, $1, $3, $4, `+truckAt("$4::timestamptz")+`, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (eld_device_id) DO UPDATE
 		SET seq = EXCLUDED.seq, recorded_at = EXCLUDED.recorded_at, received_at = now(),
 		    truck_id = EXCLUDED.truck_id, latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
 		    speed_mph = EXCLUDED.speed_mph, odometer_mi = EXCLUDED.odometer_mi,
-		    engine_hours = EXCLUDED.engine_hours, engine_on = EXCLUDED.engine_on, moving = EXCLUDED.moving
+		    engine_hours = EXCLUDED.engine_hours, engine_on = EXCLUDED.engine_on, moving = EXCLUDED.moving,
+		    motion_since = EXCLUDED.motion_since
 		WHERE eld_device_states.recorded_at < EXCLUDED.recorded_at`,
 		companyID, deviceID, p.Seq, p.RecordedAt, p.Latitude, p.Longitude,
-		p.SpeedMPH, p.OdometerMi, p.EngineHours, p.EngineOn, p.Moving())
+		p.SpeedMPH, p.OdometerMi, p.EngineHours, p.EngineOn, p.Moving(), motionSince)
 	if err != nil {
 		return false, fmt.Errorf("upsert device state: %w", err)
 	}
@@ -123,17 +127,51 @@ func (r *TelemetryRepository) GetState(ctx context.Context, deviceID uuid.UUID) 
 	var st model.DeviceState
 	err := r.q(ctx).QueryRow(ctx, `
 		SELECT eld_device_id, company_id, seq, recorded_at, received_at, truck_id,
-		       latitude, longitude, speed_mph, odometer_mi, engine_hours, engine_on, moving
+		       latitude, longitude, speed_mph, odometer_mi, engine_hours, engine_on, moving, motion_since
 		FROM eld_device_states
 		WHERE eld_device_id = $1`, deviceID,
 	).Scan(&st.ELDDeviceID, &st.CompanyID, &st.Seq, &st.RecordedAt, &st.ReceivedAt, &st.TruckID,
-		&st.Latitude, &st.Longitude, &st.SpeedMPH, &st.OdometerMi, &st.EngineHours, &st.EngineOn, &st.Moving)
+		&st.Latitude, &st.Longitude, &st.SpeedMPH, &st.OdometerMi, &st.EngineHours, &st.EngineOn, &st.Moving, &st.MotionSince)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, model.ErrNotFound
 	} else if err != nil {
 		return nil, fmt.Errorf("get device state: %w", err)
 	}
 	return &st, nil
+}
+
+// ListStopsToSettle finds the devices whose truck has stood still for
+// model.AutoOnDutyAfterStop as of now, with no reading after that mark (the
+// device went quiet: engine off), while the truck's primary driver is
+// still driving then. Each needs a StopConfirmed (DeviceService.SettleStops).
+//
+// The duty-status join keeps the answer small: a truck parked for a week
+// stops matching once its driver is no longer driving.
+func (r *TelemetryRepository) ListStopsToSettle(ctx context.Context, now time.Time) ([]uuid.UUID, error) {
+	const due = `(s.motion_since + make_interval(secs => $2))`
+	rows, err := r.q(ctx).Query(ctx, `
+		SELECT s.eld_device_id
+		FROM eld_device_states s
+		JOIN driver_truck_assignments a
+		  ON a.truck_id = s.truck_id AND a.role = 'primary'
+		 AND a.started_at <= `+due+` AND (a.ended_at IS NULL OR a.ended_at > `+due+`)
+		JOIN LATERAL (
+		    SELECT e.status FROM duty_status_events e
+		    WHERE e.driver_id = a.driver_id AND e.started_at <= `+due+`
+		    ORDER BY e.started_at DESC
+		    LIMIT 1) cur ON cur.status = 'driving'
+		WHERE NOT s.moving AND s.truck_id IS NOT NULL
+		  AND `+due+` <= $1
+		  AND s.recorded_at < `+due+`
+		ORDER BY s.motion_since`, now, model.AutoOnDutyAfterStop.Seconds())
+	if err != nil {
+		return nil, fmt.Errorf("list stops to settle: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("list stops to settle: %w", err)
+	}
+	return ids, nil
 }
 
 // ListByDevice returns a device's stored events in seq order (newest
