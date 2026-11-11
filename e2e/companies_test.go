@@ -124,6 +124,18 @@ func TestCompaniesAsCompanyUsers(t *testing.T) {
 			map[string]any{"name": "Hijacked"}, http.StatusNotFound)
 	})
 
+	t.Run("the hours-of-service cycle: 70/8 by default, the admin may choose 60/7", func(t *testing.T) {
+		var c companyResp
+		tn.Admin.do(t, http.MethodGet, "/api/v1/companies/"+tn.ID, nil, http.StatusOK, &c)
+		assert.Equal(t, "us_70_8", c.HOSCycle)
+
+		tn.Admin.do(t, http.MethodPatch, "/api/v1/companies/"+tn.ID, map[string]any{"hos_cycle": "us_60_7"}, http.StatusOK, &c)
+		assert.Equal(t, "us_60_7", c.HOSCycle)
+
+		e := tn.Admin.fail(t, http.MethodPatch, "/api/v1/companies/"+tn.ID, map[string]any{"hos_cycle": "us_80_9"}, http.StatusBadRequest)
+		assert.Contains(t, e.Details, "hos_cycle")
+	})
+
 	t.Run("only the platform creates and deletes companies", func(t *testing.T) {
 		e := tn.Admin.fail(t, http.MethodPost, "/api/v1/companies", map[string]string{
 			"name": "Sneaky", "dot_number": "9", "timezone": "UTC",

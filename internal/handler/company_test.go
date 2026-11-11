@@ -119,6 +119,7 @@ func sampleCompany() *model.Company {
 		Name:      "Acme",
 		DOTNumber: "1234567",
 		Timezone:  "America/Chicago",
+		HOSCycle:  model.HOSCycle70in8,
 		IsActive:  true,
 		// Billing data: billing_status is shown, the Stripe customer id is not.
 		StripeCustomerID: &customer,
@@ -139,16 +140,17 @@ func TestCompanyHandler_Create_Success(t *testing.T) {
 	}}
 
 	rec := do(newCompanyRouter(svc), http.MethodPost, "/api/v1/companies",
-		`{"name":"Acme","dot_number":"1234567","timezone":"America/Chicago"}`)
+		`{"name":"Acme","dot_number":"1234567","timezone":"America/Chicago","hos_cycle":"us_60_7"}`)
 
 	assert.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, "/api/v1/companies/0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", rec.Header().Get("Location"))
-	assert.Equal(t, service.CreateCompanyInput{Name: "Acme", DOTNumber: "1234567", Timezone: "America/Chicago"}, gotInput)
+	assert.Equal(t, service.CreateCompanyInput{Name: "Acme", DOTNumber: "1234567", Timezone: "America/Chicago", HOSCycle: "us_60_7"}, gotInput)
 	assert.JSONEq(t, `{
 		"id": "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
 		"name": "Acme",
 		"dot_number": "1234567",
 		"timezone": "America/Chicago",
+		"hos_cycle": "us_70_8",
 		"is_active": true,
 		"billing_status": "active",
 		"created_at": "2026-10-02T11:00:00Z",

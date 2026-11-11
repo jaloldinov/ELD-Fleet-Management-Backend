@@ -149,6 +149,7 @@ type companyResp struct {
 	Name      string `json:"name"`
 	DOTNumber string `json:"dot_number"`
 	Timezone  string `json:"timezone"`
+	HOSCycle  string `json:"hos_cycle"`
 	IsActive  bool   `json:"is_active"`
 }
 

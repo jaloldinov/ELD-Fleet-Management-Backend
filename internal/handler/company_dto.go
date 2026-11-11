@@ -18,10 +18,12 @@ type CreateCompanyRequest struct {
 	Name      string `json:"name" example:"Acme Freight LLC"`
 	DOTNumber string `json:"dot_number" example:"1234567"`
 	Timezone  string `json:"timezone" example:"America/Chicago"`
+	// Hours-of-service cycle: 70 hours in 8 days (default) or 60 in 7.
+	HOSCycle string `json:"hos_cycle,omitempty" enums:"us_70_8,us_60_7" example:"us_70_8"`
 }
 
 func (r CreateCompanyRequest) toInput() service.CreateCompanyInput {
-	return service.CreateCompanyInput{Name: r.Name, DOTNumber: r.DOTNumber, Timezone: r.Timezone}
+	return service.CreateCompanyInput{Name: r.Name, DOTNumber: r.DOTNumber, Timezone: r.Timezone, HOSCycle: r.HOSCycle}
 }
 
 // UpdateCompanyRequest is a partial update (PATCH). Pointer fields
@@ -30,12 +32,13 @@ type UpdateCompanyRequest struct {
 	Name      *string `json:"name,omitempty" example:"Acme Freight LLC"`
 	DOTNumber *string `json:"dot_number,omitempty" example:"1234567"`
 	Timezone  *string `json:"timezone,omitempty" example:"America/New_York"`
+	HOSCycle  *string `json:"hos_cycle,omitempty" enums:"us_70_8,us_60_7" example:"us_60_7"`
 	IsActive  *bool   `json:"is_active,omitempty" example:"false"`
 }
 
 func (r UpdateCompanyRequest) toInput() service.UpdateCompanyInput {
 	return service.UpdateCompanyInput{
-		Name: r.Name, DOTNumber: r.DOTNumber, Timezone: r.Timezone, IsActive: r.IsActive,
+		Name: r.Name, DOTNumber: r.DOTNumber, Timezone: r.Timezone, HOSCycle: r.HOSCycle, IsActive: r.IsActive,
 	}
 }
 
@@ -50,7 +53,9 @@ type CompanyResponse struct {
 	Name      string    `json:"name" example:"Acme Freight LLC"`
 	DOTNumber string    `json:"dot_number" example:"1234567"`
 	Timezone  string    `json:"timezone" example:"America/Chicago"`
-	IsActive  bool      `json:"is_active" example:"true"`
+	// Hours-of-service cycle: us_70_8 (70 hours in 8 days) or us_60_7.
+	HOSCycle string `json:"hos_cycle" enums:"us_70_8,us_60_7" example:"us_70_8"`
+	IsActive bool   `json:"is_active" example:"true"`
 	// Follows the subscription: none, pending (first invoice unpaid), active,
 	// past_due (payment failed, grace period), blocked. Fleet routes need
 	// active or past_due when billing is enabled.
@@ -65,6 +70,7 @@ func newCompanyResponse(c *model.Company) CompanyResponse {
 		Name:          c.Name,
 		DOTNumber:     c.DOTNumber,
 		Timezone:      c.Timezone,
+		HOSCycle:      string(c.HOSCycle),
 		IsActive:      c.IsActive,
 		BillingStatus: c.BillingStatus,
 		CreatedAt:     c.CreatedAt.UTC(), // API always speaks UTC

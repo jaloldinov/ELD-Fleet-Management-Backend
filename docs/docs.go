@@ -7252,6 +7252,15 @@ const docTemplate = `{
                     "type": "string",
                     "example": "1234567"
                 },
+                "hos_cycle": {
+                    "description": "Hours-of-service cycle: us_70_8 (70 hours in 8 days) or us_60_7.",
+                    "type": "string",
+                    "enum": [
+                        "us_70_8",
+                        "us_60_7"
+                    ],
+                    "example": "us_70_8"
+                },
                 "id": {
                     "description": "Company ID (UUIDv7, time-ordered).",
                     "type": "string",
@@ -7301,6 +7310,15 @@ const docTemplate = `{
                 "dot_number": {
                     "type": "string",
                     "example": "1234567"
+                },
+                "hos_cycle": {
+                    "description": "Hours-of-service cycle: 70 hours in 8 days (default) or 60 in 7.",
+                    "type": "string",
+                    "enum": [
+                        "us_70_8",
+                        "us_60_7"
+                    ],
+                    "example": "us_70_8"
                 },
                 "name": {
                     "type": "string",
@@ -9528,6 +9546,14 @@ const docTemplate = `{
                 "dot_number": {
                     "type": "string",
                     "example": "1234567"
+                },
+                "hos_cycle": {
+                    "type": "string",
+                    "enum": [
+                        "us_70_8",
+                        "us_60_7"
+                    ],
+                    "example": "us_60_7"
                 },
                 "is_active": {
                     "type": "boolean",

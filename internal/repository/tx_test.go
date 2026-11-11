@@ -49,7 +49,7 @@ func TestTxManager_RollbackAcrossRepositories(t *testing.T) {
 	ctx := context.Background()
 
 	err := tx.WithinTx(ctx, func(ctx context.Context) error {
-		c, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC"})
+		c, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC", HOSCycle: model.HOSCycle70in8})
 		require.NoError(t, err)
 		_, err = users.Create(ctx, newUser(c.ID, "jane@acme.com"), []string{model.RoleDriver})
 		require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestTxManager_Commit(t *testing.T) {
 	ctx := context.Background()
 
 	err := tx.WithinTx(ctx, func(ctx context.Context) error {
-		_, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC"})
+		_, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC", HOSCycle: model.HOSCycle70in8})
 		return err
 	})
 
@@ -90,7 +90,7 @@ func TestTxManager_NestedRepositoryTransactionJoins(t *testing.T) {
 	ctx := context.Background()
 
 	err := tx.WithinTx(ctx, func(ctx context.Context) error {
-		c, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC"})
+		c, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC", HOSCycle: model.HOSCycle70in8})
 		require.NoError(t, err)
 		_, err = users.Create(ctx, newUser(c.ID, "jane@acme.com"), []string{"no_such_role"})
 		require.ErrorIs(t, err, model.ErrRoleNotFound)
@@ -111,7 +111,7 @@ func TestTxManager_WithinTxJoinsExistingTransaction(t *testing.T) {
 	err := tx.WithinTx(ctx, func(ctx context.Context) error {
 		// e.g. one service calling another service that also uses WithinTx.
 		inner := tx.WithinTx(ctx, func(ctx context.Context) error {
-			_, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC"})
+			_, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC", HOSCycle: model.HOSCycle70in8})
 			return err
 		})
 		require.NoError(t, inner)
@@ -169,7 +169,7 @@ func TestTxManager_WithinSnapshot_IsReadOnly(t *testing.T) {
 	companies := NewCompanyRepository(db)
 
 	err := tx.WithinSnapshot(context.Background(), func(ctx context.Context) error {
-		_, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC"})
+		_, err := companies.Create(ctx, model.Company{Name: "Acme", DOTNumber: "1", Timezone: "UTC", HOSCycle: model.HOSCycle70in8})
 		return err
 	})
 

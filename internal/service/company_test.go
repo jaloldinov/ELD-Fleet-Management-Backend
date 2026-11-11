@@ -99,6 +99,7 @@ func TestCompanyService_Create_Valid(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Acme Freight", saved.Name, "input is trimmed before saving")
 	assert.Equal(t, "1234567", saved.DOTNumber)
+	assert.Equal(t, model.HOSCycle70in8, saved.HOSCycle, "no cycle given: 70 hours in 8 days")
 	assert.NotEqual(t, uuid.Nil, got.ID)
 }
 
@@ -119,6 +120,7 @@ func TestCompanyService_Create_Invalid(t *testing.T) {
 		{"unknown timezone", func(in *CreateCompanyInput) { in.Timezone = "Mars/Olympus" }, "timezone"},
 		{"empty timezone", func(in *CreateCompanyInput) { in.Timezone = "" }, "timezone"},
 		{"Local timezone", func(in *CreateCompanyInput) { in.Timezone = "Local" }, "timezone"},
+		{"unknown cycle", func(in *CreateCompanyInput) { in.HOSCycle = "us_80_9" }, "hos_cycle"},
 	}
 
 	for _, tt := range tests {
@@ -225,7 +227,7 @@ func TestCompanyService_List_Pagination(t *testing.T) {
 
 func existingCompany() *model.Company {
 	return &model.Company{
-		ID: uuid.New(), Name: "Acme", DOTNumber: "1111", Timezone: "America/Chicago",
+		ID: uuid.New(), Name: "Acme", DOTNumber: "1111", Timezone: "America/Chicago", HOSCycle: model.HOSCycle70in8,
 		IsActive: true, CreatedAt: time.Now(),
 	}
 }
@@ -255,6 +257,24 @@ func TestCompanyService_Update_OnlyChangesProvidedFields(t *testing.T) {
 	assert.False(t, saved.IsActive)
 	assert.Equal(t, current.DOTNumber, saved.DOTNumber, "not sent, so unchanged")
 	assert.Equal(t, current.Timezone, saved.Timezone, "not sent, so unchanged")
+	assert.Equal(t, current.HOSCycle, saved.HOSCycle, "not sent, so unchanged")
+}
+
+func TestCompanyService_Update_HOSCycle(t *testing.T) {
+	current := existingCompany()
+	var saved model.Company
+	repo := &fakeCompanyRepo{t: t,
+		getByIDFn: func(uuid.UUID) (*model.Company, error) { c := *current; return &c, nil },
+		updateFn:  func(c model.Company) (*model.Company, error) { saved = c; return &c, nil },
+	}
+	svc := NewCompanyService(repo, noAudit())
+
+	_, err := svc.Update(context.Background(), platformAdmin, current.ID, UpdateCompanyInput{HOSCycle: ptr("us_60_7")})
+	require.NoError(t, err)
+	assert.Equal(t, model.HOSCycle60in7, saved.HOSCycle)
+
+	_, err = svc.Update(context.Background(), platformAdmin, current.ID, UpdateCompanyInput{HOSCycle: ptr("weekly")})
+	requireValidationField(t, err, "hos_cycle")
 }
 
 func TestCompanyService_Update_EmptyInput(t *testing.T) {
@@ -332,7 +352,7 @@ func TestCompanyService_OtherTenantIsNotFound(t *testing.T) {
 }
 
 func TestCompanyService_OwnCompany(t *testing.T) {
-	own := &model.Company{ID: companyA, Name: "Acme", DOTNumber: "1", Timezone: "UTC", IsActive: true}
+	own := &model.Company{ID: companyA, Name: "Acme", DOTNumber: "1", Timezone: "UTC", HOSCycle: model.HOSCycle70in8, IsActive: true}
 	repo := &fakeCompanyRepo{
 		t:         t,
 		getByIDFn: func(uuid.UUID) (*model.Company, error) { c := *own; return &c, nil },

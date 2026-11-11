@@ -15,7 +15,7 @@ import (
 func createCompany(t *testing.T, repo *CompanyRepository, name, dot string) *model.Company {
 	t.Helper()
 	c, err := repo.Create(context.Background(), model.Company{
-		Name: name, DOTNumber: dot, Timezone: "America/Chicago",
+		Name: name, DOTNumber: dot, Timezone: "America/Chicago", HOSCycle: model.HOSCycle70in8,
 	})
 	require.NoError(t, err)
 	return c
@@ -25,7 +25,7 @@ func TestCompanyRepository_Create(t *testing.T) {
 	repo := NewCompanyRepository(newTestDB(t))
 
 	c, err := repo.Create(context.Background(), model.Company{
-		Name: "Acme Freight", DOTNumber: "1234567", Timezone: "America/Chicago",
+		Name: "Acme Freight", DOTNumber: "1234567", Timezone: "America/Chicago", HOSCycle: model.HOSCycle70in8,
 	})
 
 	require.NoError(t, err)
@@ -34,6 +34,7 @@ func TestCompanyRepository_Create(t *testing.T) {
 	assert.Equal(t, "Acme Freight", c.Name)
 	assert.Equal(t, "1234567", c.DOTNumber)
 	assert.Equal(t, "America/Chicago", c.Timezone)
+	assert.Equal(t, model.HOSCycle70in8, c.HOSCycle)
 	assert.True(t, c.IsActive, "new companies are active by default")
 	assert.False(t, c.CreatedAt.IsZero())
 	assert.Nil(t, c.DeletedAt)
@@ -44,7 +45,7 @@ func TestCompanyRepository_Create_DuplicateDOT(t *testing.T) {
 	createCompany(t, repo, "Acme", "1234567")
 
 	_, err := repo.Create(context.Background(), model.Company{
-		Name: "Copycat", DOTNumber: "1234567", Timezone: "America/Chicago",
+		Name: "Copycat", DOTNumber: "1234567", Timezone: "America/Chicago", HOSCycle: model.HOSCycle70in8,
 	})
 
 	assert.ErrorIs(t, err, model.ErrDOTNumberTaken)

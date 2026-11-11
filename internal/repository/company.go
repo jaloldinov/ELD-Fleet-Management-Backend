@@ -13,7 +13,7 @@ import (
 
 // companyColumns is shared by every SELECT/RETURNING so the column order always
 // matches scanCompany.
-const companyColumns = `id, name, dot_number, timezone, is_active, stripe_customer_id, billing_status, created_at, updated_at, deleted_at`
+const companyColumns = `id, name, dot_number, timezone, hos_cycle, is_active, stripe_customer_id, billing_status, created_at, updated_at, deleted_at`
 
 type CompanyRepository struct {
 	db DBTX
@@ -36,10 +36,10 @@ func (r *CompanyRepository) Create(ctx context.Context, c model.Company) (*model
 	// text, so SQL injection is impossible. Never build SQL with fmt.Sprintf
 	// from user input.
 	row := r.q(ctx).QueryRow(ctx, `
-		INSERT INTO companies (name, dot_number, timezone)
-		VALUES ($1, $2, $3)
+		INSERT INTO companies (name, dot_number, timezone, hos_cycle)
+		VALUES ($1, $2, $3, $4)
 		RETURNING `+companyColumns,
-		c.Name, c.DOTNumber, c.Timezone,
+		c.Name, c.DOTNumber, c.Timezone, c.HOSCycle,
 	)
 
 	created, err := scanCompany(row)
@@ -113,10 +113,10 @@ func (r *CompanyRepository) List(ctx context.Context, f model.CompanyFilter, lim
 func (r *CompanyRepository) Update(ctx context.Context, c model.Company) (*model.Company, error) {
 	row := r.q(ctx).QueryRow(ctx, `
 		UPDATE companies
-		SET name = $2, dot_number = $3, timezone = $4, is_active = $5
+		SET name = $2, dot_number = $3, timezone = $4, is_active = $5, hos_cycle = $6
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING `+companyColumns,
-		c.ID, c.Name, c.DOTNumber, c.Timezone, c.IsActive,
+		c.ID, c.Name, c.DOTNumber, c.Timezone, c.IsActive, c.HOSCycle,
 	)
 
 	updated, err := scanCompany(row)
@@ -212,7 +212,7 @@ func (r *CompanyRepository) BillingStatus(ctx context.Context, id uuid.UUID) (st
 func scanCompany(row pgx.Row) (*model.Company, error) {
 	var c model.Company
 	err := row.Scan(
-		&c.ID, &c.Name, &c.DOTNumber, &c.Timezone, &c.IsActive, &c.StripeCustomerID, &c.BillingStatus,
+		&c.ID, &c.Name, &c.DOTNumber, &c.Timezone, &c.HOSCycle, &c.IsActive, &c.StripeCustomerID, &c.BillingStatus,
 		&c.CreatedAt, &c.UpdatedAt, &c.DeletedAt,
 	)
 	if err != nil {

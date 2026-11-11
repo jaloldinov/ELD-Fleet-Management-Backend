@@ -12,7 +12,9 @@ type Company struct {
 	Name      string
 	DOTNumber string // USDOT number
 	Timezone  string // home-terminal IANA time zone, e.g. America/Chicago
-	IsActive  bool
+	// HOSCycle: the carrier's weekly hours-of-service limit, 70/8 or 60/7.
+	HOSCycle HOSCycle
+	IsActive bool
 	// StripeCustomerID (cus_...) is the company's Stripe Customer; nil
 	// until the company first needs billing.
 	StripeCustomerID *string

@@ -46,6 +46,7 @@ type CreateCompanyInput struct {
 	Name      string
 	DOTNumber string
 	Timezone  string
+	HOSCycle  string // empty = 70 hours in 8 days
 }
 
 // UpdateCompanyInput is a partial update: nil fields are left unchanged.
@@ -53,6 +54,7 @@ type UpdateCompanyInput struct {
 	Name      *string
 	DOTNumber *string
 	Timezone  *string
+	HOSCycle  *string
 	IsActive  *bool
 }
 
@@ -97,6 +99,10 @@ func (s *CompanyService) Create(ctx context.Context, p auth.Principal, in Create
 		Name:      strings.TrimSpace(in.Name),
 		DOTNumber: strings.TrimSpace(in.DOTNumber),
 		Timezone:  strings.TrimSpace(in.Timezone),
+		HOSCycle:  model.HOSCycle(strings.TrimSpace(in.HOSCycle)),
+	}
+	if c.HOSCycle == "" {
+		c.HOSCycle = model.HOSCycle70in8
 	}
 
 	// Validate BEFORE touching the database: cheap, and gives clear messages.
@@ -152,7 +158,7 @@ func (s *CompanyService) Update(ctx context.Context, p auth.Principal, id uuid.U
 		return nil, model.ErrForbidden
 	}
 
-	if in.Name == nil && in.DOTNumber == nil && in.Timezone == nil && in.IsActive == nil {
+	if in.Name == nil && in.DOTNumber == nil && in.Timezone == nil && in.HOSCycle == nil && in.IsActive == nil {
 		return nil, &validation.ValidationError{Fields: map[string]string{"body": "at least one field must be provided"}}
 	}
 
@@ -170,6 +176,9 @@ func (s *CompanyService) Update(ctx context.Context, p auth.Principal, id uuid.U
 	}
 	if in.Timezone != nil {
 		c.Timezone = strings.TrimSpace(*in.Timezone)
+	}
+	if in.HOSCycle != nil {
+		c.HOSCycle = model.HOSCycle(strings.TrimSpace(*in.HOSCycle))
 	}
 	if in.IsActive != nil {
 		c.IsActive = *in.IsActive
@@ -220,6 +229,7 @@ func companyChanges(old, new model.Company) model.AuditChanges {
 	c.Set("name", old.Name, new.Name)
 	c.Set("dot_number", old.DOTNumber, new.DOTNumber)
 	c.Set("timezone", old.Timezone, new.Timezone)
+	c.Set("hos_cycle", old.HOSCycle, new.HOSCycle)
 	c.Set("is_active", old.IsActive, new.IsActive)
 	return c
 }
@@ -243,6 +253,8 @@ func validateCompany(c model.Company) error {
 	v.Check(dotNumberRe.MatchString(c.DOTNumber), "dot_number", "must be 1 to 8 digits")
 
 	v.Check(validation.Timezone(c.Timezone), "timezone", "must be a valid IANA time zone, e.g. America/Chicago")
+
+	v.Check(c.HOSCycle.Valid(), "hos_cycle", "must be us_70_8 (70 hours in 8 days) or us_60_7 (60 hours in 7 days)")
 
 	return v.Err()
 }
