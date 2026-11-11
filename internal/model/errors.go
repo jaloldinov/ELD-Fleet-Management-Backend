@@ -35,6 +35,10 @@ var (
 	ErrDriverOnTruck = errors.New("this driver is already assigned to a truck")
 	ErrSeatTaken     = errors.New("this truck already has a driver in that role")
 
+	// Driver logbook. ErrDutyStatusTaken comes from a unique index, so it
+	// also holds when two requests arrive at the same moment.
+	ErrDutyStatusTaken = errors.New("the driver already has a duty status starting at that moment")
+
 	// ErrInvalidCredentials is deliberately the same for "no such user" and
 	// "wrong password", so attackers cannot learn which accounts exist.
 	ErrInvalidCredentials = errors.New("invalid login or password")
