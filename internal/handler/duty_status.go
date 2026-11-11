@@ -17,6 +17,8 @@ import (
 type DutyStatusService interface {
 	MyStatus(ctx context.Context, p auth.Principal) (*model.DutyStatusEvent, error)
 	ChangeMyStatus(ctx context.Context, p auth.Principal, in service.ChangeDutyStatusInput) (*model.DutyStatusEvent, bool, error)
+	MyDailyLog(ctx context.Context, p auth.Principal, date string) (*model.DailyLog, error)
+	DriverDailyLog(ctx context.Context, p auth.Principal, driverID uuid.UUID, date string) (*model.DailyLog, error)
 }
 
 // ---------- DTOs ----------
@@ -54,6 +56,67 @@ type DutyStatusEventResponse struct {
 type MyDutyStatusResponse struct {
 	Current *DutyStatusEventResponse `json:"current"`
 }
+
+// DutySegmentResponse is a piece of the day in one status: the record in
+// force (which may have started the day before), cut to the day.
+type DutySegmentResponse struct {
+	StartedAt       time.Time               `json:"started_at" example:"2026-11-10T06:00:00-06:00"`
+	EndedAt         time.Time               `json:"ended_at" example:"2026-11-10T07:00:00-06:00"`
+	DurationSeconds int64                   `json:"duration_seconds" example:"3600"`
+	Record          DutyStatusEventResponse `json:"record"`
+}
+
+// DutyTotalsResponse: seconds on each line of the grid. Personal
+// conveyance counts as off duty, yard moves as on duty.
+type DutyTotalsResponse struct {
+	OffDuty      int64 `json:"off_duty" example:"50400"`
+	SleeperBerth int64 `json:"sleeper_berth" example:"0"`
+	Driving      int64 `json:"driving" example:"28800"`
+	OnDuty       int64 `json:"on_duty" example:"7200"`
+}
+
+// DailyLogResponse is one driver's day, midnight to midnight in the
+// company's time zone (23 or 25 hours on the daylight-saving days).
+// totals + unrecorded_seconds = recorded_until - starts_at.
+type DailyLogResponse struct {
+	DriverID uuid.UUID `json:"driver_id" swaggertype:"string" format:"uuid"`
+	Date     string    `json:"date" example:"2026-11-10"`
+	Timezone string    `json:"timezone" example:"America/Chicago"`
+	StartsAt time.Time `json:"starts_at" example:"2026-11-10T00:00:00-06:00"`
+	EndsAt   time.Time `json:"ends_at" example:"2026-11-11T00:00:00-06:00"`
+	// The log is known up to here: ends_at for a past day, now for today.
+	RecordedUntil time.Time             `json:"recorded_until" example:"2026-11-11T00:00:00-06:00"`
+	Segments      []DutySegmentResponse `json:"segments"`
+	Totals        DutyTotalsResponse    `json:"totals"`
+	// Before the driver's first record ever (a new driver).
+	UnrecordedSeconds int64 `json:"unrecorded_seconds" example:"0"`
+}
+
+func newDailyLogResponse(l *model.DailyLog) DailyLogResponse {
+	// Times in the company's zone: "06:00" on the grid is 06:00 there.
+	in := func(t time.Time) time.Time { return t.In(l.Location) }
+	r := DailyLogResponse{
+		DriverID: l.DriverID, Date: l.Date, Timezone: l.Location.String(),
+		StartsAt: in(l.Start), EndsAt: in(l.End), RecordedUntil: in(l.Until),
+		Segments: make([]DutySegmentResponse, 0, len(l.Segments)), // [] not null
+		Totals: DutyTotalsResponse{
+			OffDuty: seconds(l.Totals[model.DutyOffDuty]), SleeperBerth: seconds(l.Totals[model.DutySleeperBerth]),
+			Driving: seconds(l.Totals[model.DutyDriving]), OnDuty: seconds(l.Totals[model.DutyOnDuty]),
+		},
+		UnrecordedSeconds: seconds(l.Unrecorded),
+	}
+	for _, sg := range l.Segments {
+		rec := newDutyStatusEventResponse(&sg.Event)
+		rec.StartedAt = in(rec.StartedAt)
+		r.Segments = append(r.Segments, DutySegmentResponse{
+			StartedAt: in(sg.Start), EndedAt: in(sg.End), DurationSeconds: seconds(sg.Duration()), Record: rec,
+		})
+	}
+	return r
+}
+
+// seconds rounds down: segments of a whole-second log are whole seconds.
+func seconds(d time.Duration) int64 { return int64(d / time.Second) }
 
 func newDutyStatusEventResponse(e *model.DutyStatusEvent) DutyStatusEventResponse {
 	r := DutyStatusEventResponse{
@@ -149,4 +212,66 @@ func (h *DutyStatusHandler) ChangeMyStatus(c *gin.Context) {
 		code = http.StatusCreated
 	}
 	c.JSON(code, newDutyStatusEventResponse(e))
+}
+
+// MyDailyLog handles GET /api/v1/drivers/me/logs/:date.
+//
+//	@Summary		My log of a day
+//	@Description	For the driver app (and the roadside inspector looking at it): the caller's day, midnight to midnight in the company's time zone, as segments with durations and totals per status. Today is shown up to now. Needs a login, no extra permission. Not behind the billing gate.
+//	@Tags			logbook
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			date	path		string	true	"Day, YYYY-MM-DD"	example(2026-11-10)
+//	@Success		200		{object}	DailyLogResponse
+//	@Failure		400		{object}	apierror.Response	"invalid or future date"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		404		{object}	apierror.Response	"the caller is not a driver"
+//	@Failure		500		{object}	apierror.Response
+//	@Router			/api/v1/drivers/me/logs/{date} [get]
+func (h *DutyStatusHandler) MyDailyLog(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	l, err := h.svc.MyDailyLog(c.Request.Context(), p, c.Param("date"))
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newDailyLogResponse(l))
+}
+
+// DriverDailyLog handles GET /api/v1/drivers/:id/logs/:date.
+//
+//	@Summary		A driver's log of a day
+//	@Description	Requires permission: logbook:read
+//	@Description	The office's view of a driver's day: midnight to midnight in the company's time zone, as segments with durations and totals per status. Today is shown up to now.
+//	@Tags			logbook
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string	true	"Driver ID"			format(uuid)
+//	@Param			date	path		string	true	"Day, YYYY-MM-DD"	example(2026-11-10)
+//	@Success		200		{object}	DailyLogResponse
+//	@Failure		400		{object}	apierror.Response	"invalid id, or invalid or future date"
+//	@Failure		401		{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402		{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403		{object}	apierror.Response	"missing permission logbook:read"
+//	@Failure		404		{object}	apierror.Response	"driver not found"
+//	@Failure		500		{object}	apierror.Response
+//	@Router			/api/v1/drivers/{id}/logs/{date} [get]
+func (h *DutyStatusHandler) DriverDailyLog(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	l, err := h.svc.DriverDailyLog(c.Request.Context(), p, id, c.Param("date"))
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newDailyLogResponse(l))
 }

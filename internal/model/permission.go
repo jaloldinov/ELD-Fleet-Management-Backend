@@ -72,6 +72,10 @@ var (
 	PermAssignmentRead   = define("assignment:read", "View who drives which truck and which device is in it", RoleAdmin, RoleManager, RoleDispatcher)
 	PermAssignmentManage = define("assignment:manage", "Assign drivers to trucks", RoleAdmin, RoleManager, RoleDispatcher)
 
+	// Drivers' logbooks, as the office sees them. Drivers read their own
+	// without it (/drivers/me/logs: identity, not a permission).
+	PermLogbookRead = define("logbook:read", "View drivers' logbooks", RoleAdmin, RoleManager, RoleDispatcher)
+
 	// History of changes. Company admins see their own company's.
 	PermAuditRead = define("audit:read", "View the audit log", RoleAdmin)
 

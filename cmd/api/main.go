@@ -159,7 +159,7 @@ func run() error {
 	// Drivers' logbooks: where a status change happened comes from the
 	// driver's truck and its ELD.
 	dutyStatusSvc := service.NewDutyStatusService(txManager, repository.NewDutyStatusRepository(pool),
-		driverRepo, driverStintRepo, eldStintRepo)
+		driverRepo, driverStintRepo, eldStintRepo, companyRepo)
 
 	// The devices themselves (Authorization: Device <key>). Their readings
 	// also drive the logbook: moving = driving.

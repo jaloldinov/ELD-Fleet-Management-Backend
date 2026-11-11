@@ -19,10 +19,12 @@ import (
 type DutyStatusStore interface {
 	Insert(ctx context.Context, e model.DutyStatusEvent) (*model.DutyStatusEvent, error)
 	At(ctx context.Context, driverID uuid.UUID, at time.Time) (*model.DutyStatusEvent, error)
+	ListPeriod(ctx context.Context, driverID uuid.UUID, from, to time.Time) ([]model.DutyStatusEvent, error)
 }
 
 // DutyDrivers finds and locks drivers (repository.DriverRepository).
 type DutyDrivers interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*model.DriverDetails, error)
 	LockByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error)
 }
@@ -40,6 +42,11 @@ type DutyDevices interface {
 	TruckAt(ctx context.Context, deviceID uuid.UUID, at time.Time) (uuid.UUID, error)
 }
 
+// DutyCompanies gives a company's home-terminal time zone (repository.CompanyRepository).
+type DutyCompanies interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Company, error)
+}
+
 // MaxDutyNoteLength matches the database CHECK.
 const MaxDutyNoteLength = 500
 
@@ -55,16 +62,17 @@ type ChangeDutyStatusInput struct {
 // Not behind the billing gate: recording hours of service is required by
 // law, also for a company whose payment failed.
 type DutyStatusService struct {
-	now     func() time.Time // our clock; replaceable in tests
-	tx      Transactor
-	events  DutyStatusStore
-	drivers DutyDrivers
-	stints  DutyStints
-	devices DutyDevices
+	now       func() time.Time // our clock; replaceable in tests
+	tx        Transactor
+	events    DutyStatusStore
+	drivers   DutyDrivers
+	stints    DutyStints
+	devices   DutyDevices
+	companies DutyCompanies
 }
 
-func NewDutyStatusService(tx Transactor, events DutyStatusStore, drivers DutyDrivers, stints DutyStints, devices DutyDevices) *DutyStatusService {
-	return &DutyStatusService{now: time.Now, tx: tx, events: events, drivers: drivers, stints: stints, devices: devices}
+func NewDutyStatusService(tx Transactor, events DutyStatusStore, drivers DutyDrivers, stints DutyStints, devices DutyDevices, companies DutyCompanies) *DutyStatusService {
+	return &DutyStatusService{now: time.Now, tx: tx, events: events, drivers: drivers, stints: stints, devices: devices, companies: companies}
 }
 
 // MyStatus returns the caller's status in force now, or nil if they have
@@ -173,6 +181,56 @@ func (s *DutyStatusService) fillWhere(ctx context.Context, ev *model.DutyStatusE
 	odo, hours := st.OdometerMi, st.EngineHours
 	ev.OdometerMi, ev.EngineHours = &odo, &hours
 	return nil
+}
+
+// MyDailyLog is the caller's own log of a day (YYYY-MM-DD, in the
+// company's time zone). ErrNotFound if the caller is not a driver.
+func (s *DutyStatusService) MyDailyLog(ctx context.Context, p auth.Principal, date string) (*model.DailyLog, error) {
+	dd, err := s.drivers.GetByUserID(ctx, p.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return s.dailyLog(ctx, dd.Driver, date)
+}
+
+// DriverDailyLog is a driver's log of a day, for the office. Drivers of
+// other companies "do not exist" for company users (ErrNotFound).
+func (s *DutyStatusService) DriverDailyLog(ctx context.Context, p auth.Principal, driverID uuid.UUID, date string) (*model.DailyLog, error) {
+	dd, err := s.drivers.GetByID(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	if !p.IsPlatformUser() && dd.Driver.CompanyID != *p.CompanyID {
+		return nil, model.ErrNotFound
+	}
+	return s.dailyLog(ctx, dd.Driver, date)
+}
+
+func (s *DutyStatusService) dailyLog(ctx context.Context, d model.Driver, date string) (*model.DailyLog, error) {
+	company, err := s.companies.GetByID(ctx, d.CompanyID)
+	if err != nil {
+		return nil, err
+	}
+	loc, err := time.LoadLocation(company.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("company %s time zone %q: %w", company.ID, company.Timezone, err)
+	}
+	start, end, err := model.DayBounds(date, loc)
+	if err != nil {
+		return nil, &validation.ValidationError{Fields: map[string]string{"date": "must be a date like 2026-11-10"}}
+	}
+	now := s.now()
+	if !start.Before(now) {
+		return nil, &validation.ValidationError{Fields: map[string]string{"date": "is in the future"}}
+	}
+
+	events, err := s.events.ListPeriod(ctx, d.ID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	log := model.BuildDailyLog(events, start, end, now)
+	log.DriverID, log.Date, log.Location = d.ID, date, loc
+	return &log, nil
 }
 
 // RecordMotion writes what a truck's movement means for the driver at its

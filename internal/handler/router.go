@@ -188,6 +188,7 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	// be logged by law, also while the company's payment has failed.
 	protected.GET("/drivers/me/duty-status", h.DutyStatus.MyStatus)
 	protected.POST("/drivers/me/duty-status", h.DutyStatus.ChangeMyStatus)
+	protected.GET("/drivers/me/logs/:date", h.DutyStatus.MyDailyLog)
 
 	// The product itself (the fleet) needs a paid-up subscription; users,
 	// companies and billing do not, so a blocked company can still pay.
@@ -217,6 +218,8 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	// Who dispatches the driver ("my drivers": GET /drivers?dispatcher_id=me).
 	drivers.PUT("/:id/dispatcher", perm.Require(model.PermAssignmentManage), h.Assignment.SetDispatcher)
 	drivers.DELETE("/:id/dispatcher", perm.Require(model.PermAssignmentManage), h.Assignment.RemoveDispatcher)
+	// Drivers' logbooks, as the office reads them.
+	drivers.GET("/:id/logs/:date", perm.Require(model.PermLogbookRead), h.DutyStatus.DriverDailyLog)
 
 	trucks := product.Group("/trucks")
 	trucks.POST("", perm.Require(model.PermTruckCreate), h.Truck.Create)

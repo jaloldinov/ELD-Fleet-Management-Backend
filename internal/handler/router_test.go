@@ -197,6 +197,7 @@ var authenticatedOnlyRoutes = map[string]bool{
 	// A driver keeps their own logbook.
 	"GET /api/v1/drivers/me/duty-status":  true,
 	"POST /api/v1/drivers/me/duty-status": true,
+	"GET /api/v1/drivers/me/logs/:date":   true,
 	"GET /api/v1/billing/config":          true,
 }
 
@@ -494,6 +495,14 @@ func (anyDevice) Authenticate(context.Context, string) (*auth.Device, error) {
 	return &auth.Device{DeviceID: uuid.New(), CompanyID: uuid.New()}, nil
 }
 
+// notADriver answers every logbook call with "not found", so a test can
+// tell the handler ran (404) from the billing gate stopping it (402).
+type notADriver struct{ handler.DutyStatusService }
+
+func (notADriver) MyDailyLog(context.Context, auth.Principal, string) (*model.DailyLog, error) {
+	return nil, model.ErrNotFound
+}
+
 func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	log := logger.New(&bytes.Buffer{}, true, "debug")
@@ -507,7 +516,7 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		RateLimit: handler.NewRateLimitHandler(nil), Password: handler.NewPasswordResetHandler(nil, nil),
 		AuditLog: handler.NewAuditLogHandler(nil), PaymentMethod: handler.NewPaymentMethodHandler(nil),
 		Subscription: handler.NewSubscriptionHandler(nil), Assignment: handler.NewAssignmentHandler(nil),
-		DutyStatus: handler.NewDutyStatusHandler(nil),
+		DutyStatus: handler.NewDutyStatusHandler(notADriver{}),
 	})
 	h := map[string]string{"Authorization": "Bearer company-token"}
 
@@ -516,7 +525,9 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	for _, path := range []string{"/api/v1/trucks", "/api/v1/drivers", "/api/v1/drivers/me", "/api/v1/eld-devices/" + id,
 		// Phase 3: the dispatch board and its history are fleet routes too.
 		"/api/v1/trucks/" + id + "/current", "/api/v1/drivers/" + id + "/truck", "/api/v1/drivers/me/truck",
-		"/api/v1/driver-assignments", "/api/v1/eld-assignments"} {
+		"/api/v1/driver-assignments", "/api/v1/eld-assignments",
+		// Phase 5: the office's view of the logbooks is a fleet route.
+		"/api/v1/drivers/" + id + "/logs/2026-11-10"} {
 		rec := send(r, http.MethodGet, path, h)
 		assert.Equal(t, http.StatusPaymentRequired, rec.Code, path)
 	}
@@ -533,6 +544,8 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 	// Nor are the drivers: their logbook is the other half of that law.
 	rec = send(r, http.MethodPost, "/api/v1/drivers/me/duty-status", h)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "a driver's logbook is never behind the billing gate")
+	rec = send(r, http.MethodGet, "/api/v1/drivers/me/logs/2026-11-10", h)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "nor is reading it: the driver shows it at inspections")
 
 	// Billing and the company itself stay reachable, or a blocked company
 	// could never pay. (400 = the handler ran: the gate let it through.)

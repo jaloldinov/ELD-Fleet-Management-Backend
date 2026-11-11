@@ -208,3 +208,114 @@ func TestAutomaticDriving(t *testing.T) {
 		assert.Equal(t, before, logbook(t))
 	})
 }
+
+type dailyLogResp struct {
+	DriverID      string `json:"driver_id"`
+	Date          string `json:"date"`
+	Timezone      string `json:"timezone"`
+	StartsAt      string `json:"starts_at"`
+	EndsAt        string `json:"ends_at"`
+	RecordedUntil string `json:"recorded_until"`
+	Segments      []struct {
+		StartedAt       string        `json:"started_at"`
+		EndedAt         string        `json:"ended_at"`
+		DurationSeconds int64         `json:"duration_seconds"`
+		Record          dutyEventResp `json:"record"`
+	} `json:"segments"`
+	Totals struct {
+		OffDuty      int64 `json:"off_duty"`
+		SleeperBerth int64 `json:"sleeper_berth"`
+		Driving      int64 `json:"driving"`
+		OnDuty       int64 `json:"on_duty"`
+	} `json:"totals"`
+	UnrecordedSeconds int64 `json:"unrecorded_seconds"`
+}
+
+// TestDailyLog: yesterday as the driver and the office see it, midnight
+// to midnight in the company's time zone (America/Chicago).
+func TestDailyLog(t *testing.T) {
+	tn := newTenant(t)
+	ali, aliC := tn.newDriver(t)
+	_, dispatcher := tn.newUser(t, "dispatcher")
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+	today := time.Now().In(chicago)
+	y, m, d := today.AddDate(0, 0, -1).Date()
+	yesterday := time.Date(y, m, d, 0, 0, 0, 0, chicago)
+	date := yesterday.Format(time.DateOnly)
+
+	// Fixture, not API: a recorded past (the API only records "now";
+	// fixing the past comes with edits). The day before yesterday 20:00
+	// off duty, then the example day.
+	for _, e := range []struct {
+		status, origin string
+		at             time.Duration
+	}{
+		{"off_duty", "driver", -4 * time.Hour},
+		{"on_duty", "driver", 6 * time.Hour},
+		{"driving", "auto", 7 * time.Hour},
+		{"off_duty", "driver", 11 * time.Hour},
+		{"driving", "auto", 11*time.Hour + 30*time.Minute},
+		{"on_duty", "auto", 15*time.Hour + 30*time.Minute},
+		{"off_duty", "driver", 16*time.Hour + 30*time.Minute},
+	} {
+		_, err := testDB.Exec(t.Context(), `
+			INSERT INTO duty_status_events (company_id, driver_id, status, started_at, origin)
+			VALUES ($1, $2, $3, $4, $5)`, tn.ID, ali.ID, e.status, yesterday.Add(e.at), e.origin)
+		require.NoError(t, err)
+	}
+
+	check := func(t *testing.T, l dailyLogResp) {
+		t.Helper()
+		assert.Equal(t, ali.ID, l.DriverID)
+		assert.Equal(t, date, l.Date)
+		assert.Equal(t, "America/Chicago", l.Timezone)
+		assert.Equal(t, yesterday.Format(time.RFC3339), l.StartsAt, "Chicago midnight, in Chicago time")
+		assert.Equal(t, l.EndsAt, l.RecordedUntil, "a past day is complete")
+		require.Len(t, l.Segments, 7)
+		assert.Equal(t, l.StartsAt, l.Segments[0].StartedAt, "the day starts with yesterday's off duty")
+		assert.Equal(t, int64(6*3600), l.Segments[0].DurationSeconds)
+		assert.Equal(t, int64(8*3600), l.Totals.Driving)
+		assert.Equal(t, int64(2*3600), l.Totals.OnDuty)
+		dayLength := int64(yesterday.AddDate(0, 0, 1).Sub(yesterday) / time.Second) // 23 or 25 h around DST
+		assert.Equal(t, dayLength, l.Totals.OffDuty+l.Totals.SleeperBerth+l.Totals.Driving+l.Totals.OnDuty+l.UnrecordedSeconds,
+			"the grid adds up to the day")
+	}
+
+	t.Run("the driver's own", func(t *testing.T) {
+		var l dailyLogResp
+		aliC.do(t, http.MethodGet, "/api/v1/drivers/me/logs/"+date, nil, http.StatusOK, &l)
+		check(t, l)
+	})
+
+	t.Run("the office's view", func(t *testing.T) {
+		var l dailyLogResp
+		dispatcher.do(t, http.MethodGet, "/api/v1/drivers/"+ali.ID+"/logs/"+date, nil, http.StatusOK, &l)
+		check(t, l)
+	})
+
+	t.Run("today: up to now", func(t *testing.T) {
+		var l dailyLogResp
+		aliC.do(t, http.MethodGet, "/api/v1/drivers/me/logs/"+today.Format(time.DateOnly), nil, http.StatusOK, &l)
+		require.Len(t, l.Segments, 1)
+		assert.Equal(t, "off_duty", l.Segments[0].Record.Status, "still off since yesterday 16:30")
+		assert.NotEqual(t, l.EndsAt, l.RecordedUntil)
+	})
+
+	t.Run("who may read whose", func(t *testing.T) {
+		bob, bobC := tn.newDriver(t)
+		bobC.fail(t, http.MethodGet, "/api/v1/drivers/"+ali.ID+"/logs/"+date, nil, http.StatusForbidden)
+		newTenant(t).Admin.fail(t, http.MethodGet, "/api/v1/drivers/"+ali.ID+"/logs/"+date, nil, http.StatusNotFound)
+
+		var l dailyLogResp
+		bobC.do(t, http.MethodGet, "/api/v1/drivers/me/logs/"+date, nil, http.StatusOK, &l)
+		assert.Equal(t, bob.ID, l.DriverID)
+		assert.Empty(t, l.Segments, "a new driver: nothing recorded")
+	})
+
+	t.Run("refused dates", func(t *testing.T) {
+		e := aliC.fail(t, http.MethodGet, "/api/v1/drivers/me/logs/"+today.AddDate(0, 0, 2).Format(time.DateOnly), nil, http.StatusBadRequest)
+		assert.Equal(t, "is in the future", e.Details["date"])
+		aliC.fail(t, http.MethodGet, "/api/v1/drivers/me/logs/yesterday", nil, http.StatusBadRequest)
+	})
+}

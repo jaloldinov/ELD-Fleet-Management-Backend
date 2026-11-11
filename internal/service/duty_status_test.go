@@ -56,6 +56,20 @@ func (m *memDutyEvents) At(ctx context.Context, driverID uuid.UUID, at time.Time
 	return found, nil
 }
 
+func (m *memDutyEvents) ListPeriod(_ context.Context, driverID uuid.UUID, from, to time.Time) ([]model.DutyStatusEvent, error) {
+	var out []model.DutyStatusEvent
+	for _, r := range m.rows { // sorted by StartedAt
+		if r.DriverID != driverID || !r.StartedAt.Before(to) {
+			continue
+		}
+		if !r.StartedAt.After(from) && len(out) > 0 {
+			out = out[1:] // only the LAST one at or before from is in force
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 type memDutyDrivers struct {
 	byUser map[uuid.UUID]model.Driver
 	locked map[uuid.UUID]bool
@@ -67,6 +81,25 @@ func (m *memDutyDrivers) GetByUserID(_ context.Context, userID uuid.UUID) (*mode
 		return nil, model.ErrNotFound
 	}
 	return &model.DriverDetails{Driver: d}, nil
+}
+
+func (m *memDutyDrivers) GetByID(_ context.Context, id uuid.UUID) (*model.DriverDetails, error) {
+	for _, d := range m.byUser {
+		if d.ID == id {
+			return &model.DriverDetails{Driver: d}, nil
+		}
+	}
+	return nil, model.ErrNotFound
+}
+
+type memDutyCompanies map[uuid.UUID]string // id → time zone
+
+func (m memDutyCompanies) GetByID(_ context.Context, id uuid.UUID) (*model.Company, error) {
+	tz, ok := m[id]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	return &model.Company{ID: id, Timezone: tz}, nil
 }
 
 func (m *memDutyDrivers) LockByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error) {
@@ -141,7 +174,8 @@ func newDutyFixture() *dutyFixture {
 	f.me = auth.Principal{UserID: f.driver.UserID, CompanyID: &company}
 	drivers := &memDutyDrivers{byUser: map[uuid.UUID]model.Driver{f.driver.UserID: f.driver}, locked: map[uuid.UUID]bool{}}
 	f.events = &memDutyEvents{drivers: drivers}
-	f.svc = NewDutyStatusService(&fakeTx{}, f.events, drivers, f.stints, f.devices)
+	f.svc = NewDutyStatusService(&fakeTx{}, f.events, drivers, f.stints, f.devices,
+		memDutyCompanies{company: "America/Chicago"})
 	f.svc.now = func() time.Time { return f.clock }
 	return f
 }
@@ -511,5 +545,85 @@ func TestDutyStatusService_RecordMotion(t *testing.T) {
 
 		require.NoError(t, err, "no unique violation: it would abort the whole ingest transaction")
 		assert.Len(t, f.events.rows, 1)
+	})
+}
+
+func TestDutyStatusService_DailyLog(t *testing.T) {
+	ctx := context.Background()
+	inTxCtx := context.WithValue(ctx, inTxKey{}, true)
+	f := newDutyFixture()
+	// f.clock is 2026-11-11 06:00 UTC = 00:00 in Chicago: Nov 10 is over.
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+	local := func(day, h, m int) time.Time { return time.Date(2026, 11, day, h, m, 0, 0, chicago) }
+	for _, e := range []struct {
+		s  model.DutyStatus
+		at time.Time
+	}{
+		{model.DutyOffDuty, local(9, 20, 0)},
+		{model.DutyOnDuty, local(10, 6, 0)},
+		{model.DutyDriving, local(10, 7, 0)},
+		{model.DutyOffDuty, local(10, 18, 0)},
+	} {
+		origin := model.DutyOriginDriver
+		if e.s == model.DutyDriving {
+			origin = model.DutyOriginAuto
+		}
+		_, err := f.events.Insert(inTxCtx, model.DutyStatusEvent{CompanyID: f.driver.CompanyID, DriverID: f.driver.ID,
+			Status: e.s, StartedAt: e.at.UTC(), Origin: origin})
+		require.NoError(t, err)
+	}
+
+	t.Run("the driver's own day, in the company's time zone", func(t *testing.T) {
+		log, err := f.svc.MyDailyLog(ctx, f.me, "2026-11-10")
+
+		require.NoError(t, err)
+		assert.Equal(t, f.driver.ID, log.DriverID)
+		assert.Equal(t, "2026-11-10", log.Date)
+		assert.Equal(t, "America/Chicago", log.Location.String())
+		assert.True(t, log.Start.Equal(local(10, 0, 0)), "Chicago midnight, not UTC")
+		assert.Len(t, log.Segments, 4)
+		assert.Equal(t, 11*time.Hour, log.Totals[model.DutyDriving])
+		assert.Equal(t, 12*time.Hour, log.Totals[model.DutyOffDuty])
+		assert.Equal(t, time.Hour, log.Totals[model.DutyOnDuty])
+	})
+
+	t.Run("the office reads any driver of its company", func(t *testing.T) {
+		office := auth.Principal{UserID: uuid.New(), CompanyID: f.me.CompanyID}
+		log, err := f.svc.DriverDailyLog(ctx, office, f.driver.ID, "2026-11-10")
+		require.NoError(t, err)
+		assert.Len(t, log.Segments, 4)
+
+		other := uuid.New()
+		_, err = f.svc.DriverDailyLog(ctx, auth.Principal{UserID: uuid.New(), CompanyID: &other}, f.driver.ID, "2026-11-10")
+		assert.ErrorIs(t, err, model.ErrNotFound, "another company's driver does not exist")
+
+		_, err = f.svc.DriverDailyLog(ctx, auth.Principal{UserID: uuid.New()}, f.driver.ID, "2026-11-10")
+		assert.NoError(t, err, "platform staff see every company")
+	})
+
+	t.Run("today so far", func(t *testing.T) {
+		f.clock = local(11, 2, 30).UTC()
+		t.Cleanup(func() { f.clock = local(11, 0, 0).UTC() })
+
+		log, err := f.svc.MyDailyLog(ctx, f.me, "2026-11-11")
+
+		require.NoError(t, err)
+		assert.True(t, log.Until.Equal(local(11, 2, 30)))
+		assert.Equal(t, 2*time.Hour+30*time.Minute, log.Totals[model.DutyOffDuty], "off since yesterday 18:00")
+	})
+
+	t.Run("refused dates", func(t *testing.T) {
+		for date, msg := range map[string]string{
+			"2026-11-11": "is in the future", // Chicago's Nov 11 begins exactly now: nothing to show yet
+			"2026-12-01": "is in the future",
+			"10.11.2026": "must be a date like 2026-11-10",
+			"":           "must be a date like 2026-11-10",
+		} {
+			_, err := f.svc.MyDailyLog(ctx, f.me, date)
+			var vErr *validation.ValidationError
+			require.ErrorAs(t, err, &vErr, date)
+			assert.Equal(t, msg, vErr.Fields["date"], date)
+		}
 	})
 }

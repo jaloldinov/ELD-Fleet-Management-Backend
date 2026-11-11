@@ -2723,6 +2723,65 @@
                 }
             }
         },
+        "/api/v1/drivers/me/logs/{date}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the driver app (and the roadside inspector looking at it): the caller's day, midnight to midnight in the company's time zone, as segments with durations and totals per status. Today is shown up to now. Needs a login, no extra permission. Not behind the billing gate.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logbook"
+                ],
+                "summary": "My log of a day",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "2026-11-10",
+                        "description": "Day, YYYY-MM-DD",
+                        "name": "date",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DailyLogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid or future date",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "the caller is not a driver",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/drivers/me/truck": {
             "get": {
                 "security": [
@@ -3222,6 +3281,85 @@
                     },
                     "403": {
                         "description": "missing permission assignment:manage",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "driver not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/drivers/{id}/logs/{date}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: logbook:read\nThe office's view of a driver's day: midnight to midnight in the company's time zone, as segments with durations and totals per status. Today is shown up to now.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logbook"
+                ],
+                "summary": "A driver's log of a day",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Driver ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "2026-11-10",
+                        "description": "Day, YYYY-MM-DD",
+                        "name": "date",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DailyLogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id, or invalid or future date",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission logbook:read",
                         "schema": {
                             "$ref": "#/definitions/apierror.Response"
                         }
@@ -7243,6 +7381,50 @@
                 }
             }
         },
+        "handler.DailyLogResponse": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "example": "2026-11-10"
+                },
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "ends_at": {
+                    "type": "string",
+                    "example": "2026-11-11T00:00:00-06:00"
+                },
+                "recorded_until": {
+                    "description": "The log is known up to here: ends_at for a past day, now for today.",
+                    "type": "string",
+                    "example": "2026-11-11T00:00:00-06:00"
+                },
+                "segments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.DutySegmentResponse"
+                    }
+                },
+                "starts_at": {
+                    "type": "string",
+                    "example": "2026-11-10T00:00:00-06:00"
+                },
+                "timezone": {
+                    "type": "string",
+                    "example": "America/Chicago"
+                },
+                "totals": {
+                    "$ref": "#/definitions/handler.DutyTotalsResponse"
+                },
+                "unrecorded_seconds": {
+                    "description": "Before the driver's first record ever (a new driver).",
+                    "type": "integer",
+                    "example": 0
+                }
+            }
+        },
         "handler.DeviceSelfResponse": {
             "type": "object",
             "properties": {
@@ -7515,6 +7697,26 @@
                 }
             }
         },
+        "handler.DutySegmentResponse": {
+            "type": "object",
+            "properties": {
+                "duration_seconds": {
+                    "type": "integer",
+                    "example": 3600
+                },
+                "ended_at": {
+                    "type": "string",
+                    "example": "2026-11-10T07:00:00-06:00"
+                },
+                "record": {
+                    "$ref": "#/definitions/handler.DutyStatusEventResponse"
+                },
+                "started_at": {
+                    "type": "string",
+                    "example": "2026-11-10T06:00:00-06:00"
+                }
+            }
+        },
         "handler.DutyStatusEventResponse": {
             "type": "object",
             "properties": {
@@ -7580,6 +7782,27 @@
                 "truck_id": {
                     "type": "string",
                     "format": "uuid"
+                }
+            }
+        },
+        "handler.DutyTotalsResponse": {
+            "type": "object",
+            "properties": {
+                "driving": {
+                    "type": "integer",
+                    "example": 28800
+                },
+                "off_duty": {
+                    "type": "integer",
+                    "example": 50400
+                },
+                "on_duty": {
+                    "type": "integer",
+                    "example": 7200
+                },
+                "sleeper_berth": {
+                    "type": "integer",
+                    "example": 0
                 }
             }
         },

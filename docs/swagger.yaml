@@ -553,6 +553,39 @@ definitions:
         example: "2026-11-07T08:00:00Z"
         type: string
     type: object
+  handler.DailyLogResponse:
+    properties:
+      date:
+        example: "2026-11-10"
+        type: string
+      driver_id:
+        format: uuid
+        type: string
+      ends_at:
+        example: "2026-11-11T00:00:00-06:00"
+        type: string
+      recorded_until:
+        description: 'The log is known up to here: ends_at for a past day, now for
+          today.'
+        example: "2026-11-11T00:00:00-06:00"
+        type: string
+      segments:
+        items:
+          $ref: '#/definitions/handler.DutySegmentResponse'
+        type: array
+      starts_at:
+        example: "2026-11-10T00:00:00-06:00"
+        type: string
+      timezone:
+        example: America/Chicago
+        type: string
+      totals:
+        $ref: '#/definitions/handler.DutyTotalsResponse'
+      unrecorded_seconds:
+        description: Before the driver's first record ever (a new driver).
+        example: 0
+        type: integer
+    type: object
   handler.DeviceSelfResponse:
     properties:
       company_id:
@@ -757,6 +790,20 @@ definitions:
       truck:
         $ref: '#/definitions/handler.TruckBoardResponse'
     type: object
+  handler.DutySegmentResponse:
+    properties:
+      duration_seconds:
+        example: 3600
+        type: integer
+      ended_at:
+        example: "2026-11-10T07:00:00-06:00"
+        type: string
+      record:
+        $ref: '#/definitions/handler.DutyStatusEventResponse'
+      started_at:
+        example: "2026-11-10T06:00:00-06:00"
+        type: string
+    type: object
   handler.DutyStatusEventResponse:
     properties:
       created_at:
@@ -806,6 +853,21 @@ definitions:
       truck_id:
         format: uuid
         type: string
+    type: object
+  handler.DutyTotalsResponse:
+    properties:
+      driving:
+        example: 28800
+        type: integer
+      off_duty:
+        example: 50400
+        type: integer
+      on_duty:
+        example: 7200
+        type: integer
+      sleeper_berth:
+        example: 0
+        type: integer
     type: object
   handler.ELDAssignmentResponse:
     properties:
@@ -4040,6 +4102,60 @@ paths:
       summary: Set a driver's dispatcher
       tags:
       - assignments
+  /api/v1/drivers/{id}/logs/{date}:
+    get:
+      description: |-
+        Requires permission: logbook:read
+        The office's view of a driver's day: midnight to midnight in the company's time zone, as segments with durations and totals per status. Today is shown up to now.
+      parameters:
+      - description: Driver ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Day, YYYY-MM-DD
+        example: "2026-11-10"
+        in: path
+        name: date
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DailyLogResponse'
+        "400":
+          description: invalid id, or invalid or future date
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission logbook:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: driver not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: A driver's log of a day
+      tags:
+      - logbook
   /api/v1/drivers/{id}/truck:
     delete:
       description: |-
@@ -4298,6 +4414,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Change my duty status
+      tags:
+      - logbook
+  /api/v1/drivers/me/logs/{date}:
+    get:
+      description: 'For the driver app (and the roadside inspector looking at it):
+        the caller''s day, midnight to midnight in the company''s time zone, as segments
+        with durations and totals per status. Today is shown up to now. Needs a login,
+        no extra permission. Not behind the billing gate.'
+      parameters:
+      - description: Day, YYYY-MM-DD
+        example: "2026-11-10"
+        in: path
+        name: date
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.DailyLogResponse'
+        "400":
+          description: invalid or future date
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: the caller is not a driver
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: My log of a day
       tags:
       - logbook
   /api/v1/drivers/me/truck:
