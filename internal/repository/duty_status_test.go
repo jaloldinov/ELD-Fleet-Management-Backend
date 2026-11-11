@@ -229,3 +229,41 @@ func TestDutyStatusRepository_Edits(t *testing.T) {
 		assert.Nil(t, other, "per day")
 	})
 }
+
+func TestDutyStatusRepository_ListPeriodMany(t *testing.T) {
+	f := newAssignmentFixture(t)
+	ctx := context.Background()
+	repo := NewDutyStatusRepository(f.db)
+	day := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	add := func(driver uuid.UUID, s model.DutyStatus, at time.Time) {
+		t.Helper()
+		_, err := repo.Insert(ctx, model.DutyStatusEvent{CompanyID: f.alpha.ID, DriverID: driver, Status: s, StartedAt: at, Origin: model.DutyOriginDriver})
+		require.NoError(t, err)
+	}
+	add(f.ali, model.DutyOffDuty, day.Add(-10*time.Hour))
+	add(f.ali, model.DutySleeperBerth, day.Add(-2*time.Hour)) // in force at the start
+	add(f.ali, model.DutyOnDuty, day.Add(6*time.Hour))
+	add(f.bob, model.DutyOnDuty, day.Add(8*time.Hour))
+	add(f.bob, model.DutyOffDuty, day.Add(30*time.Hour)) // after the period
+
+	got, err := repo.ListPeriodMany(ctx, []uuid.UUID{f.ali, f.bob, f.dan}, day, day.Add(24*time.Hour))
+
+	require.NoError(t, err)
+	statuses := func(es []model.DutyStatusEvent) (out []model.DutyStatus) {
+		for _, e := range es {
+			out = append(out, e.Status)
+		}
+		return out
+	}
+	assert.Equal(t, []model.DutyStatus{model.DutySleeperBerth, model.DutyOnDuty}, statuses(got[f.ali]),
+		"each driver's own record in force at the start, not the older one")
+	assert.Equal(t, []model.DutyStatus{model.DutyOnDuty}, statuses(got[f.bob]))
+	assert.Empty(t, got[f.dan], "no records")
+
+	// The same answer as one ListPeriod per driver.
+	for _, d := range []uuid.UUID{f.ali, f.bob} {
+		one, err := repo.ListPeriod(ctx, d, day, day.Add(24*time.Hour))
+		require.NoError(t, err)
+		assert.Equal(t, one, got[d])
+	}
+}

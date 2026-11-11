@@ -286,3 +286,12 @@ func TestEvaluateHOS_Violations(t *testing.T) {
 		assert.Empty(t, c.Violations, "the 10-hour rest started a new shift")
 	})
 }
+
+func TestHOSClocks_LimitedBy(t *testing.T) {
+	h := hosLog{t, chicago(t)}
+	fresh := h.eval(nil, h.at(0, 6, 0))
+	assert.Equal(t, RuleBreak30m, fresh.LimitedBy(), "8 h to the break < 11 h of driving")
+
+	waited := h.eval(h.events(DutyOnDuty, h.at(0, 6, 0), DutyDriving, h.at(0, 15, 0)), h.at(0, 16, 0))
+	assert.Equal(t, RuleWindow14h, waited.LimitedBy(), "1 h driven, but only 4 h of the window left")
+}

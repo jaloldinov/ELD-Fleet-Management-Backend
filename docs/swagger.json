@@ -4762,6 +4762,93 @@
                 }
             }
         },
+        "/api/v1/hos": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires permission: logbook:read\nThe dispatcher's board: every driver of the company with their status now, how long they may still drive and the limit that decides it. Sorted by who can drive longest (-can_drive, the default), who runs out first (can_drive) or name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hos"
+                ],
+                "summary": "The fleet's hours of service",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Drivers of this dispatcher (a user id, or \\",
+                        "name": "dispatcher_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "-can_drive",
+                            "can_drive",
+                            "name"
+                        ],
+                        "type": "string",
+                        "description": "Order",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Platform users only (then required)",
+                        "name": "company_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.FleetHOSResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid filter or sort",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid access token",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "402": {
+                        "description": "the company's subscription is not active",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "missing permission logbook:read",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "company not found",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/apierror.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/invoices": {
             "get": {
                 "security": [
@@ -8350,6 +8437,102 @@
                 "updated_at": {
                     "type": "string",
                     "example": "2026-10-02T11:26:26Z"
+                }
+            }
+        },
+        "handler.FleetHOSItemResp": {
+            "type": "object",
+            "properties": {
+                "break_due_in_seconds": {
+                    "type": "integer",
+                    "example": 14400
+                },
+                "can_drive_seconds": {
+                    "description": "How long the driver may drive from now, and the limit that decides it.",
+                    "type": "integer",
+                    "example": 10800
+                },
+                "current_since": {
+                    "type": "string"
+                },
+                "current_status": {
+                    "description": "The status in force now and since when; null = none recorded.",
+                    "type": "string",
+                    "enum": [
+                        "off_duty",
+                        "sleeper_berth",
+                        "driving",
+                        "on_duty"
+                    ],
+                    "example": "driving"
+                },
+                "cycle_left_seconds": {
+                    "type": "integer",
+                    "example": 216000
+                },
+                "driver_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "driving_left_seconds": {
+                    "type": "integer",
+                    "example": 10800
+                },
+                "first_name": {
+                    "type": "string",
+                    "example": "Ali"
+                },
+                "in_shift": {
+                    "type": "boolean"
+                },
+                "last_name": {
+                    "type": "string",
+                    "example": "Valiyev"
+                },
+                "limited_by": {
+                    "type": "string",
+                    "enum": [
+                        "driving_11h",
+                        "window_14h",
+                        "break_30m",
+                        "cycle"
+                    ],
+                    "example": "driving_11h"
+                },
+                "rest_streak_seconds": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "violations": {
+                    "description": "Violations in the last 8 days (details: GET /drivers/{id}/hos).",
+                    "type": "integer",
+                    "example": 0
+                },
+                "window_left_seconds": {
+                    "type": "integer",
+                    "example": 12600
+                }
+            }
+        },
+        "handler.FleetHOSResponse": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "company_id": {
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.FleetHOSItemResp"
+                    }
+                },
+                "timezone": {
+                    "type": "string",
+                    "example": "America/Chicago"
                 }
             }
         },

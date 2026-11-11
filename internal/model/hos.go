@@ -110,6 +110,22 @@ type HOSClocks struct {
 	Violations []HOSViolation
 }
 
+// LimitedBy names the limit that sets CanDriveFor: the one that runs out
+// first. On a tie the earlier in the list wins (the break before the 11
+// hours, say, when both are 0).
+func (c HOSClocks) LimitedBy() HOSRule {
+	rule, left := RuleBreak30m, c.BreakDueIn
+	for _, l := range []struct {
+		rule HOSRule
+		left time.Duration
+	}{{RuleDriving11h, c.DrivingLeft}, {RuleWindow14h, c.WindowLeft}, {RuleCycle, c.CycleLeft}} {
+		if l.left < left {
+			rule, left = l.rule, l.left
+		}
+	}
+	return rule
+}
+
 // dutyKind is what a record means for the clocks.
 type dutyKind int
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -130,9 +131,21 @@ func (m *memDutyEvents) LastCertification(_ context.Context, driverID uuid.UUID,
 	return last, nil
 }
 
+func (m *memDutyEvents) ListPeriodMany(ctx context.Context, driverIDs []uuid.UUID, from, to time.Time) (map[uuid.UUID][]model.DutyStatusEvent, error) {
+	out := map[uuid.UUID][]model.DutyStatusEvent{}
+	for _, id := range driverIDs {
+		events, _ := m.ListPeriod(ctx, id, from, to)
+		if len(events) > 0 {
+			out[id] = events
+		}
+	}
+	return out, nil
+}
+
 type memDutyDrivers struct {
 	byUser map[uuid.UUID]model.Driver
 	locked map[uuid.UUID]bool
+	names  map[uuid.UUID]string // driver id → first name, for the fleet board
 }
 
 func (m *memDutyDrivers) GetByUserID(_ context.Context, userID uuid.UUID) (*model.DriverDetails, error) {
@@ -160,6 +173,23 @@ func (m memDutyCompanies) GetByID(_ context.Context, id uuid.UUID) (*model.Compa
 		return nil, model.ErrNotFound
 	}
 	return &model.Company{ID: id, Timezone: tz}, nil
+}
+
+// List pages through the drivers of a company (by id, like the SQL), so
+// the fleet board's paging loop is exercised too.
+func (m *memDutyDrivers) List(_ context.Context, f model.DriverFilter, limit, offset int) ([]model.DriverDetails, int, error) {
+	var all []model.DriverDetails
+	for _, d := range m.byUser {
+		if (f.CompanyID == nil || d.CompanyID == *f.CompanyID) && (f.DispatcherID == nil || (d.DispatcherID != nil && *d.DispatcherID == *f.DispatcherID)) {
+			all = append(all, model.DriverDetails{Driver: d, User: model.User{FirstName: m.names[d.ID]}})
+		}
+	}
+	slices.SortFunc(all, func(a, b model.DriverDetails) int { return strings.Compare(a.Driver.ID.String(), b.Driver.ID.String()) })
+	end := min(offset+limit, len(all))
+	if offset > end {
+		offset = end
+	}
+	return all[offset:end], len(all), nil
 }
 
 func (m *memDutyDrivers) LockByID(ctx context.Context, id uuid.UUID) (*model.DriverDetails, error) {

@@ -11,12 +11,14 @@ import (
 	"github.com/jaloldinov/ELD-learning/internal/auth"
 	"github.com/jaloldinov/ELD-learning/internal/model"
 	"github.com/jaloldinov/ELD-learning/internal/service"
+	"github.com/jaloldinov/ELD-learning/pkg/validation"
 )
 
 // HOSService is what HOSHandler needs from the service layer.
 type HOSService interface {
 	MyClocks(ctx context.Context, p auth.Principal) (*service.DriverClocks, error)
 	DriverClocks(ctx context.Context, p auth.Principal, driverID uuid.UUID) (*service.DriverClocks, error)
+	FleetBoard(ctx context.Context, p auth.Principal, params service.FleetHOSParams) (*service.FleetHOS, error)
 }
 
 // ---------- DTOs ----------
@@ -117,6 +119,55 @@ func newHOSClocksResponse(dc *service.DriverClocks) HOSClocksResponse {
 	}
 }
 
+// FleetHOSResponse: every driver of the company with their clocks.
+type FleetHOSResponse struct {
+	CompanyID uuid.UUID          `json:"company_id" swaggertype:"string" format:"uuid"`
+	Timezone  string             `json:"timezone" example:"America/Chicago"`
+	At        time.Time          `json:"at"`
+	Items     []FleetHOSItemResp `json:"items"`
+}
+
+// FleetHOSItemResp is one driver's line on the dispatcher's board.
+type FleetHOSItemResp struct {
+	DriverID  uuid.UUID `json:"driver_id" swaggertype:"string" format:"uuid"`
+	FirstName string    `json:"first_name" example:"Ali"`
+	LastName  string    `json:"last_name" example:"Valiyev"`
+	// The status in force now and since when; null = none recorded.
+	CurrentStatus *string    `json:"current_status" enums:"off_duty,sleeper_berth,driving,on_duty" example:"driving"`
+	CurrentSince  *time.Time `json:"current_since"`
+	// How long the driver may drive from now, and the limit that decides it.
+	CanDriveSeconds int64  `json:"can_drive_seconds" example:"10800"`
+	LimitedBy       string `json:"limited_by" enums:"driving_11h,window_14h,break_30m,cycle" example:"driving_11h"`
+	InShift         bool   `json:"in_shift"`
+	DrivingLeft     int64  `json:"driving_left_seconds" example:"10800"`
+	WindowLeft      int64  `json:"window_left_seconds" example:"12600"`
+	BreakDueIn      int64  `json:"break_due_in_seconds" example:"14400"`
+	CycleLeft       int64  `json:"cycle_left_seconds" example:"216000"`
+	RestStreak      int64  `json:"rest_streak_seconds" example:"0"`
+	// Violations in the last 8 days (details: GET /drivers/{id}/hos).
+	Violations int `json:"violations" example:"0"`
+}
+
+func newFleetHOSResponse(b *service.FleetHOS) FleetHOSResponse {
+	r := FleetHOSResponse{CompanyID: b.CompanyID, Timezone: b.Location.String(), At: b.At.In(b.Location),
+		Items: make([]FleetHOSItemResp, 0, len(b.Rows))}
+	for _, row := range b.Rows {
+		c := row.Clocks
+		item := FleetHOSItemResp{
+			DriverID: row.Driver.Driver.ID, FirstName: row.Driver.User.FirstName, LastName: row.Driver.User.LastName,
+			CanDriveSeconds: seconds(c.CanDriveFor), LimitedBy: string(c.LimitedBy()), InShift: c.InShift,
+			DrivingLeft: seconds(c.DrivingLeft), WindowLeft: seconds(c.WindowLeft), BreakDueIn: seconds(c.BreakDueIn),
+			CycleLeft: seconds(c.CycleLeft), RestStreak: seconds(c.RestStreak), Violations: len(c.Violations),
+		}
+		if row.Current != nil {
+			status, since := string(row.Current.Status), row.Current.StartedAt.In(b.Location)
+			item.CurrentStatus, item.CurrentSince = &status, &since
+		}
+		r.Items = append(r.Items, item)
+	}
+	return r
+}
+
 // ---------- Handler ----------
 
 type HOSHandler struct {
@@ -184,4 +235,55 @@ func (h *HOSHandler) DriverClocks(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, newHOSClocksResponse(dc))
+}
+
+// FleetBoard handles GET /api/v1/hos.
+//
+//	@Summary		The fleet's hours of service
+//	@Description	Requires permission: logbook:read
+//	@Description	The dispatcher's board: every driver of the company with their status now, how long they may still drive and the limit that decides it. Sorted by who can drive longest (-can_drive, the default), who runs out first (can_drive) or name.
+//	@Tags			hos
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			dispatcher_id	query		string	false	"Drivers of this dispatcher (a user id, or \"me\")"
+//	@Param			sort			query		string	false	"Order"									Enums(-can_drive, can_drive, name)
+//	@Param			company_id		query		string	false	"Platform users only (then required)"	format(uuid)
+//	@Success		200				{object}	FleetHOSResponse
+//	@Failure		400				{object}	apierror.Response	"invalid filter or sort"
+//	@Failure		401				{object}	apierror.Response	"missing or invalid access token"
+//	@Failure		402				{object}	apierror.Response	"the company's subscription is not active"
+//	@Failure		403				{object}	apierror.Response	"missing permission logbook:read"
+//	@Failure		404				{object}	apierror.Response	"company not found"
+//	@Failure		500				{object}	apierror.Response
+//	@Router			/api/v1/hos [get]
+func (h *HOSHandler) FleetBoard(c *gin.Context) {
+	p, ok := principal(c)
+	if !ok {
+		return
+	}
+	var v validation.Validator
+	params := service.FleetHOSParams{Sort: c.Query("sort")}
+	if s := c.Query("company_id"); s != "" {
+		id, err := uuid.Parse(s)
+		v.Check(err == nil, "company_id", "must be a valid UUID")
+		params.CompanyID = &id
+	}
+	// "me": the caller's own drivers, without having to know their user id.
+	if s := c.Query("dispatcher_id"); s == "me" {
+		params.DispatcherID = &p.UserID
+	} else if s != "" {
+		id, err := uuid.Parse(s)
+		v.Check(err == nil, "dispatcher_id", `must be a valid UUID or "me"`)
+		params.DispatcherID = &id
+	}
+	if err := v.Err(); err != nil {
+		handleError(c, err)
+		return
+	}
+	b, err := h.svc.FleetBoard(c.Request.Context(), p, params)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, newFleetHOSResponse(b))
 }

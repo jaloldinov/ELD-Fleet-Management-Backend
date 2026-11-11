@@ -229,6 +229,9 @@ func NewRouter(log *slog.Logger, opts RouterOptions, sec RouterSecurity, h Handl
 	drivers.GET("/:id/logs/:date", perm.Require(model.PermLogbookRead), h.DutyStatus.DriverDailyLog)
 	drivers.GET("/:id/hos", perm.Require(model.PermLogbookRead), h.HOS.DriverClocks)
 
+	// The dispatcher's board: every driver's hours of service.
+	product.GET("/hos", perm.Require(model.PermLogbookRead), h.HOS.FleetBoard)
+
 	trucks := product.Group("/trucks")
 	trucks.POST("", perm.Require(model.PermTruckCreate), h.Truck.Create)
 	trucks.GET("", perm.Require(model.PermTruckRead), h.Truck.List)

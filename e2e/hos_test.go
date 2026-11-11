@@ -173,3 +173,96 @@ func TestHOSViolations(t *testing.T) {
 		assert.Contains(t, string(r.Body), `"violations":[]`)
 	})
 }
+
+type fleetResp struct {
+	CompanyID string `json:"company_id"`
+	Timezone  string `json:"timezone"`
+	Items     []struct {
+		DriverID        string  `json:"driver_id"`
+		FirstName       string  `json:"first_name"`
+		CurrentStatus   *string `json:"current_status"`
+		CanDriveSeconds int64   `json:"can_drive_seconds"`
+		LimitedBy       string  `json:"limited_by"`
+		DrivingLeft     int64   `json:"driving_left_seconds"`
+		Violations      int     `json:"violations"`
+	} `json:"items"`
+}
+
+// TestFleetBoard: the dispatcher's screen. Ali is driving with 3 hours
+// left; Dan broke two rules yesterday and is resting; Bob is new.
+func TestFleetBoard(t *testing.T) {
+	tn := newTenant(t)
+	dispUser, disp := tn.newUser(t, "dispatcher")
+	ali, aliC := tn.newDriver(t)
+	dan, _ := tn.newDriver(t)
+	bob, _ := tn.newDriver(t)
+	now := time.Now().Truncate(time.Second)
+	insert := func(driverID, status, origin string, at time.Time) {
+		t.Helper()
+		_, err := testDB.Exec(t.Context(), `
+			INSERT INTO duty_status_events (company_id, driver_id, status, started_at, origin)
+			VALUES ($1, $2, $3, $4, $5)`, tn.ID, driverID, status, at, origin)
+		require.NoError(t, err)
+	}
+	// Ali: 8 h driving with a break, driving again for the last 30 minutes.
+	insert(ali.ID, "driving", "auto", now.Add(-9*time.Hour))
+	insert(ali.ID, "off_duty", "driver", now.Add(-5*time.Hour))
+	insert(ali.ID, "driving", "auto", now.Add(-4*time.Hour-30*time.Minute))
+	// Dan: 13 hours without a break, ending 20 hours ago; resting since.
+	insert(dan.ID, "driving", "auto", now.Add(-33*time.Hour))
+	insert(dan.ID, "off_duty", "driver", now.Add(-20*time.Hour))
+	// Bob is the dispatcher's; the others are not.
+	tn.Admin.do(t, http.MethodPut, "/api/v1/drivers/"+bob.ID+"/dispatcher", map[string]any{"dispatcher_id": dispUser.ID}, http.StatusOK, nil)
+
+	board := func(t *testing.T, c client, query string) fleetResp {
+		t.Helper()
+		var b fleetResp
+		c.do(t, http.MethodGet, "/api/v1/hos"+query, nil, http.StatusOK, &b)
+		return b
+	}
+	byID := func(b fleetResp) map[string]int {
+		m := map[string]int{}
+		for i, it := range b.Items {
+			m[it.DriverID] = i
+		}
+		return m
+	}
+
+	t.Run("everyone, who can drive longest first", func(t *testing.T) {
+		b := board(t, disp, "")
+		require.Len(t, b.Items, 3)
+		assert.Equal(t, tn.ID, b.CompanyID)
+		assert.Equal(t, "America/Chicago", b.Timezone)
+		order := byID(b)
+		assert.Less(t, order[dan.ID], order[ali.ID], "rested: a full shift")
+		assert.Less(t, order[bob.ID], order[ali.ID])
+
+		a := b.Items[order[ali.ID]]
+		require.NotNil(t, a.CurrentStatus)
+		assert.Equal(t, "driving", *a.CurrentStatus)
+		assert.InDelta(t, 2*hour+hour/2, a.DrivingLeft, 10, "8.5 h of 11 driven")
+		assert.Equal(t, "driving_11h", a.LimitedBy)
+		assert.Zero(t, a.Violations)
+
+		d := b.Items[order[dan.ID]]
+		assert.Equal(t, 2, d.Violations, "break_30m and driving_11h yesterday")
+		assert.Equal(t, int64(8*hour), d.CanDriveSeconds, "rested 20 h: the break is the first limit")
+		assert.Nil(t, b.Items[order[bob.ID]].CurrentStatus, "nothing recorded")
+	})
+
+	t.Run("who runs out first; my drivers", func(t *testing.T) {
+		b := board(t, disp, "?sort=can_drive")
+		assert.Equal(t, ali.ID, b.Items[0].DriverID)
+
+		mine := board(t, disp, "?dispatcher_id=me")
+		require.Len(t, mine.Items, 1)
+		assert.Equal(t, bob.ID, mine.Items[0].DriverID)
+	})
+
+	t.Run("who may see it", func(t *testing.T) {
+		aliC.fail(t, http.MethodGet, "/api/v1/hos", nil, http.StatusForbidden) // drivers: /drivers/me/hos
+		assert.Empty(t, board(t, newTenant(t).Admin, "").Items, "another company sees its own (empty) fleet")
+		e := disp.fail(t, http.MethodGet, "/api/v1/hos?sort=fastest", nil, http.StatusBadRequest)
+		assert.Contains(t, e.Details, "sort")
+	})
+}

@@ -540,7 +540,7 @@ func TestRouter_BillingGateOnlyOnTheProduct(t *testing.T) {
 		// Phase 5: the office's view of the logbooks is a fleet route.
 		"/api/v1/drivers/" + id + "/logs/2026-11-10",
 		// Phase 6: so is the office's view of the clocks.
-		"/api/v1/drivers/" + id + "/hos"} {
+		"/api/v1/drivers/" + id + "/hos", "/api/v1/hos"} {
 		rec := send(r, http.MethodGet, path, h)
 		assert.Equal(t, http.StatusPaymentRequired, rec.Code, path)
 	}

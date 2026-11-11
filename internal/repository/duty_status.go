@@ -90,6 +90,37 @@ func (r *DutyStatusRepository) ListPeriod(ctx context.Context, driverID uuid.UUI
 	return collectDutyStatuses(rows)
 }
 
+// ListPeriodMany is ListPeriod for many drivers in ONE query (the fleet
+// board: one round trip for the whole fleet, not one per driver). Each
+// driver's records come oldest first, with the one in force at from.
+//
+// DISTINCT ON (driver_id) with ORDER BY driver_id, started_at DESC keeps
+// each driver's newest record at or before from: the per-driver "LIMIT 1".
+func (r *DutyStatusRepository) ListPeriodMany(ctx context.Context, driverIDs []uuid.UUID, from, to time.Time) (map[uuid.UUID][]model.DutyStatusEvent, error) {
+	rows, err := r.q(ctx).Query(ctx, `
+		(SELECT DISTINCT ON (driver_id) `+dutyStatusColumns+`
+		 FROM duty_status_events
+		 WHERE driver_id = ANY($1) AND started_at <= $2 AND record_status = 'active'
+		 ORDER BY driver_id, started_at DESC)
+		UNION ALL
+		(SELECT `+dutyStatusColumns+`
+		 FROM duty_status_events
+		 WHERE driver_id = ANY($1) AND started_at > $2 AND started_at < $3 AND record_status = 'active')
+		ORDER BY driver_id, started_at`, driverIDs, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("list duty statuses of drivers: %w", err)
+	}
+	events, err := collectDutyStatuses(rows)
+	if err != nil {
+		return nil, err
+	}
+	byDriver := make(map[uuid.UUID][]model.DutyStatusEvent, len(driverIDs))
+	for _, e := range events {
+		byDriver[e.DriverID] = append(byDriver[e.DriverID], e)
+	}
+	return byDriver, nil
+}
+
 // ListReplaced returns the driver's inactive records (replaced by edits)
 // that started in [from, to), oldest first: the day's edit history.
 func (r *DutyStatusRepository) ListReplaced(ctx context.Context, driverID uuid.UUID, from, to time.Time) ([]model.DutyStatusEvent, error) {

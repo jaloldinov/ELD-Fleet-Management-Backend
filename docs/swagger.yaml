@@ -1039,6 +1039,78 @@ definitions:
         example: "2026-10-02T11:26:26Z"
         type: string
     type: object
+  handler.FleetHOSItemResp:
+    properties:
+      break_due_in_seconds:
+        example: 14400
+        type: integer
+      can_drive_seconds:
+        description: How long the driver may drive from now, and the limit that decides
+          it.
+        example: 10800
+        type: integer
+      current_since:
+        type: string
+      current_status:
+        description: The status in force now and since when; null = none recorded.
+        enum:
+        - off_duty
+        - sleeper_berth
+        - driving
+        - on_duty
+        example: driving
+        type: string
+      cycle_left_seconds:
+        example: 216000
+        type: integer
+      driver_id:
+        format: uuid
+        type: string
+      driving_left_seconds:
+        example: 10800
+        type: integer
+      first_name:
+        example: Ali
+        type: string
+      in_shift:
+        type: boolean
+      last_name:
+        example: Valiyev
+        type: string
+      limited_by:
+        enum:
+        - driving_11h
+        - window_14h
+        - break_30m
+        - cycle
+        example: driving_11h
+        type: string
+      rest_streak_seconds:
+        example: 0
+        type: integer
+      violations:
+        description: 'Violations in the last 8 days (details: GET /drivers/{id}/hos).'
+        example: 0
+        type: integer
+      window_left_seconds:
+        example: 12600
+        type: integer
+    type: object
+  handler.FleetHOSResponse:
+    properties:
+      at:
+        type: string
+      company_id:
+        format: uuid
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/handler.FleetHOSItemResp'
+        type: array
+      timezone:
+        example: America/Chicago
+        type: string
+    type: object
   handler.ForgotPasswordRequest:
     properties:
       email:
@@ -5559,6 +5631,65 @@ paths:
       summary: Install a device in a truck
       tags:
       - eld-devices
+  /api/v1/hos:
+    get:
+      description: |-
+        Requires permission: logbook:read
+        The dispatcher's board: every driver of the company with their status now, how long they may still drive and the limit that decides it. Sorted by who can drive longest (-can_drive, the default), who runs out first (can_drive) or name.
+      parameters:
+      - description: Drivers of this dispatcher (a user id, or \
+        in: query
+        name: dispatcher_id
+        type: string
+      - description: Order
+        enum:
+        - -can_drive
+        - can_drive
+        - name
+        in: query
+        name: sort
+        type: string
+      - description: Platform users only (then required)
+        format: uuid
+        in: query
+        name: company_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.FleetHOSResponse'
+        "400":
+          description: invalid filter or sort
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "401":
+          description: missing or invalid access token
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "402":
+          description: the company's subscription is not active
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "403":
+          description: missing permission logbook:read
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "404":
+          description: company not found
+          schema:
+            $ref: '#/definitions/apierror.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/apierror.Response'
+      security:
+      - BearerAuth: []
+      summary: The fleet's hours of service
+      tags:
+      - hos
   /api/v1/invoices:
     get:
       description: 'Requires permission: invoice:read. Newest first. Company users
