@@ -16,3 +16,5 @@ coverage.html
 
 # ELD simulator device memory (cmd/eldsim)
 /.eldsim/
+
+.INTERVIEW_PREP.md
